@@ -202,7 +202,7 @@
 
 | Consideration | Assessment |
 | ---- | ---- |
-| **Recommended Engine** | **Godot 4.6**(项目已 pin)。回合制 2.5D 棋盘游戏与 Godot 的节点/场景模型契合,Steam 导出友好,无需重型 3D 管线 |
+| **Recommended Engine** | **Unreal Engine 5.7**(项目已切换并 pin,Blueprint 为主 + C++ 框架)。注:UE 的 3D/写实强项本项目用不到,对 2.5D 卡通棋盘偏重;Lumen/Nanite 大概率不启用以降成本与构建体积(架构阶段定 ADR) |
 | **Key Technical Challenges** | (1) AI 对手要"像人"且不犯蠢;(2) 棋盘/经济状态的清晰建模与可存档;(3) Full Vision 的联网(状态同步、回合权威、断线重连) |
 | **Art Style** | 2.5D / 3D stylized,休闲圆润卡通,明亮饱和 |
 | **Art Pipeline Complexity** | Medium(自定义 2D/2.5D 资产 + 棋盘/卡牌/UI) |
@@ -291,7 +291,7 @@
 
 ## Next Steps
 
-- [ ] Fill in CLAUDE.md technology stack based on engine choice (`/setup-engine` — 确认 Godot 4.6)
+- [x] Fill in CLAUDE.md technology stack based on engine choice (`/setup-engine` — 已完成:Unreal Engine 5.7 + Blueprint)
 - [ ] Create the visual identity specification (`/art-bible` — 基于上方 Visual Identity Anchor)
 - [ ] Validate concept completeness (`/design-review design/gdd/game-concept.md`)
 - [ ] **Prototype core idea** (`/prototype` — 验证"掷骰-买地-收租-破产"核心循环是否好玩)

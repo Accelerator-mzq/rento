@@ -4,8 +4,8 @@
 |-------|-------|
 | **Engine Version** | Unreal Engine 5.7 |
 | **Release Date** | November 2025 |
-| **Project Pinned** | 2026-02-13 |
-| **Last Docs Verified** | 2026-02-13 |
+| **Project Pinned** | 2026-05-31 |
+| **Last Docs Verified** | 2026-05-31 |
 | **LLM Knowledge Cutoff** | May 2025 |
 
 ## Knowledge Gap Warning

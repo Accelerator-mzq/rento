@@ -5,44 +5,46 @@
 
 ## Engine & Language
 
-- **Engine**: [TO BE CONFIGURED — run /setup-engine]
-- **Language**: [TO BE CONFIGURED]
-- **Rendering**: [TO BE CONFIGURED]
-- **Physics**: [TO BE CONFIGURED]
+- **Engine**: Unreal Engine 5.7
+- **Language**: Blueprint (primary — gameplay/UI), C++ (framework & performance-critical systems)
+- **Rendering**: Unreal default (deferred). 卡通 2.5D 棋盘大概率用不到 Lumen/Nanite —— 架构阶段评估是否关闭以降成本与构建体积。
+- **Physics**: Chaos (UE 默认)。回合制棋盘对物理需求极低,主要用于棋子/骰子表现。
 
 ## Input & Platform
 
 <!-- Written by /setup-engine. Read by /ux-design, /ux-review, /test-setup, /team-ui, and /dev-story -->
 <!-- to scope interaction specs, test helpers, and implementation to the correct input methods. -->
 
-- **Target Platforms**: [TO BE CONFIGURED — e.g., PC, Console, Mobile, Web]
-- **Input Methods**: [TO BE CONFIGURED — e.g., Keyboard/Mouse, Gamepad, Touch, Mixed]
-- **Primary Input**: [TO BE CONFIGURED — the dominant input for this game]
-- **Gamepad Support**: [TO BE CONFIGURED — Full / Partial / None]
-- **Touch Support**: [TO BE CONFIGURED — Full / Partial / None]
-- **Platform Notes**: [TO BE CONFIGURED — any platform-specific UX constraints]
+- **Target Platforms**: PC (Steam)
+- **Input Methods**: Keyboard/Mouse
+- **Primary Input**: Keyboard/Mouse
+- **Gamepad Support**: Partial（PC 推荐支持，便于后续手柄/客厅模式）
+- **Touch Support**: None
+- **Platform Notes**: 鼠标点击为主交互（掷骰、买地、建房、菜单）。避免 hover-only 交互，以利后续手柄适配。使用 UE Enhanced Input 管理输入映射。
 
 ## Naming Conventions
 
-- **Classes**: [TO BE CONFIGURED]
-- **Variables**: [TO BE CONFIGURED]
-- **Signals/Events**: [TO BE CONFIGURED]
-- **Files**: [TO BE CONFIGURED]
-- **Scenes/Prefabs**: [TO BE CONFIGURED]
-- **Constants**: [TO BE CONFIGURED]
+<!-- UE 5 C++ + Blueprint 社区标准 -->
+
+- **Classes**: 前缀 PascalCase（`A`=Actor、`U`=UObject、`F`=struct、`E`=enum），如 `ABoardPawn`、`UPropertyData`
+- **Variables**: PascalCase；布尔加 `b` 前缀，如 `bIsBankrupt`、`MoveSpeed`
+- **Signals/Events**: PascalCase（C++ Multicast Delegate / Blueprint Event），如 `OnRentPaid`、`OnTurnEnded`
+- **Files**: 匹配类名去前缀，如 `BoardPawn.h` / `BoardPawn.cpp`
+- **Scenes/Prefabs（UE Assets）**: Blueprint 用 `BP_` 前缀（`BP_BoardManager`）；UMG Widget 用 `WBP_` 前缀（`WBP_HUD`）；关卡 `.umap`；数据资产 `DA_` 前缀
+- **Constants**: UPPER_SNAKE_CASE，或 `static constexpr` PascalCase
 
 ## Performance Budgets
 
-- **Target Framerate**: [TO BE CONFIGURED]
-- **Frame Budget**: [TO BE CONFIGURED]
-- **Draw Calls**: [TO BE CONFIGURED]
-- **Memory Ceiling**: [TO BE CONFIGURED]
+- **Target Framerate**: 60 FPS
+- **Frame Budget**: 16.6 ms
+- **Draw Calls**: 适中（回合制单场景，远低于动作游戏需求）—— 具体上限待目标硬件确定
+- **Memory Ceiling**: 待目标硬件确定（可后调）
 
 ## Testing
 
-- **Framework**: [TO BE CONFIGURED]
-- **Minimum Coverage**: [TO BE CONFIGURED]
-- **Required Tests**: Balance formulas, gameplay systems, networking (if applicable)
+- **Framework**: UE Automation System（Functional Tests / Spec tests），CI 用 headless `-nullrhi`
+- **Minimum Coverage**: 待 `/test-setup` 确定
+- **Required Tests**: 规则/经济公式（租金、建房、破产判定）、回合状态机、AI 决策；联网（如适用）。细节由 `/test-setup` 搭建。
 
 ## Forbidden Patterns
 
@@ -65,12 +67,12 @@
 <!-- Read by /code-review, /architecture-decision, /architecture-review, and team skills -->
 <!-- to know which specialist to spawn for engine-specific validation. -->
 
-- **Primary**: [TO BE CONFIGURED — run /setup-engine]
-- **Language/Code Specialist**: [TO BE CONFIGURED]
-- **Shader Specialist**: [TO BE CONFIGURED]
-- **UI Specialist**: [TO BE CONFIGURED]
-- **Additional Specialists**: [TO BE CONFIGURED]
-- **Routing Notes**: [TO BE CONFIGURED]
+- **Primary**: unreal-specialist
+- **Language/Code Specialist**: ue-blueprint-specialist（Blueprint 图）或 unreal-specialist（C++）
+- **Shader Specialist**: unreal-specialist（无专属 shader specialist —— 由 primary 覆盖材质）
+- **UI Specialist**: ue-umg-specialist（UMG widgets、CommonUI、输入路由、widget 样式）
+- **Additional Specialists**: ue-gas-specialist（Gameplay Ability System、属性、gameplay effects）、ue-replication-specialist（属性复制、RPC、客户端预测、netcode —— 联网阶段）
+- **Routing Notes**: 本项目以 Blueprint 为主。Invoke primary 处理 C++ 架构与广泛引擎决策。Invoke Blueprint specialist 处理 Blueprint 图架构与 BP/C++ 边界设计（本项目最常用）。Invoke GAS specialist 处理能力/属性代码。Invoke replication specialist 处理任何多人/联网系统（Full Vision 阶段）。Invoke UMG specialist 处理所有 UI 实现。
 
 ### File Extension Routing
 
@@ -79,9 +81,10 @@
 
 | File Extension / Type | Specialist to Spawn |
 |-----------------------|---------------------|
-| Game code (primary language) | [TO BE CONFIGURED] |
-| Shader / material files | [TO BE CONFIGURED] |
-| UI / screen files | [TO BE CONFIGURED] |
-| Scene / prefab / level files | [TO BE CONFIGURED] |
-| Native extension / plugin files | [TO BE CONFIGURED] |
-| General architecture review | Primary |
+| Game code (.cpp, .h files) | unreal-specialist |
+| Blueprint graphs (.uasset BP classes) | ue-blueprint-specialist |
+| Shader / material files (.usf, .ush, Material assets) | unreal-specialist |
+| UI / screen files (.umg, UMG Widget Blueprints) | ue-umg-specialist |
+| Scene / prefab / level files (.umap, .uasset) | unreal-specialist |
+| Native extension / plugin files (Plugin .uplugin, modules) | unreal-specialist |
+| General architecture review | unreal-specialist |

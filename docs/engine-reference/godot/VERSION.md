@@ -1,5 +1,9 @@
 # Godot Engine — Version Reference
 
+> ⚠️ **已弃用（DEPRECATED）** — 本项目于 2026-05-31 改用 **Unreal Engine 5.7**
+> （见 `docs/engine-reference/unreal/`）。本目录仅作历史归档保留，不再维护；
+> `CLAUDE.md` 的引擎参考 `@import` 已改为指向 unreal。若未来切回 Godot，再重新启用。
+
 | Field | Value |
 |-------|-------|
 | **Engine Version** | Godot 4.6 |
