@@ -4,7 +4,6 @@ description: "Detect non-deterministic (flaky) tests by reading CI run logs or t
 argument-hint: "[ci-log-path | scan | registry]"
 user-invocable: true
 allowed-tools: Read, Glob, Grep, Write, Edit, Bash
-model: sonnet
 ---
 
 # Test Flakiness Detection

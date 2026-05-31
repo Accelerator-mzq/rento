@@ -4,7 +4,6 @@ description: "Map test coverage to GDD critical paths, identify fixed bugs witho
 argument-hint: "[update | audit | report]"
 user-invocable: true
 allowed-tools: Read, Glob, Grep, Write, Edit, AskUserQuestion
-model: sonnet
 ---
 
 # Regression Suite

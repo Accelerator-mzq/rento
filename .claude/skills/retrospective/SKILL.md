@@ -4,7 +4,6 @@ description: "Generates a sprint or milestone retrospective by analyzing complet
 argument-hint: "[sprint-N|milestone-name]"
 user-invocable: true
 allowed-tools: Read, Glob, Grep, Write, Bash, AskUserQuestion
-model: sonnet
 ---
 
 ## Phase 1: Parse Arguments

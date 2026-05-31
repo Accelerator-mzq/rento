@@ -4,7 +4,6 @@ description: "Analyzes game balance data files, formulas, and configuration to i
 argument-hint: "[system-name|path-to-data-file]"
 user-invocable: true
 allowed-tools: Read, Glob, Grep, Write, AskUserQuestion
-model: sonnet
 agent: economy-designer
 ---
 

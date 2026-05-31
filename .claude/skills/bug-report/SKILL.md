@@ -4,7 +4,6 @@ description: "Creates a structured bug report from a description, or analyzes co
 argument-hint: "[description] | analyze [path-to-file]"
 user-invocable: true
 allowed-tools: Read, Glob, Grep, Write
-model: sonnet
 ---
 
 ## Phase 1: Parse Arguments
