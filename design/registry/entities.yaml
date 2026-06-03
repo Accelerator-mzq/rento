@@ -8,6 +8,12 @@
 #   - Only register facts that cross system boundaries. Internal-only facts
 #     (a formula used in one GDD only) do NOT need to be registered.
 #   - Never delete entries — set status: deprecated instead.
+#   - status values: active | deprecated | placeholder.
+#     placeholder = value is a temp-fill (e.g. public reference number) pending
+#     derivation by the owning system. Downstream systems MUST NOT hardcode a
+#     placeholder value into logic — read it from the owning system's runtime
+#     field/interface instead. The owning system flips status to active and
+#     updates value (set revised:) once the real value is derived.
 #   - When a value changes: update the value, set revised: to today's date,
 #     and add a comment with the old value and which GDD changed it.
 #   - source: is the authoritative GDD — the one that "owns" this fact.
@@ -37,7 +43,7 @@
 #   Each entry: name, status, source, referenced_by[], attributes{}, added, revised
 
 version: 1
-last_updated: ""
+last_updated: 2026-06-02
 
 # ─── ENTITIES ────────────────────────────────────────────────────────────────
 # Named game-world objects: enemies, NPCs, characters, factions, bosses.
@@ -106,7 +112,290 @@ items: []
 #   output_range[min, max], added
 # Optional: expression (the actual formula), notes
 
-formulas: []
+formulas:
+  - name: advance_index
+    status: active
+    source: design/gdd/board-data.md
+    referenced_by:
+      - design/gdd/board-data.md
+      - design/gdd/movement.md   # R-move 2026-06-02：移动(4)消费 AdvanceIndex 落点+passedGo
+      # 预期消费方（GDD 成形后追加）：经济现金(5)
+    variables:
+      - from
+      - steps
+      - N
+    output_range: [0, 39]   # 0 .. N-1，经典盘 N=40
+    expression: "mod(from + steps, N)"
+    notes: "环路位移。mod 为数学取余（结果恒≥0，非 C++ 对负数的 %）。steps 可负（后退牌）、可超 N（多圈）。落点恒在 [0,N-1]。"
+    added: 2026-06-01
+    revised: ""
+  - name: passed_go_count
+    status: active
+    source: design/gdd/board-data.md
+    referenced_by:
+      - design/gdd/board-data.md
+      - design/gdd/movement.md   # R-move 2026-06-02：移动(4)取 passedGo 作发薪 push 门(P-1)
+      # 预期消费方：经济现金(5) —— 据此发"经过 GO 薪水"
+    variables:
+      - from
+      - steps
+      - N
+    output_range: [-1, 2]   # 正常单次掷骰/事件区间；理论无界
+    expression: "floor((from + steps) / N) - floor(from / N)"
+    notes: "经过出发格 GO 的净次数。floor 为向负无穷地板除。正=顺时针经过，负=逆向穿越。
+      R2 决策：恒用上方通用式（减去 floor(from/N) 项）。简化式 floor((from+steps)/N) 仅在 from∈[0,N-1] 时成立；
+      通用式对 from 越界亦数学正确（鲁棒自修正），消除 Shipping 构建下 ensure() 失效时的静默错值。
+      契约：如实输出有符号值，发薪策略由经济系统裁决（passed_go≤0 不发薪）。"
+    added: 2026-06-01
+    revised: 2026-06-01    # R3 同步 GDD F-2 通用式决策（原简化式 floor((from+steps)/N) 仅 from∈[0,N-1] 成立）
+  - name: steps_between
+    status: active
+    source: design/gdd/board-data.md
+    referenced_by:
+      - design/gdd/board-data.md
+      - design/gdd/movement.md   # R-move 2026-06-02：移动(4) TeleportTo(paysGo=true) 用 steps_between 算前向步数
+      # 预期消费方：AI(10)、策略卡/机会牌(15/7)"前进到最近X"
+    variables:
+      - from
+      - target
+      - N
+    output_range: [0, 39]   # 0 .. N-1
+    expression: "mod(target - from, N)"
+    notes: "环上顺时针前向距离。供'前进到最近车站/公用'类牌与 AI 距离估值使用。同格=0。"
+    added: 2026-06-01
+    revised: ""
+  - name: next_active_player
+    status: active
+    source: design/gdd/player-turn.md
+    referenced_by:
+      - design/gdd/player-turn.md
+      # 预期消费方：破产胜负(9)
+    variables:
+      - cur
+      - cur_safe
+      - P
+      - A
+    output_range: [0, 7]   # 0..P-1（P≤8）；|A|≤1 返回哨兵 INDEX_NONE(-1)
+    expression: "cur_safe = ((cur % P) + P) % P; candidate_k = mod(cur_safe + k, P); next = candidate_k where k = min{ k in [1,P-1] | candidate_k in A }"
+    notes: "下一个未破产玩家的 TurnOrderIndex。A=未破产玩家 TurnOrderIndex 集合。
+      【R1 守卫先行】|A|≤1 在枚举【之前】返回 INDEX_NONE(|A|=1 即胜者已定,不返回该唯一存活者,CR-6 应已触发);
+      仅 |A|≥2 进入枚举。消除旧版'|A|=1 且存活者≠cur 时枚举返回有效 index'与声明的矛盾。
+      mod 安全(R5 主公式权威化):入口先把 cur 规范化为 cur_safe=((cur%P)+P)%P(欧几里得取模),消除损坏入参(cur<0/cur≥P,如读档异常)产生负/越界 candidate 的来源;枚举用 cur_safe。
+      旧'cur+k 恒为正不需负数防御'论证已废(在 |A|=P 且 cur=-P 时失效)。与 board-data advance_index 仅共享'环形索引模式',作用于玩家环 P。防死循环:|A|≥2 时 k 遍历 1..P-1 必终止(前提 cur_safe∈[0,P-1])。"
+    added: 2026-06-01
+    revised: 2026-06-01    # R8 同步 GDD R5 主公式权威化（旧 mod(cur+k,P) → mod(cur_safe+k,P)，入口欧几里得取模规范化；registry 此前漂移未同步）
+  - name: active_player_count
+    status: active
+    source: design/gdd/player-turn.md
+    referenced_by:
+      - design/gdd/player-turn.md
+      # 预期消费方：破产胜负(9) —— APC==1 触发胜负
+    variables:
+      - players
+    output_range: [0, 8]   # 0..P
+    expression: "APC = count(p in players where p.bIsBankrupt == false)"
+    notes: "未破产玩家数。APC==1 触发 CR-6 胜负信号；APC==0 为正常流程不可达异常态(assert)。A 集合与 APC 须取自同一快照。"
+    added: 2026-06-01
+    revised: ""
+  - name: doubles_to_jail
+    status: active
+    source: design/gdd/player-turn.md
+    referenced_by:
+      - design/gdd/player-turn.md
+      # 预期消费方：事件格/监狱(7)、设置&House Rules(23)
+    variables:
+      - ConsecutiveDoubles
+      - DOUBLES_JAIL_THRESHOLD
+    output_range: [0, 1]   # bool
+    expression: "bShouldJail = (ConsecutiveDoubles >= DOUBLES_JAIL_THRESHOLD)"
+    notes: "连续双点入狱判定。阈值见常量 doubles_jail_threshold(默认3)。用 >= 防御异常越级。时序：骰子报 bIsDouble→本系统先累加 ConsecutiveDoubles→再判定。"
+    added: 2026-06-01
+    revised: ""
+  - name: turn_order_init_rank
+    status: active
+    source: design/gdd/player-turn.md
+    referenced_by:
+      - design/gdd/player-turn.md
+    variables:
+      - roll_i
+      - round
+    output_range: [0, 7]   # 0..P-1，构成完全排列
+    expression: "rank(i) = position of i in sort({(roll_i,i)}, key=roll_i desc); ties re-roll until MAX_TIEBREAK_ROUNDS then seat-index ascending"
+    notes: "开局掷骰定序排名(0=最高=先手)。roll 数值归骰子(3)，排序逻辑归本系统。平手达 max_tiebreak_rounds 后按席位升序裁定(确定性、防死循环)。"
+    added: 2026-06-01
+    revised: ""
+  - name: dice_roll
+    status: active
+    source: design/gdd/dice.md
+    referenced_by:
+      - design/gdd/dice.md
+      # 预期消费方：玩家回合(2)消费 Total/bIsDouble、移动(4)消费 Total、事件格(7)消费 bIsDouble
+    variables:
+      - Die1
+      - Die2
+      - Total
+      - bIsDouble
+    output_range: [2, 12]   # Total ∈ [2,12]；bIsDouble 为派生 bool
+    expression: "Die1 = FRandomStream.RandRange(1,6); Die2 = FRandomStream.RandRange(1,6); Total = Die1 + Die2; bIsDouble = (Die1 == Die2)"
+    notes: "标准双骰(2d6)。两颗独立均匀 d6(各面 1/6)、非'先掷 Total 再拆解'。Total 三角分布(P(7)=6/36 峰、P(2)=P(12)=1/36)；P(bIsDouble)=6/36=1/6。
+      走单一权威 FRandomStream(可种子化、F-4 性质 D 确定性重放)。payload FDiceRollResult{Die1,Die2,Total,bIsDouble} 不变式：Total==Die1+Die2 且 bIsDouble==(Die1==Die2)。
+      契约：本系统只产出不解释——走几步归移动(4)、双点链/入狱归回合(2)、定序只取 Total 忽略 bIsDouble 归回合(2)。注册供 /consistency-check 防移动/回合假设不同骰制。"
+    added: 2026-06-01
+    revised: ""
+  - name: salary
+    status: active
+    source: design/gdd/economy-cash.md
+    referenced_by:
+      - design/gdd/economy-cash.md
+      - design/gdd/movement.md   # R-move 2026-06-02：移动(4) push (passedGo,SalaryAmount) 触发发薪
+      # 输入方：棋盘(1) SalaryAmount；HUD(16) 显示
+    variables:
+      - passed_go
+      - SalaryAmount
+    output_range: [0, 2400]   # 正常 passed_go∈[0,2]×200；异常溢出输入 clamp 到 1000×SalaryAmount；dev ensure passed_go≤12
+    expression: "salary = clamp(max(passed_go,0), 0, PASSED_GO_SAFE_MAX=1000) × SalaryAmount"
+    notes: "发薪(经济 F-1)。gate 在 passed_go>0(非 salary>0)；passed_go≤0 不发。SalaryAmount 物理存棋盘 Go 格、真值=go_salary_amount(200)。
+      【R1 溢出硬防护】乘法前运行时 clamp passed_go 到 [0,1000](非仅 dev ensure，防 Shipping 下异常 passed_go × SalaryAmount int32 溢出为负击穿 Cash≥0)；Credit/Debit 另守 amount≥0。
+      防双重发薪:SpecialAction=CollectSalary 仅 UI 标记不触发第二次。注册供 /consistency-check 防移动/事件假设不同发薪触发。"
+    added: 2026-06-02
+    revised: ""
+  - name: property_rent
+    status: active
+    source: design/gdd/economy-cash.md
+    referenced_by:
+      - design/gdd/economy-cash.md
+      # 输入方：所有权(6) 供 house_count/is_monopoly/is_mortgaged + 棋盘(1) RentTable；AI(10)/HUD(16) 引用
+    variables:
+      - is_mortgaged
+      - is_monopoly
+      - house_count
+      - RentTable
+      - monopoly_rent_multiplier
+    output_range: [0, 2000]   # ≥0；上限取决于 RentTable 真值（占位体系内）
+    expression: "if is_mortgaged: 0; elif (is_monopoly and house_count==0): RentTable[0]×monopoly_rent_multiplier; else: RentTable[clamp(house_count,0,5)]"
+    notes: "地产租金(经济 F-2,piecewise)。垄断×2 只作用无房 RentTable[0],酒店绝不翻倍。is_mortgaged 短路置 0 先于表查找。
+      house_count clamp[0,5] 防越界。归属事实由所有权(6)经 push 模型传入。注册供 /consistency-check 防下游误用翻倍规则。"
+    added: 2026-06-02
+    revised: ""
+  - name: railroad_rent
+    status: active
+    source: design/gdd/economy-cash.md
+    referenced_by:
+      - design/gdd/economy-cash.md
+      # 输入方：所有权(6) 供 station_count + 棋盘(1) RentTable[4]
+    variables:
+      - station_count
+      - RentTable
+    output_range: [0, 999]   # ≥0；档位值取决于 RentTable 真值
+    expression: "station_count>=1 ? RentTable[clamp(station_count-1,0,3)] : 0"
+    notes: "车站租金(经济 F-3)。守 station_count≥1 否则 0（防 RentTable[-1] 崩，不假设所有权6恒正确）。"
+    added: 2026-06-02
+    revised: ""
+  - name: utility_rent
+    status: active
+    source: design/gdd/economy-cash.md
+    referenced_by:
+      - design/gdd/economy-cash.md
+      # 输入方：所有权(6) 供 utility_count + 棋盘(1) DiceMultiplierTable + 骰子(3)/移动(4)/事件(7) 供 dice_total
+    variables:
+      - dice_total
+      - utility_count
+      - DiceMultiplierTable
+    output_range: [0, 120]   # 12×10 上限（DiceMultiplierTable 占位 [4,10]）
+    expression: "utility_count>=1 ? dice_total × DiceMultiplierTable[clamp(utility_count-1,0,1)] : 0"
+    notes: "公用租金(经济 F-4)。dice_total∈[2,12] 显式参数传入（不读缓存：正常=移动骰，前进到最近公用=事件额外骰）。守 utility_count≥1。"
+    added: 2026-06-02
+    revised: ""
+  - name: is_monopoly
+    status: active
+    source: design/gdd/property-ownership.md
+    referenced_by:
+      - design/gdd/economy-cash.md      # property_rent F-2 消费(垄断×2 只作用无房 base)
+      # 输入方：棋盘(1) GetTilesInGroup + 本系统 owner map；AI(10) 估值引用
+    variables:
+      - playerId
+      - colorGroup
+      - owner_map
+    output_range: [false, true]   # bool
+    expression: "playerId!=INDEX_NONE AND colorGroup!=None AND |GetTilesInGroup(colorGroup)|>0 AND (∀ t∈group: owner_map[t]==playerId)"
+    notes: "垄断判定(地产所有权6 F-1)。抵押不破坏垄断归属(完整组未抵押无房地享×2,经典忠实,Rento 核查 OQ-Prop-5)。空组/None/INDEX_NONE→false(空集守门防 vacuous-true)。注册供 /consistency-check 防下游误判垄断破坏规则。"
+    added: 2026-06-03
+    revised: ""
+  - name: station_count
+    status: active
+    source: design/gdd/property-ownership.md
+    referenced_by:
+      - design/gdd/economy-cash.md      # railroad_rent F-3 消费(守 count≥1)
+      # 输入方：棋盘(1) GetTileData.TileType + 本系统 owner map；AI(10) 引用
+    variables:
+      - playerId
+      - owner_map
+    output_range: [0, 4]   # 经典 4 车站；自定义棋盘 [0,N-1]
+    expression: "playerId==INDEX_NONE ? 0 : count{t | TileType(t)==Railroad AND owner_map[t]==playerId}"
+    notes: "车站持有计数(地产所有权6 F-2)。无主格(INDEX_NONE)经严格等值比较自然排除,不溢出(count≤N-1)。本系统须保证不低报(经济守门只防 0 不崩,见 OQ-T-Prop-1)。"
+    added: 2026-06-03
+    revised: ""
+  - name: utility_count
+    status: active
+    source: design/gdd/property-ownership.md
+    referenced_by:
+      - design/gdd/economy-cash.md      # utility_rent F-4 消费(守 count≥1)
+      # 输入方：棋盘(1) GetTileData.TileType + 本系统 owner map；AI(10) 引用
+    variables:
+      - playerId
+      - owner_map
+    output_range: [0, 2]   # 经典 2 公用；自定义 [0,N-1]
+    expression: "playerId==INDEX_NONE ? 0 : count{t | TileType(t)==Utility AND owner_map[t]==playerId}"
+    notes: "公用持有计数(地产所有权6 F-3)。同 station_count 排除无主格、不低报。"
+    added: 2026-06-03
+    revised: ""
+  - name: unmortgage_cost
+    status: active
+    source: design/gdd/economy-cash.md
+    referenced_by:
+      - design/gdd/economy-cash.md
+      # 输入方：棋盘(1) MortgageValue；下游 AI(10) 估值
+    variables:
+      - MortgageValue
+      - fee_num
+      - fee_den
+    output_range: [2, 4400]   # >MortgageValue；上限取决于 MortgageValue 真值
+    expression: "fee = (MortgageValue×fee_num + fee_den-1)/fee_den; unmortgage_cost = MortgageValue + fee   // 整数 ceil"
+    notes: "赎回(经济 F-6)。整数 ceil 杀 float（联网重放跨平台/跨编译配置位级一致）。fee_num/fee_den=1/10(unmortgage_fee_rate)。
+      fee 恒≥1（堵 1×1.1→1 免费赎回退化）。MV=75→83、MV=1→2。"
+    added: 2026-06-02
+    revised: ""
+  - name: building_sellback
+    status: active
+    source: design/gdd/economy-cash.md
+    referenced_by:
+      - design/gdd/economy-cash.md
+      # 输入方：棋盘(1) BuildingCost；建房(8) 供建筑清单；net_liquidation_value 消费
+    variables:
+      - BuildingCost
+      - sell_num
+      - sell_den
+    output_range: [0, 1000]   # ≥0；取决于 BuildingCost 真值
+    expression: "building_sellback = (BuildingCost × sell_num) / sell_den   // 整数 floor"
+    notes: "卖房返还(经济 F-8)。整数 floor。sell_num/sell_den=1/2(building_sellback_ratio)。比率归经济、建筑清单归建房(8)。BuildingCost=75→37。"
+    added: 2026-06-02
+    revised: ""
+  - name: net_liquidation_value
+    status: active
+    source: design/gdd/economy-cash.md
+    referenced_by:
+      - design/gdd/economy-cash.md
+      # 真正消费方：破产胜负(9) —— 移交口径须 verbatim 用此式（OQ-T-Econ-2，AC-27🔴）
+    variables:
+      - MortgageValue
+      - building_sellback
+    output_range: [0, 200000]   # 单玩家独占全盘约 10^5，int32 安全
+    expression: "net_liquidation_value(player) = Σ MortgageValue(未抵押地) + Σ building_sellback(每栋)"
+    notes: "净可变现价值(经济 F-9)。🔴 CR-7 破产判据(F-10 is_insolvent 严格<)与破产(9)实际转移共用同一式，
+      否则'被判破产但其实付得起'算账穿帮(AC-27)。已抵押地贡献0。区别于局末排名 net worth 口径(可能含未抵押 face value，归破产9裁定，OQ-Econ-5)。
+      注册供 /consistency-check 强制破产(9)用同式。"
+    added: 2026-06-02
+    revised: ""
 
 # Example:
 #
@@ -139,7 +428,240 @@ formulas: []
 #
 # Required fields: name, status, source, referenced_by, value, unit, added
 
-constants: []
+constants:
+  - name: board_tile_count_classic
+    status: active
+    source: design/gdd/board-data.md
+    referenced_by:
+      - design/gdd/board-data.md
+      # 预期消费方：移动(4)、存档(21)、地图编辑器(26)
+    value: 40
+    unit: tiles
+    notes: "经典标准盘格数 N。环路索引 0..39，索引0=Go。自定义棋盘(地图编辑器)可不同，校验下限 N≥4。"
+    added: 2026-06-01
+    revised: ""
+  - name: go_salary_amount
+    status: active             # R-econ 2026-06-02：经济(5)确认真值 200（faithful-clone），placeholder→active
+    source: design/gdd/board-data.md
+    referenced_by:
+      - design/gdd/board-data.md
+      - design/gdd/economy-cash.md   # 经济(5) 平衡推导 owner（F-1 salary）
+      # 移动(4) 读取并传递、HUD(16) 显示
+    value: 200                 # 经济(5)确认=经典值（主现金 faucet）
+    unit: cash
+    notes: "过/停 GO 发薪额。物理存储于 Go 格 FBoardTileData.SalaryAmount(棋盘 1 拥有字段)，
+      但【平衡推导责任归经济(5)】——经济(5) GDD 须据现金注入模型确定真值并回链依据(OQ-1 关闭条件)。
+      跨系统旋钮(board↔economy↔HUD)，注册于此使 /consistency-check 捕获双方静默不一致。
+      发薪权威=F-2 passed_go(board-data CR-2)，passed_go>0 时发 passed_go×此值。is_placeholder。"
+    added: 2026-06-01
+    revised: ""
+  - name: tax_amount_income_classic
+    status: active             # R-econ 2026-06-02：经济(5)确认 flat 200，placeholder→active
+    source: design/gdd/board-data.md
+    referenced_by:
+      - design/gdd/board-data.md
+      - design/gdd/economy-cash.md   # 经济(5) 平衡 owner（F-7 tax sink）
+      # 事件格(7) 触发扣税
+    value: 200                 # 经济(5)确认=flat 经典值（现金 sink；易上手④不走百分比）
+    unit: cash
+    notes: "所得税格(经典盘索引4)固定税额，存于该格 FBoardTileData.TaxAmount。
+      平衡推导责任归经济(5)(现金回收 sink)。is_placeholder。非 Tax 格此字段必须为 0(board-data 反向校验 AC-23i)。"
+    added: 2026-06-01
+    revised: ""
+  - name: tax_amount_luxury_classic
+    status: active             # R-econ 2026-06-02：经济(5)确认 flat 100，placeholder→active
+    source: design/gdd/board-data.md
+    referenced_by:
+      - design/gdd/board-data.md
+      - design/gdd/economy-cash.md   # 经济(5) 平衡 owner（F-7 tax sink）
+      # 事件格(7) 触发扣税
+    value: 100                 # 经济(5)确认=flat 经典值
+    unit: cash
+    notes: "奢侈税格(经典盘索引38)固定税额，存于该格 FBoardTileData.TaxAmount。
+      平衡推导责任归经济(5)。is_placeholder。"
+    added: 2026-06-01
+    revised: ""
+  - name: monopoly_rent_multiplier
+    status: active             # R-econ 2026-06-02：经济(5)成形，placeholder→active，source 迁入经济 GDD
+    source: design/gdd/economy-cash.md  # R-econ：source 已从 board-data 迁入经济（board-data CR-4 契约）
+    referenced_by:
+      - design/gdd/economy-cash.md
+      - design/gdd/board-data.md   # board 只存未翻倍 base，经济运行时乘此系数
+    value: 2
+    unit: multiplier
+    notes: "集齐同色组(垄断)后 RentTable[0] 的租金翻倍系数(经典固定 ×2，对所有色组一致)。
+      棋盘(1)只存未翻倍 base，经济(5)运行时乘此系数(board-data CR-4 契约)。
+      【当前 source 为临时】：经济(5)成形后须迁移 source 至经济 GDD 并置 active。
+      注册于此使 board base 与 economy 翻倍系数的静默不一致被 /consistency-check 捕获。is_placeholder。"
+    added: 2026-06-01
+    revised: ""
+  - name: mortgage_warning_threshold
+    status: active             # R-econ 2026-06-02：经济(5)成形，placeholder→active，source 迁入经济 GDD
+    source: design/gdd/economy-cash.md  # R-econ：抵押率警戒线归经济旋钮，与 unmortgage_fee 1/10 协同验证
+    referenced_by:
+      - design/gdd/economy-cash.md
+      - design/gdd/board-data.md   # board 加载期校验 MortgageRateHigh 警告用
+    value: 0.6
+    unit: ratio
+    notes: "抵押率【数据质量】警告阈值。MortgageValue > floor(PurchasePrice × 此值) 触发结构化警告 MortgageRateHigh(board-data Edge Cases / AC-24c)。
+      0.6 是抵押率越出经典规则区(经典约 0.5)的保守警戒线——警告的是【board 数据异常】，非套利。
+      【R-econ 2026-06-02 更正】旧 notes 称"套利风险区间"系错误：一抵一赎净现金 = −fee_rate×MortgageValue，对任意抵押率恒为负(亏 fee_rate×MV)，套利不存在(经济 GDD AC-42 数学证伪)。此阈值与 unmortgage_fee 无套利联动。
+      此阈值是经济(5)配置旋钮，据数据质量策略调整(如 0.55/0.65)须在经济 GDD 记录并更新此 value。"
+    added: 2026-06-01
+    revised: ""
+  - name: doubles_jail_threshold
+    status: active
+    source: design/gdd/player-turn.md
+    referenced_by:
+      - design/gdd/player-turn.md
+      # 预期消费方：事件格/监狱(7)、俄罗斯轮盘(14)、设置&House Rules(23)
+    value: 3
+    unit: consecutive_doubles
+    notes: "连续双点入狱阈值(公式 doubles_to_jail)。默认 3=经典大富翁规则(桌游忠实①)。House Rules(23) 可覆盖(范围 2..5),但【开局锁定、局中不可改】(player-turn R1)——防存档+热切换炸弹(存3/阈3 读档改阈2 → 3>=2 未掷即入狱)。阈值随存档序列化。"
+    added: 2026-06-01
+    revised: ""
+  - name: max_tiebreak_rounds
+    status: active
+    source: design/gdd/player-turn.md
+    referenced_by:
+      - design/gdd/player-turn.md
+    value: 5
+    unit: rounds
+    notes: "开局定序平手重掷上限(公式 turn_order_init_rank)。超出后剩余平手按席位索引升序裁定(确定性、防死循环)。工程安全值，非平衡决策。"
+    added: 2026-06-01
+    revised: ""
+  - name: ai_turn_watchdog
+    status: active
+    source: design/gdd/player-turn.md
+    referenced_by:
+      - design/gdd/player-turn.md
+      # 预期消费方：AI 对手(10)
+    value: 0          # 生产默认禁用；dev 构建启用
+    unit: dev_flag
+    notes: "【R2 再重定义】R1 的'帧内虚拟时钟看门狗'在同步单帧模型下不自洽(同步死循环=GameThread 忙循环,
+      单线程虚拟时钟永不推进、不可帧内捕获)。R2 拆为两条诚实 dev 兜底,此常量=【事后帧预算诊断阈值】:
+      AI 同步调用【返回后】检查耗时超阈值则 UE_LOG 警告(纯诊断、不强制 EndTurn)。
+      '永不返回'死循环不靠此捕获、靠单元测试框架进程级超时暴露为测试失败。仅 dev 构建。
+      演进:ai_turn_timeout(wall-clock,R1 废)→ 虚拟时钟看门狗(R1,R2 废)→ 事后帧诊断(R2)。
+      非 gameplay 平衡旋钮。AI(10) 内部随机性须走骰子(3)可种子化 RNG(OQ-3 重放,经 OQ-T-3 code-review 强制)。"
+    added: 2026-06-01
+    revised: 2026-06-01    # R1:wall-clock→看门狗;R2:虚拟时钟看门狗→事后帧预算诊断(同步模型自洽)
+  - name: ai_action_display_mode
+    status: active
+    source: design/gdd/player-turn.md
+    referenced_by:
+      - design/gdd/player-turn.md
+      # 预期消费方：HUD(16)、游戏反馈 VFX(19)
+    value: Animated   # 默认 Animated=HUD 逐步播 AI 动画；Instant=HUD 跳过。两者均不阻塞框架
+    unit: enum
+    notes: "【R2 新增 NR-1 AI 可观察性;R3-R5 曾升框架 gating;R6 RETREAT 降回纯呈现旋钮】持有者=HUD(16)/呈现层,
+      框架侧不读此值(player-turn AC-44③ 静态可测)。Animated=HUD 经 OnAIActionExecuted(ActionIndex) 非阻塞逐步播 AI 买地/建房动画;
+      Instant=HUD 跳过 AI 动画。【R6 RETREAT:两者均不阻塞框架——框架在 AI 同步决策执行完即时 EndTurn、不等呈现回放】。
+      支柱②'AI 可观察'由框架硬保证降为 HUD 自主呈现职责。具体动画/时长归 HUD(16)/VFX(19),跨系统呈现旋钮,注册供 /consistency-check。"
+    added: 2026-06-01
+    revised: 2026-06-02    # R8: notes 同步 R6 RETREAT（纯呈现旋钮、框架不读;此前 notes 停留 R3 gating 描述=漂移）
+  - name: ai_playback_gate_timeout
+    status: deprecated        # R8(2026-06-02): player-turn R6 RETREAT 删除框架 gating,此旋钮已从 GDD Tuning Knobs 移除
+    source: design/gdd/player-turn.md
+    referenced_by:
+      - design/gdd/player-turn.md
+    value: 10        # 历史值(已废)
+    unit: seconds
+    notes: "【DEPRECATED R8(2026-06-02)——随 player-turn R6 RETREAT 删除框架 gating 一并废弃;GDD Tuning Knobs 已无此旋钮、无消费方】
+      历史:【R3 新增,B-1 Animated gating dev 兜底;R4 BLOCK-3 拆为 dev 诊断阈值】曾为 Animated 模式框架 gating
+      等呈现层回调 OnAIActionPlaybackComplete 的 dev 超时诊断。R6 RETREAT 后框架不再 gating(即时 EndTurn、不等呈现回放)。
+      保留为 deprecated(registry 规则:不删条目,置 deprecated)。"
+    added: 2026-06-01
+    revised: 2026-06-02    # R8: active→deprecated（随 player-turn R6 RETREAT,registry 此前漂移未同步）
+
+  - name: ai_playback_gate_prod_safety_valve
+    status: deprecated        # R8(2026-06-02): player-turn R6 RETREAT 删除框架 gating,此旋钮已从 GDD Tuning Knobs 移除
+    source: design/gdd/player-turn.md
+    referenced_by:
+      - design/gdd/player-turn.md
+    value: 30        # 历史值(已废)
+    unit: seconds
+    notes: "【DEPRECATED R8(2026-06-02)——随 player-turn R6 RETREAT 删除框架 gating 一并废弃;GDD Tuning Knobs 已无此旋钮、无消费方】
+      历史:【R4 新增,B-1 BLOCK-3 生产安全阀】曾为 Animated gating 生产构建超时兜底(呈现层永不回调时强制推进 + 遥测),
+      防 Animated 生产流程永久卡死。R6 RETREAT 后框架不再 gating(即时 EndTurn、不阻塞于呈现回放),此安全阀无存在意义。
+      保留为 deprecated(registry 规则:不删条目,置 deprecated)。"
+    added: 2026-06-01
+    revised: 2026-06-02    # R8: active→deprecated（随 player-turn R6 RETREAT,registry 此前漂移未同步）
+
+
+  - name: die_faces
+    status: active
+    source: design/gdd/dice.md
+    referenced_by:
+      - design/gdd/dice.md
+      # 预期消费方：玩家回合(2)双点语义、移动(4)步数范围
+    value: 6
+    unit: faces
+    notes: "单颗骰子面数。MVP 锁定 6=经典大富翁标准 d6(桌游忠实①),接口预留但不作可调旋钮。
+      改值影响 dice_roll PMF 与 Total 范围 [2,12],牵动移动(4)步数范围、回合(2)双点逻辑——跨系统旋钮(故 MVP 锁定)。
+      Alpha House Rules(23) 若开放异形骰再议。注册供 /consistency-check 防移动/回合假设不同骰面数。"
+    added: 2026-06-01
+    revised: ""
+  - name: dice_count
+    status: active
+    source: design/gdd/dice.md
+    referenced_by:
+      - design/gdd/dice.md
+      # 预期消费方：玩家回合(2)bIsDouble 语义、移动(4)步数范围
+    value: 2
+    unit: dice
+    notes: "单次掷骰的骰子数。MVP 锁定 2=标准双骰(桌游忠实①),接口预留但不作可调旋钮。
+      改值破坏 bIsDouble/双点链语义与移动范围,须协同回合(2)/移动(4)——跨系统旋钮(故 MVP 锁定)。
+      注册供 /consistency-check 防下游假设不同骰子数。"
+    added: 2026-06-01
+    revised: ""
+  - name: starting_cash
+    status: active
+    source: design/gdd/economy-cash.md
+    referenced_by:
+      - design/gdd/economy-cash.md
+      # 预期消费方：主菜单大厅(20) 初始化 PlayerState.Cash、HUD(16) 显示、破产(9)
+    value: 1500
+    unit: cash
+    notes: "每玩家起始现金(经济 Tuning)。1500=经典大富翁验证值(faithful-clone)。拖沓主杠杆。
+      另见 starting_cash_fast 快速局档。安全范围 750–2000。"
+    added: 2026-06-02
+    revised: ""
+  - name: starting_cash_fast
+    status: active
+    source: design/gdd/economy-cash.md
+    referenced_by:
+      - design/gdd/economy-cash.md
+      # 预期消费方：设置&House Rules(23) 快速局选项、主菜单(20)
+    value: 750
+    unit: cash
+    notes: "快速局起始现金档(经济 Tuning,非经典——压缩 concept Design Risk'后期拖沓')。原型期 playtest 校(OQ-Econ-3)。"
+    added: 2026-06-02
+    revised: ""
+  - name: unmortgage_fee_rate
+    status: active
+    source: design/gdd/economy-cash.md
+    referenced_by:
+      - design/gdd/economy-cash.md
+      # 预期消费方：AI(10) 抵押估值、mortgage_warning_threshold 数据质量校验
+    value: 0.10
+    unit: ratio
+    notes: "赎回手续费率(经济 F-6 unmortgage_cost)。=经典 10%。【实现用整数 num/den=1/10 + ceil,杀 float 保跨平台确定性】——
+      此 0.10 是人读值,真值表示为 fee_num/fee_den=1/10。【R-econ 2026-06-02 更正】此费率是赎回 sink,与 mortgage_warning_threshold 无套利联动(旧称"费率定套利临界抵押率"系错误:一抵一赎恒亏 fee_rate×MV,无套利,经济 AC-42 证伪)。"
+    added: 2026-06-02
+    revised: ""
+  - name: building_sellback_ratio
+    status: active
+    source: design/gdd/economy-cash.md
+    referenced_by:
+      - design/gdd/economy-cash.md
+      # 预期消费方：建房(8) 卖房、破产(9) net_liquidation_value、AI(10) 估值
+    value: 0.5
+    unit: ratio
+    notes: "卖房返还率(经济 F-8 building_sellback)。=经典半价。【实现用整数 num/den=1/2 + floor】。
+      比率归经济拥有、建筑清单归建房(8)。"
+    added: 2026-06-02
+    revised: ""
 
 # Example:
 #
