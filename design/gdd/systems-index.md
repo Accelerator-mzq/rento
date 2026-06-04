@@ -22,10 +22,10 @@
 | 3 | 骰子 Dice | Core | MVP | Approved | [dice.md](dice.md) | — |
 | 4 | 移动 Movement | Gameplay | MVP | Approved† | [movement.md](movement.md) | 1, 2, 3 |
 | 5 | 经济与现金 Economy & Cash | Economy | MVP | Approved* | [economy-cash.md](economy-cash.md) | 1, 2 |
-| 6 | 地产所有权 Property Ownership | Economy | MVP | Designed‡ | [property-ownership.md](property-ownership.md) | 1, 5 |
-| 7 | 事件格 Tile Events（机会/命运/税/监狱/起点） | Gameplay | MVP | Not Started | — | 1, 2, 3, 4, 5 |
-| 8 | 建房升级 Building & Rent Scaling | Economy | MVP | Not Started | — | 1, 5, 6 |
-| 9 | 破产与胜负 Bankruptcy & Win | Gameplay | MVP | Not Started | — | 2, 5 |
+| 6 | 地产所有权 Property Ownership | Economy | MVP | Approved‡ | [property-ownership.md](property-ownership.md) | 1, 5 |
+| 7 | 事件格 Tile Events（机会/命运/税/监狱/起点） | Gameplay | MVP | Approved§ | [tile-events.md](tile-events.md) | 1, 2, 3, 4, 5, 8(soft) |
+| 8 | 建房升级 Building & Rent Scaling | Economy | MVP | Approved¶ | [building-upgrade.md](building-upgrade.md) | 1, 5, 6 |
+| 9 | 破产与胜负 Bankruptcy & Win | Gameplay | MVP | Designed◊ | [bankruptcy.md](bankruptcy.md) | 2, 5, 6, 8 |
 | 10 | AI 对手 AI Opponent (inferred) | Gameplay | MVP | Not Started | — | 3, 4, 5, 6, 7, 8 |
 | 11 | 交易 Trading (inferred) | Economy | Alpha | Not Started | — | 5, 6 |
 | 12 | 拍卖 Auction | Economy | Alpha | Not Started | — | 5, 6 |
@@ -48,7 +48,13 @@
 
 > **†移动(4) APPROVED**(fresh re-review full 2026-06-02,6 agent opus + CD;propagate 闭合 2026-06-02):本档内部已收敛(R3 改 3 处)。CD 裁定的剩余真 blocker(system-of-systems propagate 债,处方=propagate 非 RETREAT)已经 producer 协调 `/propagate-design-change` + grep 逐档核实全部落地 → **移动 APPROVED**:**① ✅** economy.md line 57/102/330 旧 push 清理为 PULL + Interactions 玩家回合行补 holder 源(holder owner=回合2);**② ✅** player-turn 补 AC-46(SentToJail 抑制)+ CR-3.1/Edge Cases 规则,实 AC 号回填 movement AC-15;**③ ✅** player-turn 补 AC-47(程间非重入,CR-3.1 承接 CR-4);**④ ✅** board-data 补 AC-23j + Validation + Tuning(`DiceMultiplierTable[i]` 上界,OQ-Move-6)。OQ-Move-5/6 均 RESOLVED。
 
-> **‡地产所有权(6) Designed(pending review,2026-06-03)**:8 必需节 + Visual/UI/Open Questions 全写,41 AC(31 [Logic])。lean 模式(CD-GDD-ALIGN 跳过,Player Fantasy framing 待人工复核)。**须 fresh session 跑 `/design-review design/gdd/property-ownership.md`。** 关键裁定:**house_count 归建房(8)、6 不持**(避 6↔8 环);**is_monopoly 由 6 算**(查 board 组成员 + owner map);**买地/抵押事务由 6 拥有、调 economy `Debit`/`Credit`(6→5),economy 不反调 6**(解 5↔6 环)。**设计揪出 3 条 producer propagate 债**:**OQ-Prop-2** economy CR-4/CR-5/F-11 反向调用措辞(5→6,与 6→5 成 5↔6 环);**OQ-Prop-3** economy registry `property_rent`「house_count 由6供」应改「8 供」;**OQ-Prop-4** index `9 depends-on` 补 6(破产移交)、`16 depends-on` 可能补 6。registry 已注册 `is_monopoly`/`station_count`/`utility_count`(6-owned)。
+> **‡地产所有权(6) Approved-with-followups(R2 re-review full,2026-06-03)**:8 必需节全写,54 AC(44 [Logic] + 5 [Logic·CI-stub] + 5 [Advisory])。R1 Group A(8 BLOCKING)+ Group B propagate 闭合;**R2 re-review(economy/systems/game/qa/unreal 5 specialist + CD)2 hard blocker 已修**——AC-14b 重写(消"6 检测读不到的 house_count"逻辑不可实现)+ **OQ-Prop-7** economy F-5/292/AC-20 propagate 残留清理(Group B 第二代漏列,fresh-grep 双向 0 残留)。**deferred followup(不阻下游开工)**:OQ-Prop-5(Rento 抵押-垄断核查,冻结前)/ OQ-Prop-1(owner map 生命周期 ADR,下游8/9前)/ Player Fantasy 结构重构 + 快照 per-tile 映射 + F-2/3 求值序升级等 REC。 关键裁定:**house_count 归建房(8)、6 不持**(避 6↔8 环);**is_monopoly 由 6 算**(查 board 组成员 + owner map);**买地/抵押事务由 6 拥有、调 economy `Debit`/`Credit`(6→5),economy 不反调 6**(解 5↔6 环)。**设计揪出的 producer propagate 债 —— ✅ 全部 RESOLVED 2026-06-03(`/propagate-design-change`,fresh-grep 重盘扩集)**:**OQ-Prop-2** economy CR-4/CR-5/F-11 反向调用 + AC-30/31 范围 → 改为事务归6方向6→5、economy 只执行现金侧(economy line 60/63/64/70/87/104/106/118/241/291/441/442);**OQ-Prop-3** 「house_count 由6供」→「建房8供」,**原登记 6 处,fresh-grep 实命中 9 处**(economy 58/104/152/265/318/333/470 + systems-index 67 + entities 267/277);**OQ-Prop-4** index `9 depends-on` 补 6 ✓(`16 depends-on` 暂不补——HUD 是否直读归属待 HUD GDD 裁定);**OQ-Prop-6**(R1 新增) board-data line90 RentTable 档位错归属6 → 经济5 F-3 ✓;**P5** board-data line161/301 补 `TileType`/`GetTilesInGroup` ✓。registry 已注册 `is_monopoly`/`station_count`/`utility_count`(6-owned)。
+
+> **¶建房升级(8) APPROVED-with-followups(R4 re-review full,2026-06-04)**:8 必需节全写,35 AC(30 [Logic] + 2 [Advisory] + 2 [Integration·BLOCKING] + 1 quarantined)。R1(6 blocker)→R2(3 in-doc:AC-29/30/F-1)→R3(3 in-doc:CR-9 旁路/AC-20 tautology/AC-3-8 GIVEN)逐轮闭合;**R4(economy/systems/game/qa/unreal 5 specialist + CD)**:5 项 fast close-out 已应用(L131/L202 强制清算均衡**单一 owner 适用域**修内部自相矛盾 + AC-29 spy `OutboundCallLog` 约定 + AC-11a 删虚假调用序蕴含 + CR-8 Blueprint 同步多播重入注→OQ-Build-5 + Fantasy「全砸下去」均衡建房措辞)。**producer propagate 债 ✅ 已兑现(2026-06-04 `/propagate-design-change`,fresh-grep 双侧核实落地;OQ-Build-3 in-kind 仍 open 待破产9)**:**OQ-Build-1**(economy CR-7.3 L71 + AC-43 变体B 仍写 economy 驱动清算=5→8/5→6 反向边;player-turn 缺清算驱动相 + 「调6 Mortgage 前读8 GetHouseCount==0」AC,fresh-grep 双侧真空——含两层清算顺序 MV升序 vs F-4 全盘最高档须裁定单一规则)、**OQ-Build-2**(economy F-10 `is_insolvent` L229 缺 `preaggregated_nlv` 形参 + F-9 展开式 + player-turn CR-3.2 须覆盖 F-9/破产判据聚合路径,非仅算租)、**OQ-Build-6**(通告 beat 下游 player-turn/HUD 接收义务真空)。硬门已在 building AC-27 登记「player-turn AC 未补前 #8 抵押接缝 story 不得 Done」。**RECOMMENDED 下一 pass**:AC-25c 序列级均衡 / AC-21 OnBuildingChanged 断言 / F-1 is_monopoly-guards-first 文档化 / 奇数 BC floor 序 / 酒店租低于垄断翻倍 board 校验(并入 OQ-Econ-9)/ BP 绑定形式 + 清算 loop 帧模式→OQ-Build-5。**CD 裁决**:对手现金可见性归 UX scope(L271 UX Flag,非 #8 blocker,重申 R1/R2 裁定)。
+>
+> **§事件格(7) APPROVED-with-followups(R2 re-review full,2026-06-03)**:8 必需节全写,64 AC(59 [Logic] + 4 [Advisory] + RepairFee 4 条件门)。首评 MAJOR REVISION NEEDED(game/systems/economy/qa/unreal 5 specialist + CD)→ R1 改 8 blocker + AC-craft → **R2(systems/qa + CD)12 首评 BLOCKING 全 CLOSED**;唯一本档 must-fix(L110 存档行 model-A 残留"指针/监狱态")已修。关键裁定:**OQ-Event-1 监狱态以 player-turn 为准**(字段存 player-turn PlayerState/player-turn 计数、7 拥规则+受控写;`bInJail`→`bIsInJail`);**B-12** 补 AC-62/63(承接 player-turn CR-8#4/AC-39b);牌堆 model B + Fisher-Yates 种子序列化;枚举 `EJailReason`/`EJailReleaseMethod` uint8。**followup(不阻下游)**:跨档 propagate=player-turn 命名监狱态受控写接口(契约已在册 L200/L366,仅补名,REC 非 vacuum);deferred REC=Player Fantasy 结构重构 + 保释金50退化诚实标注;pre-freeze OQ=OQ-Event-6(Rento 监狱核查)/OQ-Event-7(engine ADR:非重入/宿主/RNG)/OQ-Event-3 ✅ RESOLVED(RepairFee 全盘房/酒店口径经建房8 F-7 `GetTotalHouseCount`/`GetTotalHotelCount`,与 per-tile [0,5] 区分,/consistency-check 2026-06-04)。registry 已注册 `JAIL_BAIL_AMOUNT`/`MAX_JAIL_TURNS`/牌堆size + `collect/pay_to_each_total`。
+>
+> **◊破产与胜负(9) Designed(pending review,2026-06-04)**:11 节全写(8 必需 + Visual/Audio + UI + Open Questions),43 AC(39 [Logic] 含 2 CI-stub + 3 [Integration] + 1 Advisory),lean 模式(D/H spawn qa-lead,CD gate skip)。关键裁定:**9 = return-only 编排子程序**(回合2 调 `ResolveBankruptcy(debtor,creditor,snapshot)→{eliminated,winnerId|NONE,rankingEntry}`,只向下调 5/6/8、**绝不回调2**,防 2↔9 环;bIsBankrupt 归回合2 经返回值驱动写);**creditor 分支**(收租→资产 in-kind 转债权人 / 银行 INDEX_NONE→地回退+现金蒸发);**OQ-Build-3 裁定**=收租 in-kind 随格 + 银行调8 `LiquidateAllBuildings`(provisional 待 Rento 核查);**排名**=出局逆序 + net_worth(F-1=Cash+经济F-9)provisional MVP 不计算。registry 已注册 `net_worth`(9-owned)+ active_player_count/net_liquidation_value 补 9 引用与 APC 接缝注。**待办**:① fresh session `/design-review` 独立验证;② **OQ-Bankrupt-3 ✅ RESOLVED 2026-06-04**(`/propagate-design-change` 已闭合 economy line479 改 identity-check + line247/446 补建筑拆除归9调8;fresh-grep 双侧核实,范围较登记收窄——「仅现金腿」一项 economy R1 已自修);OQ-Bankrupt-1/2/4/5/6 见 GDD。
 
 ---
 
@@ -59,14 +65,14 @@
 | 下游系统 | 继承义务 | 来源 | 回链 AC |
 |---|---|---|---|
 | 玩家回合(2) | **(dice OQ-T-Dice-1)** 开局定序调 `RollDice()` 只取 `Total`、忽略 `bIsDouble`、不进双点链(已在 player-turn CR-2),并须告知 VFX"当前=定序阶段"语境使其抑制定序双点强化反馈;**(dice OQ-T-Dice-5 ✅ propagate RESOLVED 2026-06-02)** AC-34 序列化字段已从 `(点数,bIsDouble)` 扩为完整 `FDiceRollResult`(含 Die1/Die2);player-turn 7 处 RECEIVE+SERIALIZE 契约已更新(IG-1 已执行);**(movement OQ-T-Move-1)** ResolvePhase 须消费 `OnPawnLanded.arrivalContext`,`SentToJail` 时**不触发**买地/收租结算分支(movement AC-15 抑制侧归 2)。**✅ propagate RESOLVED(2026-06-02,grep 核实)**:此前 player-turn.md 全文 grep `SentToJail`/`arrivalContext`/`OnPawnLanded` = 0 命中、核心规则("去坐牢却能买落地格地")无 BLOCKING 覆盖;现 player-turn 已补 **AC-46**(`arrivalContext==SentToJail`→ResolvePhase 买地决策/收租结算入口 hook 调用次数==0,对照组 DiceMove==1)+ **AC-47**(程间非重入)+ **CR-3.1**(holder + 程间原子性)+ Edge Cases 抑制规则;实 AC 号已回填 movement AC-15。movement 侧透传由 AC-12b[Logic] 覆盖 | dice OQ-T-Dice-1 / OQ-T-Dice-5 / movement OQ-T-Move-1 | player-turn 定序 AC / AC-34(已扩字段) / **✅ OQ-T-Move-1 RESOLVED → player-turn AC-46 / AC-47** |
-| 事件格(7) | "双点出狱不进双点链"集成测试(player-turn OQ-T-1);**(dice OQ-T-Dice-3)** 掷双点出狱调 `RollDice()` 取 `bIsDouble`、出狱双点不进双点链、骰子只提供原值不解释出狱语境;**(economy OQ-T-Econ-3)** 须把"前进到最近公用/车站"额外骰点作 dice_total 传入经济 F-4、机会/命运卡金钱效果经经济 Credit/Debit;**(movement OQ-T-Move-2)** 须经移动 `TeleportTo(paysGo=true)` 实现"前进到最近X"、`TeleportTo(JailIndex,paysGo=false)` 实现去坐牢,并保证 `target∈[0,N−1]` | player-turn OQ-T-1 / dice OQ-T-Dice-3 / economy OQ-T-Econ-3 / movement OQ-T-Move-2 | AC-31 / (7)GDD 待写 |
+| 事件格(7) | "双点出狱不进双点链"集成测试(player-turn OQ-T-1);**(dice OQ-T-Dice-3)** 掷双点出狱调 `RollDice()` 取 `bIsDouble`、出狱双点不进双点链、骰子只提供原值不解释出狱语境;**(economy OQ-T-Econ-3)** 须把"前进到最近公用/车站"额外骰点作 dice_total 传入经济 F-4、机会/命运卡金钱效果经经济 Credit/Debit;**(movement OQ-T-Move-2)** 须经移动 `TeleportTo(paysGo=true)` 实现"前进到最近X"、`TeleportTo(JailIndex,paysGo=false)` 实现去坐牢,并保证 `target∈[0,N−1]` | player-turn OQ-T-1 / dice OQ-T-Dice-3 / economy OQ-T-Econ-3 / movement OQ-T-Move-2 | **✅ tile-events.md 已落 AC(待 design-review 验)**:player-turn OQ-T-1 → AC-37/AC-50;dice OQ-T-Dice-3 → AC-37/AC-51;economy OQ-T-Econ-3 → AC-52/AC-53;movement OQ-T-Move-2 → AC-54 |
 | 存档(21) | "中途还原精确阶段 + ConsecutiveDoubles + 锁定阈值 + **完整 `FDiceRollResult`(含 Die1/Die2,不可只存 `(Total,bIsDouble)`——否则读档后 VFX 无法重现骰面;dice OQ-T-Dice-5/B1)** + 读档后重绑 delegate 监听器"集成测试;**(economy OQ-T-Econ-4)** 序列化每玩家 `Cash`;Raising Funds 瞬态不中途存档(与回合2协同,OQ-Econ-4) | player-turn OQ-T-2 / dice OQ-T-Dice-5 / economy OQ-T-Econ-4 | AC-34 |
 | AI 对手(10) | ① "PostRollAction AI 同步决策正常完成 + 回合顺畅移交"集成测试;② "AI 内部 RNG 仅走骰子(3) `RandomRange`/`RandomFloat01`、禁引擎全局随机" code-review checklist + 集成测试(**dice OQ-T-Dice-2**:可重放路径优先整数 `RandomRange`,但与 `RandomFloat01` 跨平台同源、Full Vision 联网须服务器权威,见 dice F-4);③ GameStateSnapshot 字段齐备验证;④ **(R3)定义并回填 AC-37b 的 N(移交帧数上限)**;⑤ **(R3)钉"三档 AIDifficulty 产生玩家可感知行为差异"契约(OQ-6)** | player-turn OQ-T-3 / OQ-6 / dice OQ-T-Dice-2 | AC-37b |
 | VFX(19) | **(dice OQ-T-Dice-4,B5/rec-11,CD R2 裁定 MUST-FULFILL 移交)** 掷骰爽感端到端 owner(期待→翻滚→定格节奏 + 双点强化反馈)+ 背 experiential acceptance criteria;用 `Die1`/`Die2` 分别呈现两骰面值(禁从 `Total` 拆解);双点强化反馈差异化(庆祝 vs 入狱警告)须从 player-turn 取 `ConsecutiveDoubles`、不可仅凭裸 `bIsDouble`;定序阶段抑制双点强化反馈(语境由 player-turn 告知)。**qa-lead 在 VFX(19) design-review 时须核对其 AC 已含此承接,未承接 = VFX(19) GDD 的 blocking 缺口**;**(economy Visual节)** 收租金币飞溅/发薪入账/破产清算 juice 端到端 owner(监听 `OnRentPaid`/`OnCashChanged`/`OnBankruptcyDeclared`,concept Sensation priority-4);**(movement OQ-T-Move-3)** 棋子逐格 hop 回放端到端 owner(监听 `OnPawnMoveStarted` + 过 GO 高亮 + `OnPawnLanded` 落地 juice);hop path 由 VFX 自建 vs 移动提供 `HopPath` 归 VFX 裁定(movement OQ-Move-2) | dice OQ-T-Dice-4 / economy Visual节 / movement OQ-T-Move-3 | (19)GDD 待写 |
-| HUD(16) | "OnPhaseChanged/OnTurnStarted 驱动 UI 高亮(≤100ms 起/≤500ms 完成)" + "OnAIActionExecuted(ActionIndex) 非阻塞逐步播放 AI 行动(按 ActionIndex 排序)" + "OnTurnOrderResolved 席位裁定可见"集成测试;**(R3 B-2)Pass'N Play handoff 高亮与前一回合 outro 不叠帧**;**(R6 RETREAT,取代 R5 计数收敛)框架不再 gating——HUD 自主非阻塞呈现 AI 行动,不阻塞框架推进;删除原 OnAIActionPlaybackSegmentComplete 回放完成回调义务**;消费 OnTurnEnded(回合切换过场,payload bGrantsExtraTurn 区分同玩家继续/移交,两分支须各有动画 AC) | player-turn OQ-T-4 + Fantasy→HUD 契约 | AC-36 / AC-41 / AC-44 呈现侧 |
-| 地产所有权(6) | **(economy OQ-T-Econ-1)** 须实现 owner/house_count/is_monopoly/station_count/utility_count/is_mortgaged 接口供经济算租,**且经 push 模型把归属快照作参数传入经济算租调用**(经济 Dep 双向一致性①,保 index 无环);字段供给正确性 + push 快照时机归 6 | economy OQ-T-Econ-1 | (6)GDD 待写 |
-| 破产胜负(9) | **(economy OQ-T-Econ-2 🔴)** 资产移交口径须 verbatim 用经济 F-9 net_liquidation_value(AC-27 共享不变式下游侧),9 的 AC 须断言"移交总额==F-9 值";局末排名 net worth 口径(可能含未抵押 face value,≠nlv)归 9 裁定(OQ-Econ-5) | economy OQ-T-Econ-2 / OQ-Econ-5 | (9)GDD 待写 |
-| 建房(8) | **(economy OQ-T-Econ-5)** F-8 building_sellback 比率归经济、建筑清单归 8 供 F-8/F-9 枚举;建/卖房现金经经济执行 | economy OQ-T-Econ-5 | (8)GDD 待写 |
+| HUD(16) | "OnPhaseChanged/OnTurnStarted 驱动 UI 高亮(≤100ms 起/≤500ms 完成)" + "OnAIActionExecuted(ActionIndex) 非阻塞逐步播放 AI 行动(按 ActionIndex 排序)" + "OnTurnOrderResolved 席位裁定可见"集成测试;**(R3 B-2)Pass'N Play handoff 高亮与前一回合 outro 不叠帧**;**(R6 RETREAT,取代 R5 计数收敛)框架不再 gating——HUD 自主非阻塞呈现 AI 行动,不阻塞框架推进;删除原 OnAIActionPlaybackSegmentComplete 回放完成回调义务**;消费 OnTurnEnded(回合切换过场,payload bGrantsExtraTurn 区分同玩家继续/移交,两分支须各有动画 AC);**(building OQ-Build-6,2026-06-04 propagate)消费 player-turn `OnBuildingAnnounced`(payload TileIndex/NewHouseCount/ActingPlayerId)呈现全员可见建房通告 beat——恢复 CR-8「仅自己回合建房」削弱的支柱②社交引信** | player-turn OQ-T-4 + Fantasy→HUD 契约 + **building OQ-Build-6** | AC-36 / AC-41 / AC-44 呈现侧 + **OnBuildingAnnounced 消费(待 HUD GDD)** |
+| 地产所有权(6) | **(economy OQ-T-Econ-1)** 须实现 owner/is_monopoly/station_count/utility_count/is_mortgaged 接口供经济算租(**house_count 归建房8、不在6,经回合2 ResolvePhase 聚合 6 快照 + 8 house_count 后传经济**),**且经 push 模型把归属快照作参数传入经济算租调用**(经济 Dep 双向一致性①,保 index 无环);字段供给正确性 + push 快照时机归 6 | economy OQ-T-Econ-1 | (6)GDD 待写 |
+| 破产胜负(9) | **(economy OQ-T-Econ-2)** 破产判据/net_worth 用经济 F-9 net_liquidation_value 估值口径(AC-27③单一入口);**资产移交是 in-kind,AC-14 用 identity-check(逐对象枚举)、禁用「总额==F-9」**;局末排名 net worth 口径(可能含未抵押 face value,≠nlv)归 9 裁定(OQ-Econ-5/OQ-Bankrupt-2) | economy OQ-T-Econ-2 / OQ-Econ-5 | ✅ **OQ-Bankrupt-3 RESOLVED 2026-06-04**(propagate:economy line479 改 identity-check + line247/446 补建筑拆除归9调8;fresh-grep 双侧核实,范围较登记收窄——②已 economy R1 自修)。bankruptcy.md Designed,AC-14 identity-check |
+| 建房(8) | **(economy OQ-T-Econ-5)** F-8 building_sellback 比率归经济、建筑清单归 8 供 F-8/F-9 枚举;建/卖房现金经经济执行 | economy OQ-T-Econ-5 | ✅ building-upgrade.md(F-5 引用比率、F-6 供 GetPlayerBuildings 枚举,Designed 2026-06-04) |
 | 经济(5) | **(movement OQ-T-Move-4，R2 Finding E 改 PULL)** 消费移动 push 的 `(passedGo, SalaryAmount)`:`passedGo>0` 触发 F-1 发薪(`passedGo×SalaryAmount`)、`passedGo≤0`/无 push 不发薪——发薪部分**已由 economy AC-6/AC-7 履行**。**Utility 租 `dice_total` 改为经济在 ResolvePhase 从回合掷骰上下文 PULL**(movement 不投递 Total，对齐 economy AC-18 不缓存)——经济须保证"当前正在结算这一程" `Total` **单源**、连续双点链/事件额外骰(OQ-T-Econ-3)下不取错值。**holder 机制 + 单源去歧义 = OQ-Move-5(跨 doc propagate，涉回合2/经济5/事件7);另含 `DiceMultiplierTable[i]` 上界校验防 `12×mult` int32 溢出(OQ-Econ-10 不覆盖)**。movement 侧只断言不投递(AC-7b)。**✅ propagate RESOLVED 2026-06-02:OQ-Move-5 holder 落 player-turn CR-3.1 + economy line 57/102/330 PULL 清理 + economy Interactions 玩家回合行 holder 源;`DiceMultiplierTable` 上界落 board-data AC-23j(economy OQ-Econ-10 并轨注)。** | movement OQ-T-Move-4 / OQ-Move-5 | economy AC-6 / AC-7（发薪）/ F-4 / **AC-18（dice_total 不缓存，PULL 契约）/ player-turn CR-3.1(holder)** |
 
 ---
@@ -113,12 +119,12 @@
 1. 经济与现金（5）— depends on: 1, 2 ｜⚠ bottleneck：租金/抵押/建房公式发源地（economy GDD Phase 5 补 +1：经 GetTileData 读金额 base）
 2. 移动（4）— depends on: 1, 2, 3｜**orchestrated → 经济(5)**：移动把 `(passedGo, SalaryAmount)` 在回合编排下 push 给经济发薪；Utility 租 `dice_total` 改由经济在 ResolvePhase 从回合掷骰上下文 **PULL**（移动不投递 Total，R2 Finding E 对齐 economy AC-18 不缓存）。非硬依赖、不成环（movement GDD R2 2026-06-02）
 3. 地产所有权（6）— depends on: 1, 5
-4. 事件格（7）— depends on: 1, 2, 3, 4, 5（+3：掷双点出狱调骰子，dice GDD Phase 5 同步；**+4：调移动 `TeleportTo` 实现"前进到最近X"/去坐牢，movement GDD R-move 2026-06-02 同步**）
+4. 事件格（7）— depends on: 1, 2, 3, 4, 5, 8(soft)（+3：掷双点出狱调骰子，dice GDD Phase 5 同步；**+4：调移动 `TeleportTo` 实现"前进到最近X"/去坐牢，movement GDD R-move 2026-06-02 同步**；**+8(soft)：RepairFee 牌读建房8 `GetTotalHouseCount`/`GetTotalHotelCount`,/consistency-check 2026-06-04 揪出,OQ-Event-3 RESOLVED;非环 8 不依赖 7**）
 
 ### Feature Layer（依赖 Core）
 
 1. 建房升级（8）— depends on: 1, 5, 6
-2. 破产与胜负（9）— depends on: 2, 5
+2. 破产与胜负（9）— depends on: 2, 5, 6, 8（R-xreview 2026-06-03:补 6——9→6 破产归属移交 `TransferOwnership`/`ReturnTileToBank`;此前 OQ-Prop-4 propagate 只改枚举表 line28 漏改此处。**补 8(2026-06-04 #9 设计揪出:9→8 调 `LiquidateAllBuildings` + 收租破产 in-kind 建筑随格,building 已列 9 为 dependent,index 此前漏 8)**;`2→9` 为 orchestration invoke——回合2 调 `9.ResolveBankruptcy`,9 return-only 不回调 2,非硬循环依赖，类比 movement4→经济 push）
 3. AI 对手（10）— depends on: 3, 4, 5, 6, 7, 8 ｜⚠ 消费几乎所有 gameplay（+3：AI 随机走骰子可种子化 RNG，dice GDD Phase 5 同步）
 4. 交易（11）— depends on: 5, 6
 5. 拍卖（12）— depends on: 5, 6
@@ -190,7 +196,7 @@
 
 | System | Risk Type | Risk Description | Mitigation |
 |--------|-----------|-----------------|------------|
-| 经济与现金（5） | Design | 租金/抵押/建房公式是 bottleneck，平衡错误会让全盘玩法崩坏；且"一局拖沓"通病源于经济平衡 | 早原型调参（破产加速/局长可调），公式数据驱动 |
+| 经济与现金（5） | Design | 租金/抵押/建房公式是 bottleneck，平衡错误会让全盘玩法崩坏；且"一局拖沓"通病源于经济平衡 | 早原型调参，公式数据驱动。**⚠ R-xreview 2026-06-03(D-1):concept 承诺的三个抗拖沓杠杆中 MVP 实际仅 `STARTING_CASH`(1500/750)可用——`max_laps/max_rounds` 标 Open/默认禁用/归 Alpha 破产胜负(9);"破产加速"无任何 MVP GDD 旋钮(F-10 严格 `<`)。MVP playtest 抗拖沓只有起始资金一根杠杆,与最高 Design Risk"后期拖沓"叠加,后期体感风险集中在 MVP。max_rounds 待 House Rules(23)、破产加速待破产(9)落地。** |
 | AI 对手（10） | Design / Technical | MVP 靠 vs AI 验证，AI 太蠢直接毁掉核心体验；需可靠的地产估值与现金流决策 | 早原型，分难度档；估值逻辑数据驱动 |
 | 联网（25） | Technical / Scope | 状态同步、回合权威、断线重连，是全项目最大技术风险 | 严格隔离到 Full Vision；先单机验证全玩法，联网作为叠加层 |
 | 存档/读档（21） | Technical | 横切所有状态系统，序列化遗漏会导致读档损坏 | 状态系统设计时即定义可序列化契约 |
@@ -202,10 +208,10 @@
 | Metric | Count |
 |--------|-------|
 | Total systems identified | 26 |
-| Design docs started | 6 |
-| Design docs reviewed | 5 |
-| Design docs approved | 5 |
-| MVP systems designed | 6 / 16 |
+| Design docs started | 9 |
+| Design docs reviewed | 8 |
+| Design docs approved | 8 |
+| MVP systems designed | 9 / 16 |
 | Alpha systems designed | 0 / 8 |
 | Full Vision systems designed | 0 / 2 |
 

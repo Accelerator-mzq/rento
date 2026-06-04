@@ -86,7 +86,18 @@
 | `bIsBankrupt` | bool | 破产标志 | **破产胜负(9)** 拥有判定 |
 | `TurnOrderIndex` | int32 | 回合环中的位置 0..P-1 | 本系统(开局定序后恒定) |
 
-> 边界契约:本系统**持有**全部字段并据其驱动回合流转,但**不裁决** `CurrentTileIndex`/`Cash`/`bIsInJail`/`bIsBankrupt` 何时变、变多少——那是移动/经济/事件/破产各自的规则。本系统对外暴露**读接口**与**受控写接口**(如 `SetPosition` 仅供移动4调用)。
+> 边界契约:本系统**持有**全部字段并据其驱动回合流转,但**不裁决** `CurrentTileIndex`/`Cash`/`bIsInJail`/`bIsBankrupt` 何时变、变多少——那是移动/经济/事件/破产各自的规则。本系统对外暴露**读接口**与**受控写接口**。
+>
+> **受控写接口面(具名清单,R-xreview 2026-06-03 补全 —— 防下游凭空命名/异名):** 本系统对每个委派字段暴露**唯一具名**受控写接口,调用方严格受限:
+> | 字段 | 受控写接口 | 唯一合法调用方 |
+> |---|---|---|
+> | `CurrentTileIndex` | `SetPosition(index)` | 移动(4) |
+> | `Cash` | `SetCash(value)` / `Debit`/`Credit` 经济侧封装 | 经济(5) |
+> | `bIsInJail` | `SetJailState(bInJail, reason)` | 事件格(7)(进/出狱规则归7) |
+> | 当前程掷骰上下文 | `SetCurrentRollContext(FDiceRollResult)` | 事件格(7)(仅事件额外掷骰更新 holder,见 CR-3.1) |
+> | `bIsBankrupt` | `SetBankrupt(bool)` | 破产胜负(9) |
+>
+> ⚠ **`SetPosition` 与移动(4) `SetTileIndex` 的关系(OQ-Move-3b 交叉引用):** 移动(4) 对**其他系统**暴露 `SetTileIndex`/`Advance`/`TeleportTo` 作为位置写的公开 API;本系统的 `SetPosition` 是 `PlayerState.CurrentTileIndex` 的**字段级**受控写,仅供移动(4)内部最终落位调用。二者是「移动公开 API → 本系统字段 setter」的两层关系还是同层别名,由 **OQ-Move-3b ADR** 裁定,实现期须收敛为单一命名链;在裁定前两档以本注交叉引用消歧(消除 movement `SetTileIndex` ↔ player-turn `SetPosition` 的静默异名)。
 >
 > ⚠ **受控写是架构契约,强度待 OQ-1 ADR 裁定(R1 措辞校正)**:受控写接口是一项**架构层约定**,其强制力取决于 OQ-1 ADR 的容器实现选择,而非引擎级保证。UE 中 `BlueprintCallable` 无调用方限制,BP-primary 项目**无法在引擎层硬性阻止**任意持有引用的 BP 图调用 setter——只能靠 (a) C++ 强封装(字段 private + C++ setter,BP 只读 = 真硬保证)或 (b) BP 约定 + code-review(软约束)。OQ-1 ADR 须在 (a)/(b) 间裁定并写明强度;AC-35 随之分叉(见 Acceptance Criteria)。本契约的目标是"明确唯一合法写路径",而非声明一个 BP 兜不住的工程级防篡改保证。
 
@@ -109,7 +120,7 @@
 | `TurnStart` | 激活当前玩家;检查破产(跳过)/在狱(转 Jail 分支) | — | — |
 | `RollPhase` | 请求掷骰,接收完整 `FDiceRollResult`(Die1/Die2/Total/bIsDouble),消费 `Total`+`bIsDouble` | 骰子(3) | — |
 | `MovePhase` | 委派移动 `点数` 步 | 移动(4) | — |
-| `ResolvePhase` | 委派落地结算(租金/买地/抽牌/税/发薪);**落无主地产时暴露买/不买决策点** | 事件格(7)/经济(5)/所有权(6) | **买地决策**(无主地产);**拍卖出价**(拒买后,Alpha) |
+| `ResolvePhase` | 委派落地结算(租金/买地/抽牌/税/发薪);**落无主地产时暴露买/不买决策点**;**算租前聚合 6 归属快照 + 8 house_count 传经济(见 CR-3.2)** | 事件格(7)/经济(5)/所有权(6) | **买地决策**(无主地产);**拍卖出价**(拒买后,Alpha) |
 | `PostRollAction` | 收集可选动作(建房/抵押/交易)直到"结束回合"信号 | 建房(8)/交易(11)/AI(10) | **建房/抵押/交易**决策序列 → `EndTurn` |
 | `TurnEnd` | 判定双点额外回合 or 移交下一玩家 | — | — |
 
@@ -117,7 +128,42 @@
 
 本系统在阶段转换处广播事件(`OnTurnStarted`/`OnPhaseChanged`/`OnTurnEnded`)供他系统挂接。详见 CR-8 的 AI 决策契约。
 
-**CR-3.1 当前程骰上下文 holder + 程间原子性(R3 propagate,承接移动 CR-3.1/CR-4):** 本系统是「当前程掷骰上下文」的 **holder**——`RollPhase` 收到的完整 `FDiceRollResult` 由本系统持有,在 `ResolvePhase` 期间将其 `Total` 暴露给经济(5) Utility 租 **PULL**(经济 F-4 显式参数消费、不缓存、不向移动索取;见经济 CR-3/F-4 与移动 CR-3.1「移动不投递 Total」)。本系统拥有**当前程 `Total` 单源**:一回合内多程位移(如机会牌"前进到最近公用"额外掷骰)时,保证经济读到的是「正在结算的这一程」的骰点,不串程;事件额外掷骰的 `dice_total` 由事件格(7)在其触发的结算注入(经济 OQ-T-Econ-3)。**程间非重入(承接移动 CR-4 把程间原子性委托回合):** 本系统**不得**在前一程移动的 `OnPawnLanded` 同步返回前发起第二程 `Advance`/`TeleportTo`——多程位移严格串行,前程落地结算(ResolvePhase)未完不开下一程,杜绝同步嵌套重入(`OnPawnLanded` 同步 Broadcast,监听者回调内同步触发新 `Advance` = 同步嵌套,"禁 Latent 天然成立"不覆盖此路径,见 AC-47)。
+**CR-3.1 当前程骰上下文 holder + 程间原子性(R3 propagate,承接移动 CR-3.1/CR-4):** 本系统是「当前程掷骰上下文」的 **holder**——`RollPhase` 收到的完整 `FDiceRollResult` 由本系统持有,在 `ResolvePhase` 期间将其 `Total` 暴露给经济(5) Utility 租 **PULL**(经济 F-4 显式参数消费、不缓存、不向移动索取;见经济 CR-3/F-4 与移动 CR-3.1「移动不投递 Total」)。本系统拥有**当前程 `Total` 单源**:一回合内多程位移(如机会牌"前进到最近公用"额外掷骰)时,保证经济读到的是「正在结算的这一程」的骰点,不串程;事件额外掷骰的 `dice_total` 由事件格(7)经本系统受控写接口 **`SetCurrentRollContext(FDiceRollResult)`**(见上方受控写接口面)更新 holder,再由经济在 ResolvePhase PULL(经济 OQ-T-Econ-3;事件格 AC-52 回链此具名接口)。**程间非重入(承接移动 CR-4 把程间原子性委托回合):** 本系统**不得**在前一程移动的 `OnPawnLanded` 同步返回前发起第二程 `Advance`/`TeleportTo`——多程位移严格串行,前程落地结算(ResolvePhase)未完不开下一程,杜绝同步嵌套重入(`OnPawnLanded` 同步 Broadcast,监听者回调内同步触发新 `Advance` = 同步嵌套,"禁 Latent 天然成立"不覆盖此路径,见 AC-47)。
+
+**CR-3.2 ResolvePhase 算租输入聚合契约(R-xreview 2026-06-03 补 —— 关闭 spine owner 真空):** 算租所需的归属事实分散在两个系统(地产所有权6 持 owner/monopoly/mortgage/station/utility;建房8 持 house_count),经济(5) F-2/F-3/F-4 需要它们作为**已聚合的参数**传入。**本系统(`ResolvePhase`)拥有这一聚合编排职责**——下游 economy:104(「收(push,经 ResolvePhase 聚合)」)/ property-ownership:107(「落地结算编排聚合 6 快照 + 8 house_count 传经济」)/ systems-index 继承义务表均把聚合指向本阶段,本契约在 spine owner 侧确权(消除「三个下游都说回合2会聚合、回合2自己不声明」的责任真空)。
+
+- **聚合步骤(收租落地时):** ① 调地产所有权(6) `BuildOwnershipSnapshot(playerId, tileIndex)` 取归属快照(`owner`/`is_mortgaged`/`is_monopoly`/`station_count`/`utility_count`,值拷贝,property AC-30b);② 读建房(8) `house_count`;③ 二者拼装为算租输入,调经济(5)算租入口(经济从本系统 PULL 当前程 `dice_total` 供 F-4,见 CR-3.1)。本系统**只编排聚合与传递**,不持有/不裁决任何归属或租金公式(归 6/8/5)。
+- **MVP house_count 缺省(建房8 = Not Started):** MVP 阶段建房(8)未实现、`house_count` 无供给方时,本聚合点**注入缺省 `house_count = 0`** → 经济 F-2 落到 `RentTable[0]`(或垄断时 `RentTable[0]×monopoly_rent_multiplier`)的无房分支(economy:147-148)。建房(8)落地后,本步骤②改读其真实 `house_count`,聚合契约不变。此缺省是本阶段**唯一**合法的 house_count 来源声明(对齐 tile-events F-3 的 provisional 处理,消除算租路径在 MVP 的 undefined)。
+
+**CR-3.3 ResolvePhase 强制清算驱动循环(Raising Funds 阻塞子相,OQ-Build-1 RESOLVED):** 当玩家现金不足以支付应付款项(租金/税/保释金等)时,`ResolvePhase` 进入 **Raising Funds 阻塞子相**,本系统作为流程 owner **驱动**清算循环直至现金够或资产耗尽。本系统拥有**执行驱动**;经济(5)拥有**顺序 spec + 现金判据**(`Cash≥amount_due`/`is_insolvent`);本系统绝不自行裁决顺序——顺序由经济规格注入。
+
+- **清算循环(止损优先 mortgage-empty-first,用户裁定 R4):**
+  ```
+  while Cash < amount_due:
+      若存在可直接抵押地 (owner==player ∧ 未抵押 ∧ (GetHouseCount(tile)==0)):
+          调 6.Mortgage(MV 最小的可抵押地)     // 止损优先:抵押可赎回,零半价损失
+      else 若存在建筑 (任一 GetHouseCount(tile) > 0):
+          调 8.ForcedSellNextBuilding(player)  // building F-4 全盘最高档;卖空某组后该组 Property 转可抵押 → 回到抵押腿
+      else:
+          break → 调 economy.is_insolvent(player, amount_due, preaggregated_nlv) → 破产(9)
+  ```
+- **抵押前置 GetHouseCount 检查(building CR-7 接缝):** 本系统在调 `6.Mortgage(tile)` 前**必须先读** `8.GetHouseCount(tile)` 确认 `==0`——带房地不可抵押(经典规则:须先卖完该组建筑)。`GetHouseCount > 0` 的地跳过抵押腿、转入卖房腿。
+- **有界终止保证:** 玩家资产有限(地产数 + 建筑数均有上限),每次循环迭代至少减少一笔资产;最终 `Cash≥amount_due`(早停)或所有资产耗尽→ `is_insolvent`→破产(9)。
+- **无 economy→8 / economy→6 反向边:** 经济(5)仅提供顺序 spec 与现金判据,**不**调用 8 或 6 执行任何卖房/抵押操作——执行腿全部由本系统(回合2)发起。这是本接缝存在的根本理由(消 5→8 / 5→6 环,对齐 building-upgrade CR-9 接缝标注1 委托)。
+- **区分自愿与强制:** CR-3.3 强制清算仅在 Cash < amount_due 时触发。自愿建/拆(building CR-4/CR-5)与自愿抵押(PostRollAction 窗口)不经此阻塞子相。
+- **参考接缝:** building-upgrade CR-9 接缝标注1 把清算执行驱动委托至"回合2 `ResolvePhase`";本 CR 是该委托的 spine-owner 侧确权。
+
+**CR-3.4 破产判据 NLV 聚合(全组合扫描,OQ-Build-2 RESOLVED):** 破产判据路径(确定玩家是否 `is_insolvent`)需要**全投资组合**净可变现价值 `preaggregated_nlv`。此聚合与 CR-3.2 收租聚合**形态不同**——收租聚合是单格快照(per-tile),破产聚合是全组合枚举。本系统在 Raising Funds 子相进入 `is_insolvent` 判断前,负责此全组合聚合:
+
+- **聚合步骤(破产路径):** ① 调建房(8) `GetPlayerBuildings(player)` → `[(tile, house_count)]`(全组合建筑枚举);② 读所有权(6) 各地抵押价值(`MortgageValue`,经济 F-9 口径);③ 累加得 `preaggregated_nlv = Σ house_count × floor(BuildingCost/2) + Σ MortgageValue(未抵押地)`;④ 以 `(player, amount_due, preaggregated_nlv)` 调经济 `is_insolvent`。
+- **接口签名约定:** 经济 `is_insolvent(player, amount_due, preaggregated_nlv)` 接受**外部预聚合 NLV**,经济**不**反向调 8 枚举建筑(消 economy→8 环);预聚合 NLV 由本系统计算传入。
+- **与 CR-3.2 的区分:** CR-3.2 聚合对象 = 单格(`BuildOwnershipSnapshot` per-tile + `GetHouseCount(tile)`)供收租;CR-3.4 聚合对象 = 全组合(`GetPlayerBuildings(player)` 全枚举)供 NLV 计算。两条路径**并存不融合**,由不同业务触发(落地收租 vs 破产判定)。
+
+**CR-3.5 建房通告 beat(OQ-Build-6 RESOLVED):** `ResolvePhase` 监听建房(8) 广播 `OnBuildingChanged(tile, newCount, actingPlayerId)`,当收到此事件时(建/拆任一方向),本系统在当前回合 `ResolvePhase` 内广播**全玩家可见建房通告 beat**——至少携带:触发格 tile 名称、新 `house_count`、建筑归属玩家 id。通告内容是**信息层事件**,不修改任何游戏状态。
+
+- **触发时机:** `OnBuildingChanged` 在 `ResolvePhase`(含强制清算子相)或 `PostRollAction`(自愿建/拆)期间收到时,本系统 emit 通告;`TurnStart`/`TurnEnd` 不 emit(建房只在这两个阶段发生)。
+- **呈现职责归 HUD(16):** 通告 beat 的视觉/音效表现(如浮动文字、建房动画提示、全局 ticker)由 HUD(16) GDD 设计——本系统只 emit 事件并保证 payload 字段存在。**HUD(16) GDD 开工前须在 HUD 继承义务表登记此通告 beat 消费 AC**(producer propagation 债,尚无 HUD GDD 故暂登记于 systems-index 继承义务表)。
+- **设计背景(creative-director 裁定):** 建房通告是"廉价社交点火"手段——玩家立即知道对手刚在哪条街建了房、威胁升级,驱动"要绕路了"的实时心理博弈(支柱②社交互坑,信息层)。不涉及供给/租金 cap 变更(建房(8) OQ-Build-6 user 裁定排除 rent cap)。
 
 **CR-8 AI 决策契约(同步模型,R1 新增 —— 取代原 wall-clock 超时):** AI 玩家的所有决策(买/不买、建房、抵押、拍卖出价、出狱方式)是**同步确定性调用**,非异步等待。本系统作为流程 owner,在每个决策点**同步**调用 AI 接口并立即取回结果,然后推进:
 
@@ -420,6 +466,7 @@
 > ***R5(fresh re-review full)新增/改写:** **AC-17c** 扩三变体(整除 cur=-4/非整除 cur=-2/正越界 cur=5,覆盖欧几里得取模三分支);**AC-44** 改造为框架侧计数收敛——①(c) per-action 早释变真框架侧 [Logic](集合判据天然拦截)、新增 ①(d) double-fire 幂等、③ 改 `[Logic·条件]` 默认 [Advisory] 删"旋钮置极小值"后门钉 `SimulateTimeout()`;**AC-5b** 补② AIPlaybackGating 非法转移;**AC-39b** ② 补降级留狱 `JailTurnsServed+1` 对称。AC 总数仍 48(均为既有 AC 扩写,无新编号)。*
 > ***R6(fresh re-review full → MAJOR REVISION,用户裁定 RETREAT)新增/改写:** **AC-44** 重写为非阻塞 hook 测试(删 gating 集合收敛/per-action 早释/生产安全阀/double-fire/`SimulateTimeout()` 全部断言,改断言"Animated/Instant 均即时 EndTurn + 逐条广播 ActionIndex");**AC-5b** 删② AIPlaybackGating 非法转移项(相位已删);**新增 AC-7b**(`OnTurnEnded.bGrantsExtraTurn` 生产侧断言,qa BLK-R6-3)/**AC-5c**(`OnPhaseChanged.ConsecutiveDoubles` 生产侧断言,qa BLK-R6-4)。AC 总数 48→50(+AC-7b/AC-5c)。*
 > ***R7(fresh re-review full → NEEDS REVISION,3 blocker 单遍收口)新增/改写:** **Blocker-1** `ActionIndex` 强度对齐——散文(L138/L152/L215)从"呈现排序提示"升为"框架拥有的轻量排序契约"(框架保证 `0..M-1` 自增、不消费做 gating),AC-44① 保持 [Logic];**Blocker-2** AC-44③ 重写为静态可测"框架不读 `AIActionDisplayMode`、无 `WaitFor*`/`Delay`/`FTimerHandle` 等待调用"(删除"两模式移交时机相同"空命题)+ Tuning 明确 `AIActionDisplayMode` 持有者=HUD;**Blocker-3** L184 状态表去 `AIPlaybackGating` 具名 + AC-43 补 append-only 例外(草稿值从未分配索引)+ OQ-1 ⑬⑯ 从因子清单物理移除(空缺不复用)。同批 recommended:AC-44①② fixture N/M 语义分注;AC-5c `≥1`→三变体精确值;AC-7b/AC-5c 补 OQ-1⑤ 可注入条件门;F-4 round off-by-one 校正。**AC 编号口径澄清:** 历轮 changelog 的"总数"按父编号计;实际独立子编号可执行条目数 = **55**(含 5a/5b/5c、7/7b、11/11b、17/17b/17c、37a–d、38/38b、39/39b 等子编号,AC-18 历史空缺不存在)。两口径并存仅影响对外报数,不影响测试执行。*
+> ***building-upgrade R4 propagate(2026-06-04,兑现 OQ-Build-1/OQ-Build-2/OQ-Build-6 producer 债)新增:** 新增 **CR-3.3**(强制清算驱动循环,Raising Funds 阻塞子相 — 本系统拥有执行驱动,止损优先 mortgage-empty-first,OQ-Build-1 RESOLVED)/**CR-3.4**(破产 NLV 全组合聚合 — `GetPlayerBuildings` 全枚举传 economy `is_insolvent(player, amount_due, preaggregated_nlv)`,区分 CR-3.2 单格收租聚合,OQ-Build-2 RESOLVED)/**CR-3.5**(建房通告 beat — `ResolvePhase` 监听 `OnBuildingChanged` 并向全玩家广播 `OnBuildingAnnounced`,OQ-Build-6 RESOLVED)。新增 **AC-50**(Mortgage 前 GetHouseCount==0 前置读,spy 断言 house_count>0 的 tile 不调 Mortgage)/**AC-51**(清算顺序验证:空地先抵押、有房地后卖房、Cash≥amount_due 早停、全资产耗尽→is_insolvent)/**AC-52**(破产 NLV 聚合:GetPlayerBuildings 恰 1 次 + preaggregated_nlv 传入 is_insolvent + zero economy→8 calls spy)/**AC-53**(建房通告 beat:OnBuildingAnnounced 广播 1 次 + payload 字段正确 + 不改状态;HUD 继承义务登记)。实际独立子编号可执行条目数升至 **59**。*
 > **测试分层:** `[Logic]` 纯 fixture、headless 可跑、作 PR merge gate;`[Advisory]` 集成/code-review/OQ 守门。
 
 ### A. 核心规则(CR-1~7)
@@ -496,6 +543,16 @@
 
 - **AC-46** [Logic](R3 propagate,移动 AC-15/OQ-T-Move-1 对端——SentToJail 落地抑制,见 CR-3.1/Edge Cases)`SentToJail` 落地抑制:GIVEN 移动回报 `OnPawnLanded(arrivalContext=SentToJail)`,WHEN `ResolvePhase` 处理,THEN spy 买地决策 hook(`DecideBuyProperty`)与收租结算入口**调用次数 ==0**(被传送入狱不触发任何落地结算分支);**对照组** `arrivalContext=DiceMove` 落无主地产时 `DecideBuyProperty` 调用次数 ==1,证明抑制是 `arrivalContext` 驱动而非恒不调用。**纯 fixture、headless 可跑;危害域 pre-Alpha gate(MVP 经典盘 Jail 不可购买,自定义盘引爆)。**
 - **AC-47** [Logic](R3 propagate,移动 CR-4 程间原子性对端——程间非重入,见 CR-3.1)程间非重入:spy 在 `OnPawnLanded` 回调入口置 `bInLandedCallback=true`、出口置 `false`;GIVEN 第一程 `Advance` 触发 `OnPawnLanded`(spy 监听者在回调内同步尝试发起第二程 `Advance`/`TeleportTo`),WHEN 本系统编排多程位移,THEN 断言本系统发起第二程 `Advance` 时 `bInLandedCallback==false`(第二程在第一程落地回调完全同步返回之后),验证多程严格串行、无同步嵌套重入。**纯 fixture、headless 可跑。**
+- **AC-48** [Logic](R-xreview 2026-06-03,CR-3.2 算租聚合契约确权——关闭 spine owner 真空)ResolvePhase 算租聚合:GIVEN 当前玩家落他人**有主**地产、需收租,WHEN `ResolvePhase` 编排算租,THEN 断言:① 调地产所有权(6) `BuildOwnershipSnapshot(playerId, tileIndex)` **恰 1 次**取归属快照;② 读建房(8) `house_count`(8 未实现时见 AC-49);③ 以「快照 + house_count + 当前程 dice_total(PULL,见 CR-3.1)」为参数调经济(5)算租入口**恰 1 次**,参数值与上游一致。验证聚合编排归本阶段(对齐 economy:104 / property-ownership:107 / systems-index 继承义务表「经回合2 ResolvePhase 聚合」)。**纯 fixture、headless 可跑。**
+- **AC-49** [Logic](R-xreview 2026-06-03,CR-3.2 MVP house_count 缺省——消算租路径 MVP undefined)MVP house_count 缺省:GIVEN 建房(8)= Not Started(mock 无 house_count 供给方),WHEN `ResolvePhase` 聚合算租输入,THEN 注入 `house_count == 0`,经济收到的算租参数 `house_count == 0`(经济 F-2 据此落 `RentTable[0]` 或垄断 `RentTable[0]×monopoly_rent_multiplier` 无房分支)。验证 MVP 第一个收租循环不依赖未实现的建房(8)、house_count 有唯一合法缺省来源。**纯 fixture、headless 可跑;建房(8)落地后本 AC 改读真实 house_count(契约不变)。**
+
+- **AC-50** [Logic](building R4 propagate,CR-3.3 mortgage-pre-read — 兑现 OQ-Build-1 空白:调 6.Mortgage 前须先读 8.GetHouseCount==0)GIVEN 一个 Property 地格其 `GetHouseCount(tile) > 0`(mock 建房8 返回 house_count=2),WHEN `ResolvePhase` 强制清算循环(CR-3.3)或任何决策点考虑抵押该格,THEN 断言:① `6.Mortgage(tile)` **未被调用**(spy 记录 Mortgage 调用次数 ==0);② 框架转入卖房腿(`8.ForcedSellNextBuilding` 被调用)。**对照组** GIVEN 同一格 `GetHouseCount(tile) == 0`,WHEN 清算循环,THEN `6.Mortgage(tile)` 被调用 ==1 次、`ForcedSellNextBuilding` 未被调用(证明前置读是 `house_count` 驱动而非恒跳抵押)。**Spy 断言:Mortgage 对任何 house_count>0 的 tile 调用次数恒==0。纯 fixture、headless 可跑。前提:mock 建房8 `GetHouseCount` 返回预设值、mock 所有权6 `Mortgage` 可 spy。**
+
+- **AC-51** [Logic](building R4 propagate,CR-3.3 清算顺序 + 有界终止 — 止损优先 mortgage-empty-first)GIVEN 玩家 Cash=100 欠租 amount_due=300,持有:{一块空地(未抵押,MV=100,low MV)、一块有房地(house_count=1)},WHEN `ResolvePhase` 强制清算循环(CR-3.3),THEN 断言以下调用顺序:① `6.Mortgage` 先被调用,对象为**空地**(MV 最小可抵押地);② **当且仅当** `6.Mortgage` 执行后 Cash 仍 < amount_due 时,`8.ForcedSellNextBuilding` 才被调用;③ 任意时刻当 `Cash >= amount_due` 时循环立即停止(早停,后续资产不再强制处置)。**终止性断言:**  `8.GetPlayerBuildings` 返回空后、`6.GetOwner` 也无可抵押地 → 调 `economy.is_insolvent` ==1 次 → 循环终止、不无限重试。纯 fixture、headless 可跑。**前提:mock 经济5 `Cash` query 可返回预设值序列;mock 6/8 可 spy 调用顺序。**
+
+- **AC-52** [Logic](building R4 propagate,CR-3.4 破产 NLV 全组合聚合 — 兑现 OQ-Build-2:economy 不调 8)GIVEN 玩家持有 2 格建筑(`GetPlayerBuildings` mock 返回 `[(tileA, 2), (tileB, 1)]`)及若干未抵押地,WHEN `ResolvePhase` Raising Funds 子相进入 `is_insolvent` 判断前,THEN 断言:① 调 `8.GetPlayerBuildings(player)` **恰 1 次**(全组合枚举);② `preaggregated_nlv` 计算正确(按 `house_count × floor(BuildingCost/2) + Σ MortgageValue(未抵押地)` 累加);③ 调 `economy.is_insolvent(player, amount_due, preaggregated_nlv)` **恰 1 次**,传入的 `preaggregated_nlv` 与上方计算值一致;④ **economy 模块内部未直接调用 `8.GetPlayerBuildings` 或 `8.GetHouseCount`**(zero economy→8 calls,spy 确认)。验证破产判据 NLV 聚合归本系统(CR-3.4)、非经济5 反向拉取、无 5→8 环。**纯 fixture、headless 可跑;mock 经济5 `is_insolvent` 接口可 spy。**
+
+- **AC-53** [Logic](building R4 propagate,CR-3.5 建房通告 beat — 兑现 OQ-Build-6)GIVEN 建房(8)在当前玩家 `ResolvePhase` 或 `PostRollAction` 期间广播 `OnBuildingChanged(tile=tileA, newCount=2, actingPlayerId=1)`,WHEN `ResolvePhase`/`PostRollAction` 阶段正在进行,THEN 断言:① 本系统向所有玩家可见的通告事件(暂命名 `OnBuildingAnnounced`)被广播 **==1 次**;② payload 至少含 `TileIndex`(或 tile 名称)、`NewHouseCount==2`、`ActingPlayerId==1`;③ 广播不修改任何 PlayerState 字段或地产/建筑状态(纯信息事件)。**对照组:** `OnBuildingChanged` 在 `TurnStart`/`TurnEnd` 期间触发(异常情形)→ 断言 `OnBuildingAnnounced` **不广播**(建房只在 ResolvePhase/PostRollAction 发生,此 guard 验证时机约束)。**呈现侧 AC(HUD 继承义务):HUD(16) GDD 须登记消费 `OnBuildingAnnounced` 的 AC,回链本 AC-53(producer propagation 债,待 HUD GDD 开工时履行)。纯 fixture、headless 可跑;mock OnBuildingChanged 注入可控触发时机。**
 
 > **跨系统责任追踪(qa-lead,防责任真空):** AC-31 完整出狱流程、AC-34/36/37 的 BLOCKING 测试归下游(事件格7/存档21/HUD16/AI10),由 **OQ-T-1~4** 追踪回链(见 Open Questions),下游 GDD 审查时 qa-lead 核对回链承诺——避免重蹈 board-data 责任真空。
 

@@ -55,20 +55,20 @@
   - **Property**:`RentTable[房屋数]` base;若拥有者**集齐整组(垄断)且该地无房**,租金 = `RentTable[0] × monopoly_rent_multiplier`(×2,本系统拥有此系数);已建房则按 `RentTable[房屋数]`(垄断翻倍只作用于无房 base,经典规则)。
   - **Railroad**:`RentTable[持有车站数−1]`(持 1..4 站 → 档位 0..3)。
   - **Utility**:`骰点 × DiceMultiplierTable[持有公用数−1]`(持 1/2 → 档位 0/1)。骰点来源(**PULL,本系统在 ResolvePhase 算租时取,非上游 push**):正常落地由**回合(2)** 暴露的「当前程掷骰上下文」`Total` PULL(见移动 CR-3.1:移动不缓存/不推送 `Total`);"前进到最近公用"等事件需额外掷骰时,由**事件格(7)** 把额外骰点作 `dice_total` 注入 F-4。本系统经 F-4 显式参数消费(line 176「不读缓存」),不反向读移动状态。
-  - **归属事实来源**:房屋数 / 垄断与否 / 同类持有数由地产所有权(6)提供;base 金额读棋盘(1);本系统取两者算最终租金并执行现金转移。
+  - **归属事实来源**:垄断与否 / 同类持有数 / 已抵押标记由地产所有权(6)提供;**房屋数(`house_count`)归建房(8)提供**(6 不持,防 6↔8 环;6 快照 + 8 house_count 经回合2 `ResolvePhase` 聚合传入);base 金额读棋盘(1);本系统取这些算最终租金并执行现金转移。
 
-**CR-4 购买地产。** 玩家在无主可购买格选择购买时,本系统校验 `Cash ≥ PurchasePrice`,成立则 `Debit(玩家, PurchasePrice)` 并通知所有权(6)登记归属(归属 map 归 6 拥有,本系统不持有"谁拥有什么")。现金不足则购买不可用(不进入凑钱流程——买地是可选行为,非强制债务)。
+**CR-4 购买地产的现金腿(事务归所有权6,方向6→5)。** 买地事务 `Buy(tileIndex, playerId)` 由**所有权(6)拥有**(决策点归回合2 `ResolvePhase`);6 在其事务内调本系统 `Debit(玩家, PurchasePrice)` 执行扣款腿(**6→5**)。本系统**只执行扣款**:校验 `Cash ≥ PurchasePrice`,成立则 `Debit` 并返回成功,现金不足则购买不可用(不进入凑钱流程——买地是可选行为,非强制债务)。**本系统不登记归属、不通知 6**——归属 map 由 6 在 `Debit` 成功后自行登记(归属 map 归 6 拥有,本系统不持有"谁拥有什么";economy 不反调 6,保 5↔6 无环,见所有权 CR-2 / OQ-Prop-2)。
 
 **CR-5 抵押与赎回。** 拥有者可抵押其未建房地产:
-- **抵押**:`Credit(拥有者, MortgageValue)`,通知所有权(6)标记该地为已抵押。已抵押地产**不收租**(CR-3)。带房地产不可直接抵押(须先卖房,卖房归建房(8))。
-- **赎回**:`Debit(拥有者, MortgageValue × (1 + 赎回费率))`(`赎回费率` 本系统拥有,真值见 D 节/Tuning),成立后通知 6 解除抵押标记。现金不足无法赎回。
+- **抵押**:抵押事务 `Mortgage(tileIndex, playerId)` 由**所有权(6)拥有**;6 调本系统 `Credit(拥有者, MortgageValue)` 执行放款腿(**6→5**)。本系统只执行 `Credit`,**不标记/不通知 6**——`bIsMortgaged` 标记由 6 在 `Credit` 成功后自置(economy 不反调 6,保无环)。已抵押地产**不收租**(CR-3)。**带房不可抵押的 `house_count==0` 前置由决策点(回合2/AI10)在调 `Mortgage()` 前校验**(决策点能读建房8 的 `house_count`),**非本系统在 `Credit` 内校验**(`Credit` 是通用入账接口,不知该笔是抵押还是收租;卖房归建房(8))。
+- **赎回**:赎回事务 `Unmortgage(tileIndex, playerId)` 由**所有权(6)拥有**;6 调本系统 `Debit(拥有者, MortgageValue × (1 + 赎回费率))`(`赎回费率` 本系统拥有,真值见 D 节/Tuning)执行扣款腿。本系统只执行 `Debit`,成立后**由 6 自行解除抵押标记**(本系统不通知 6)。现金不足无法赎回。
 
 **CR-6 缴税(现金回收 sink)。** 玩家落在 `Tax` 格,本系统 `Debit(玩家, TaxAmount)`(税额读棋盘(1),真值由本系统平衡推导)。税款流向银行(蒸发,不进任何玩家),是经济的现金 sink。不足额则进入 CR-7。
 
 **CR-7 付款不足 → 凑钱或破产(全额或破产)。** 当一笔**强制**扣款(租金/税)超过玩家现金:
 1. 本系统不部分扣款、不允许负现金;先广播"需筹资"信号,玩家须通过抵押(CR-5)/卖房(建房8)/交易(11,Alpha)把 `Cash` 提到 ≥ 应付额。
-2. 若变卖**全部可变现资产后仍不足** → 本系统向破产胜负(9)提供"无力支付"判据(`Cash + 全部可变现价值 < 应付额`),破产流程归 9:债务人**剩余全部资产转移给债权人**(收租场景=对手;税场景=银行),债务人出局。本系统只负责现金/资产价值的结算与转移,不拥有"宣告破产"这一裁决。
-3. **确定性自动清算兜底(R1 blocker #4,防无界阻塞)**:Raising Funds 是回合(2)`ResolvePhase` 的**阻塞子相**,若玩家 solvent-by-assets(nlv 够付)却不行动(挂机/断线/AI 决策死循环),框架须有界终止——本系统提供**确定性自动清算**:按 `MortgageValue` **升序**遍历玩家资产(带房地先按 F-8 卖房、再抵押腾空的地),逐步变现直至 `Cash ≥ 应付额` 则执行扣款回 Solvent;若变现穷尽(走完 F-9 全部 nlv)仍 `Cash < 应付额`,自然落入第 2 点 `is_insolvent`(F-10)→ 破产(9)。自动清算是 manual 路径的 **superset、始终终止**(资产有限),消除死锁。**触发时机(AI 即时 / 人类超时时长)与 UI 提示归回合(2)/AI(10)/UX 裁定(OQ-Econ-8),本系统只拥有"清算顺序确定性 + 有界终止"契约。**
+2. 若变卖**全部可变现资产后仍不足** → 本系统向破产胜负(9)提供"无力支付"判据(`Cash + 全部可变现价值 < 应付额`),破产流程归 9:债务人**剩余全部资产转移给债权人**(收租场景=对手;税场景=银行),债务人出局。本系统只负责**现金侧**结算(现金转移 + F-9 变现口径);**地产/建筑的归属 in-kind 转移由破产9 经所有权6(`TransferOwnership`)/建房8 执行,本系统不写 owner map**;本系统亦不拥有"宣告破产"这一裁决。
+3. **确定性自动清算兜底(R1 blocker #4,防无界阻塞 — OQ-Build-1 RESOLVED)**:Raising Funds 是回合(2)`ResolvePhase` 的**阻塞子相**,若玩家 solvent-by-assets(nlv 够付)却不行动(挂机/断线/AI 决策死循环),框架须有界终止。**本系统拥有且仅拥有:清算顺序 spec + 现金判据(`Cash ≥ 应付额?` / `is_insolvent`)。执行驱动归回合(2):`ResolvePhase` 调用 6.`Mortgage` / 8.`ForcedSellNextBuilding`，economy 不直接调 6 或 8(防 5→6/5→8 反向环)。** 清算顺序 spec(止损优先,mortgage-empty-first):`while Cash < amount_due { 若存在可直接抵押地(owner==player ∧ 未抵押 ∧ (非Property ∨ house_count==0)):→ 回合2调 6.Mortgage(MV 最小的可抵押地);否则若存在建筑(house_count>0):→ 回合2调 8.ForcedSellNextBuilding(F-4 全盘最高档);否则:→ break → is_insolvent → 破产(9) }`。止损优先理由:抵押可赎回(零半价损失),卖建筑永久半价亏损;经典规则禁止抵押组内有房的地产,故带房地须先由 8 卖房腾空才可抵押。现金够即早停;顺序不影响 `is_insolvent`(NLV 是 order-independent 和),只影响早停后剩余资产与玩家损失额。**触发时机(AI 即时 / 人类超时时长)与 UI 提示归回合(2)/AI(10)/UX 裁定(OQ-Econ-8),本系统只拥有"清算顺序确定性 + 有界终止"契约。**
 
 **CR-8 现金转移原子性与银行模型。** 玩家间转移(租金)是原子操作:落地者扣减额 == 拥有者入账额,无中间态、无创造/丢失货币。银行(发薪源、税收 sink、抵押放款)视为**无限资金池**(经典大富翁银行不会破产),发薪/抵押放款不受银行余额限制。
 
@@ -84,7 +84,7 @@
 |---|---|---|
 | **Solvent(偿付正常)** | 现金足以应付当前结算 | 强制扣款 ≤ Cash:直接结算,留在 Solvent |
 | **Raising Funds(筹资中)** | 强制扣款 > Cash,等待变现(阻塞 ResolvePhase) | ① 玩家(或不行动时的**确定性自动清算兜底**,CR-7.3)经抵押(CR-5)/卖房(8)/交易(11)使 `Cash ≥ 应付额` → 执行扣款 → **回 Solvent**;② 变现穷尽(F-9 nlv 全清)仍 < 应付额 → `is_insolvent` 移交破产(9) → **Bankrupt**。**有界终止保证**:资产有限 + 自动清算兜底,两出口必达其一,无第三(无界阻塞)出口 |
-| **Bankrupt(破产,终态)** | 无力支付且无可变现资产 | 资产转移给债权人(本系统结算转移)、出局裁决归破产(9);该玩家退出经济交互 |
+| **Bankrupt(破产,终态)** | 无力支付且无可变现资产 | **现金侧**转移由本系统结算;地产/建筑归属 in-kind 转移归破产(9)经所有权6/建房8;出局裁决归破产(9);该玩家退出经济交互 |
 
 **无"交易中/结算中"独立瞬态:** 发薪、收租、缴税、买地、赎回均为**同步单步**结算(单帧内完成 `Credit`/`Debit`),无中间态。唯一例外是 Raising Funds(需玩家多步变现),它有界终止——要么凑够付款回 Solvent,要么变现穷尽进 Bankrupt,不存在第三出口。
 
@@ -101,9 +101,9 @@
 | 玩家回合(2) | `ResolvePhase` 触发落地结算(收租/买地决策点);**ResolvePhase 暴露「当前程掷骰上下文」`Total` 供本系统 Utility 租 PULL(holder=回合2)**;`Cash` 经受控写;Raising Funds 寄宿于 `ResolvePhase` 阻塞子相 | 回合拥有流程/决策点与当前程 `Total` 单源;本系统执行金钱后果 |
 | 移动(4) | 收移动 push 的 `(passed_go, SalaryAmount)` 发薪(CR-2);**Utility 租 `dice_total` 不由移动投递**——本系统在 ResolvePhase 从回合(2)掷骰上下文 PULL(移动 CR-3.1) | 移动拥有位移与发薪 push 时机;本系统拥有发薪/租金公式并自取 Utility 骰点 |
 | 棋盘(1) | 经 `GetTileData(index)` 读 `PurchasePrice`/`RentTable`/`DiceMultiplierTable`/`MortgageValue`/`TaxAmount`/`SalaryAmount` 的 **base** | 棋盘供 base;本系统拥有平衡真值与运行时换算 |
-| 地产所有权(6) | **读**:某地 owner / 房屋数 / 是否垄断 / 同类持有数 / 已抵押标记(供 CR-3 算租);**写(通知)**:买地登记归属、抵押/赎回 set/clear 抵押标记 | 6 拥有归属 map 与抵押标记;本系统拥有现金转移 |
+| 地产所有权(6) | **收(push,经 ResolvePhase 聚合)**:owner / 是否垄断 / 同类持有数 / 已抵押标记(供 CR-3 算租;**房屋数 `house_count` 归建房8、不在6**);**现金腿**:买地/抵押/赎回事务由 6 拥有并调本系统 `Debit`/`Credit`(**6→5**),**本系统不写归属、不通知 6**(保 5↔6 无环) | 6 拥有归属 map 与抵押标记;本系统拥有现金转移 |
 | 建房(8) | 建房/卖房的现金扣减/返还由本系统执行(`Debit`/`Credit`) | 8 拥有建造规则与房屋数;本系统执行金钱 |
-| 破产胜负(9) | **供**"无力支付"判据(`Cash + 全部可变现价值 < 应付额`)+ 执行债务人→债权人资产/现金转移 | 9 拥有破产宣告/出局裁决;本系统供判据+执行转移 |
+| 破产胜负(9) | **供**"无力支付"判据(`Cash + 全部可变现价值 < 应付额`)+ 执行债务人→债权人**现金侧**转移(地产/建筑归属转移归 9 经所有权6/建房8) | 9 拥有破产宣告/出局裁决;本系统供判据 + 执行现金侧转移 |
 | 事件格(7) | 缴税(CR-6);机会/命运卡的金钱效果(收/付现金、"前进到最近X"额外掷骰的骰点经 7/4 传入)由本系统执行 | 7 拥有牌堆/触发;本系统执行金钱效果 |
 | 交易(11)/拍卖(12)(Alpha) | 玩家间现金+资产转移 / 中标扣款由本系统执行 | 11/12 拥有谈判/出价流程;本系统执行金钱 |
 | 命运之轮(13)/策略卡(15)(Alpha) | 金钱类效果(奖惩现金)经本系统结算 | 各机制拥有规则;本系统执行金钱 |
@@ -115,7 +115,7 @@
 - `OnCashChanged(Player, OldCash, NewCash, EChangeReason)` — 任何现金变动(reason ∈ {Salary, Rent, Purchase, Mortgage, Unmortgage, Tax, Build, Trade, Bankruptcy})。HUD/VFX 挂接。
 - `OnRentPaid(Payer, Payee, Amount, TileIndex)` — 收租完成(供 VFX 金币飞溅 + 互坑反馈)。
 - `OnInsufficientFunds(Player, AmountDue, AmountShort)` — 进入 Raising Funds 瞬态(供 UI 弹"需筹资"、回合阻塞)。
-- `OnBankruptcyDeclared(Debtor, Creditor)` — 破产结算转移完成时广播(裁决归 9,本系统在执行完资产转移后广播金钱侧完成)。
+- `OnBankruptcyDeclared(Debtor, Creditor)` — 破产结算转移完成时广播(裁决归 9,本系统在执行完**现金侧**转移后广播金钱侧完成;地产归属转移由 9 经 6 执行)。
 
 **接口稳定承诺:** `Credit`/`Debit`/`GetCash` 签名稳定;事件 payload 字段只增不改语义;`EChangeReason` 枚举只扩不改既有项(给下游 6/7/8/9/16/19/21 的稳定保证)。
 
@@ -149,7 +149,7 @@ else:                                   rent = RentTable[clamp(house_count, 0, 5
 ```
 | 变量 | 类型 | 范围 | 说明 |
 |---|---|---|---|
-| `house_count` | int32 | 0..5(0=无房,5=酒店;clamp 防 6 越界) | 所有权(6)/建房(8)供 |
+| `house_count` | int32 | 0..5(0=无房,5=酒店;clamp 防 6 越界) | **建房(8)供**(6 不持,防 6↔8 环;经 ResolvePhase 聚合) |
 | `is_monopoly` | bool | — | 所有权(6)判集齐整组 |
 | `monopoly_rent_multiplier` | int32 | =2(锁定) | 本系统拥有 |
 | `RentTable[6]` | int32[] | base(未翻倍) | 棋盘供 |
@@ -180,7 +180,7 @@ else:                                   rent = RentTable[clamp(house_count, 0, 5
 **Output Range:** ≥0。例:持 1, dice=7, mult=4 → 28。
 
 ### F-5 抵押放款 Mortgage Payout
-`payout = MortgageValue`(`Credit`)。前置:读 `is_mortgaged==false`(防重复抵押双放款)、该地无房(带房须先卖)。
+`payout = MortgageValue`(`Credit`)。**前置(未抵押 / 无房)由调用方保证,非 economy 校验**——所有权(6) `Mortgage()` 前置校验 `bIsMortgaged==false`(防重复抵押双放款,property-ownership AC-10),决策点(回合2/AI10)校验 `house_count==0`(带房须先卖,见抵押边界 + OQ-T-Econ-1)。**economy `Credit` 是通用入账接口、读不到抵押标记/房屋数,不在 `Credit` 内校验**(OQ-Prop-7 propagate 修正:此前 F-5 误写"economy 读 is_mortgaged/无房前置",与本档抵押边界自相矛盾)。
 
 ### F-6 赎回 Unmortgage Cost(整数 ceil,杀 float)
 ```
@@ -217,6 +217,8 @@ net_liquidation_value(player) = Σ MortgageValue(t)      [t = 玩家拥有的未
 ```
 已抵押地贡献 0(已借过)。
 
+> **展开注(OQ-Build-2 RESOLVED):** `Σ building_sellback(b) = Σ_t house_count[t] × floor(BuildingCost[t] / 2)`(每栋单独 floor,**非** floor 先合后算)。例:BuildingCost=75,house_count=3 → per-building floor(75/2)=37,合计 3×37=**111**;若先算 floor(75×3/2)=floor(112.5)=**112**,差 1 — 经典半价须逐栋取整,不得合并再 floor。**建筑枚举 `house_count` 不由本系统直接读建房(8)——直读 = 5→8 反向环。枚举结果由回合(2)调 8.`GetPlayerBuildings(player)→[(tile,house_count)]` 聚合后作 `preaggregated_nlv` 传入本系统**,见 F-10 签名。交叉参考:建房 F-6 `sellback = floor(BuildingCost/2)` 单栋定义与此一致。
+
 | 变量 | 类型 | 范围 | 说明 |
 |---|---|---|---|
 | `MortgageValue(t)` | int32 | 1..PurchasePrice | 每地抵押额(棋盘) |
@@ -226,21 +228,23 @@ net_liquidation_value(player) = Σ MortgageValue(t)      [t = 玩家拥有的未
 **口径一致性(R1,旧"不变式"措辞已修正):** F-9 是破产(9)移交的**资产枚举口径**——破产(9)须用同一枚举(同一段实现)清点移交资产(AC-27③)。**注意非财务等价**:F-11 把已抵押地 in-kind 转给债权人,债权人继承其赎回义务(须付 MV×(1+fee) 方变现),故已抵押地对债权人即时变现价值非正;F-9 一致地记其为 0。AC-27 验证的是**枚举完整性 + 单一入口**,非"转移现金等价"(旧措辞是循环同义反复——用 F-9 口径估 F-11 转入永真、不证伪任何东西,已废)。
 
 ### F-10 无力支付判据 Insolvency Predicate
-`is_insolvent(player, amount_due) = (Cash + net_liquidation_value(player) < amount_due)`,**严格 `<`**(付到恰好 0 算能付、不破产)
+`is_insolvent(player, amount_due, preaggregated_nlv) = (Cash + preaggregated_nlv < amount_due)`,**严格 `<`**(付到恰好 0 算能付、不破产)
+
+> **签名变更说明(OQ-Build-2 RESOLVED):** F-10 不再内部计算 NLV——内部计算需直读建房(8)的 `house_count` 枚举 = 5→8 反向环。`preaggregated_nlv` 由**回合(2)在调 F-10 前聚合**:回合2 调 8.`GetPlayerBuildings(player)` 取建筑清单,结合 6 的抵押/MV 数据算出 nlv,作为参数传入。本函数只做 `Cash + preaggregated_nlv < amount_due` 的纯谓词判断,不持有资产枚举逻辑。
 
 | 变量 | 类型 | 范围 | 说明 |
 |---|---|---|---|
 | `Cash` | int32 | ≥0(CR-1 不变式) | 当前现金 |
-| `net_liquidation_value` | int32 | ≥0 | F-9 |
+| `preaggregated_nlv` | int32 | ≥0 | 由回合(2)聚合 6(MV) + 8(`GetPlayerBuildings` sellback)后传入;等价于 F-9 `net_liquidation_value` 的外部计算结果 |
 | `amount_due` | int32 | >0 | 强制应付(租/税) |
 | `is_insolvent` | bool | — | true → 移交破产(9) |
 
-例:Cash=50,nlv=120,due=170 → 170<170=false(能付到 0);due=171 → true。
+例:Cash=50,preaggregated_nlv=120,due=170 → 170<170=false(能付到 0);due=171 → true。
 
 ### F-11 破产资产移交 Bankruptcy Transfer
-M-3,经典忠实简化;裁决/出局归破产(9),本系统执行金钱+资产价值转移:
+M-3,经典忠实简化;裁决/出局归破产(9),本系统执行**现金侧**结算(地产/建筑归属 in-kind 转移由破产9 经所有权6/建房8 执行,本系统不写 owner map):
 - **收租破产(债权人=玩家)**:`creditor.Cash += debtor.Cash`;债务人全部地产/建筑 **in-kind 转给债权人(保留抵押状态)**;**MVP 不收继承利息**。债务人出局。
-- **银行破产(税/银行=债权人)**:债务人全部地产**回退为无主(unowned)**,建筑拆除无返还,现金蒸发。**MVP 不走拍卖**(拍卖=Alpha 12,届时改走拍卖)。
+- **银行破产(税/银行=债权人)**:债务人全部地产**回退为无主(unowned)**,建筑拆除无返还(**建筑拆除归破产9 调建房8 `LiquidateAllBuildings` 执行、地产回退归所有权6 `ReturnTileToBank`,本系统只执行现金侧、不拆建筑、不写 owner map**),现金蒸发。**MVP 不走拍卖**(拍卖=Alpha 12,届时改走拍卖)。
 
 > **已抵押地 in-kind 的价值口径(R1,配合 AC-27)**:收租破产时债权人继承已抵押地及其赎回义务(变现须先付 MV×(1+fee)),故其即时变现价值非正——这是经典忠实的刻意简化、**非财务等价**。F-9 与破产(9) 一致记已抵押地为 0(AC-27③ 单一枚举口径),不声称"转移现金等价"。
 
@@ -262,7 +266,7 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行金钱+资产价
 
 > **拖沓杠杆(→ Tuning Knobs / Open Questions)**:优先级 `STARTING_CASH`(默认 1500 / 快速 750)> `go_salary_amount` > 回合/圈数上限(按 net worth 排名裁定胜者)> 税额 > 赎回费。默认全经典,压缩在原型期调参。
 
-> **跨系统义务(Phase 5 登记)**:net_liquidation_value 消费方=破产(9)须用同式;building_sellback 比率归本系统、建筑清单归建房(8);所有权(6)须供 station/utility count + house_count + is_monopoly + is_mortgaged。**(R1 新增)棋盘(1)加载期须校验 `RentTable[1] ≥ RentTable[0]×monopoly_rent_multiplier`(F-2 数据包络,防建首房降租),违反 warning——此约束跨 board↔economy,须经 propagate-design-change 派发给已 Approved 的 board-data(OQ-Econ-9)。**
+> **跨系统义务(Phase 5 登记)**:net_liquidation_value 消费方=破产(9)须用同式;building_sellback 比率归本系统、建筑清单归建房(8);所有权(6)须供 station/utility count + is_monopoly + is_mortgaged(**house_count 归建房8,经 ResolvePhase 聚合,6 不供**)。**(R1 新增)棋盘(1)加载期须校验 `RentTable[1] ≥ RentTable[0]×monopoly_rent_multiplier`(F-2 数据包络,防建首房降租),违反 warning——此约束跨 board↔economy,须经 propagate-design-change 派发给已 Approved 的 board-data(OQ-Econ-9)。**
 
 ## Edge Cases
 
@@ -288,8 +292,8 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行金钱+资产价
 - **若停在 GO 格**:`passed_go=1` 发一次;`SpecialAction=CollectSalary` 不构成第二次发薪(防双重发薪,CR-2)。
 
 **抵押边界**
-- **若抵押带房地产**:拒绝(须先经建房(8)卖房);本系统校验该地 `house_count==0` 方可抵押。
-- **若重复抵押已抵押地产**:拒绝(读 `is_mortgaged==false` 前置,防双放款)。
+- **若抵押带房地产**:拒绝(须先经建房(8)卖房);**`house_count==0` 前置由决策点(回合2/AI10)在调所有权(6) `Mortgage()` 前校验**(决策点能读建房8),**非本系统在 `Credit` 内校验**(`Credit` 通用入账,不知该笔为抵押;本系统读不到 `house_count`)。
+- **若重复抵押已抵押地产**:拒绝——**由所有权(6) `Mortgage()` 前置校验 `bIsMortgaged==false`**(防双放款,property-ownership AC-10);economy `Credit` 读不到抵押标记、不在 `Credit` 内校验(同 house_count,OQ-Prop-7)。
 - **若抵押率数据异常**(`MortgageValue > PurchasePrice`):由棋盘(1)加载期校验已拒绝(board-data Edge Cases),本系统运行时不再遇到。
 
 **破产移交边界**
@@ -315,9 +319,9 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行金钱+资产价
 ### 下游(依赖本系统)
 | 系统 | 强度 | 读/写本系统 |
 |---|---|---|
-| 地产所有权(6) | 硬 | 买地/抵押的现金执行经本系统;**并向本系统供 owner/house_count/is_monopoly/count/is_mortgaged 供算租**(见下方双向说明) |
+| 地产所有权(6) | 硬 | 买地/抵押/赎回事务由 6 拥有、调本系统 `Debit`/`Credit` 执行现金腿(6→5,economy 不反调 6);**并经 push 向本系统供 owner/is_monopoly/count/is_mortgaged 供算租**(`house_count` 归建房8、不在6 快照;见下方双向说明) |
 | 事件格(7) | 硬 | 缴税、机会/命运卡金钱效果经本系统;传入"前进到最近X"额外骰点 |
-| 建房(8) | 硬 | 建/卖房现金扣减/返还经本系统;建筑清单供 F-8/F-9 |
+| 建房(8) | 硬 | 建/卖房现金扣减/返还经本系统;F-9 建筑枚举经回合(2)`ResolvePhase` 聚合 8.`GetPlayerBuildings` 传入(economy 不直读8,防5→8环) |
 | 破产胜负(9) | 硬 | 消费 `is_insolvent` 判据(F-10)+ 按 F-11 移交;**net_liquidation_value 须与本系统 F-9 同式** |
 | AI(10) | 硬 | 读现金/资产估值做买地/抵押/建房决策 |
 | HUD(16) | 硬 | 监听 `OnCashChanged` 显示现金、应付额提示 |
@@ -330,7 +334,7 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行金钱+资产价
 移动(4)在回合(2)编排下把 `(passed_go, SalaryAmount)` **推送**给本系统发薪;**Utility 租所需 `dice_total` 不由移动推送**——本系统在 `ResolvePhase` 从回合(2)暴露的当前程掷骰上下文 `Total` **PULL**(移动 CR-3.1:移动不缓存/不投递 `Total`)。本系统不反向读移动状态。
 
 > **⚠ 双向一致性发现(Phase 5 须复核 systems-index,重要):**
-> 1. **经济(5) ↔ 所有权(6) 互为数据流**:本系统算租需读 6 的归属事实(owner/house_count/is_monopoly/count/is_mortgaged),而 6 买地/抵押需调本系统现金执行。systems-index 当前仅标 **6 depends-on 5**,未标反向。**为避免破坏 index"无环"声明,本 GDD 采用 push 模型:租金结算时由所有权(6)/ResolvePhase 把归属快照作为参数传入本系统的算租调用,本系统不直接硬引用 6 的接口**——如此本系统不新增对 6 的硬依赖,环被打破。Phase 5 须在 index 注明此 push 契约。
+> 1. **经济(5) ↔ 所有权(6) 互为数据流**:本系统算租需读 6 的归属事实(owner/is_monopoly/count/is_mortgaged;**`house_count` 归建房8、不在6**),而 6 买地/抵押需调本系统现金执行。systems-index 当前仅标 **6 depends-on 5**,未标反向。**为避免破坏 index"无环"声明,本 GDD 采用 push 模型:租金结算时由所有权(6)/ResolvePhase 把归属快照作为参数传入本系统的算租调用,本系统不直接硬引用 6 的接口**——如此本系统不新增对 6 的硬依赖,环被打破。Phase 5 须在 index 注明此 push 契约。
 > 2. **经济(5) → 棋盘(1) 读依赖未在 index 标注**:本系统经 `GetTileData` 读金额 base,但 systems-index 当前 `5 depends-on 2`(仅 2)。Phase 5 应补标 `5 depends-on 1`(经移动转交 + 直接读 base)。
 > 3. **net_liquidation_value 跨系统共用**:破产(9)的资产移交口径须 == 本系统 F-9(否则算账穿帮)。Phase 5 登记 systems-index 继承义务表(破产9 行)。
 
@@ -412,7 +416,7 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行金钱+资产价
 
 **F-5 抵押放款**
 - **AC-19** [Logic] `payout==MortgageValue`:MV=100 → Credit 额==100。
-- **AC-20** [Logic] 前置守门:is_mortgaged==true → 拒绝不放款(防双放款);house_count>0 → 拒绝(须先卖房)。
+- **AC-20** [Advisory·code-review] 抵押前置不归 economy:`Credit` 实现内**无** `is_mortgaged`/`house_count` 读取或拒绝分支——未抵押前置由所有权(6) `Mortgage()` 校验、无房前置由决策点校验(economy 读不到二者)。(原 [Logic] 守门断言为残留:economy 无该数据无法门控,OQ-Prop-7 propagate 修正;mirror of property-ownership AC-14。)
 
 **F-6 赎回(整数 ceil,杀 float)**
 - **AC-21** [Logic·整数 ceil] `unmortgage_cost = MV + ceil(MV×fee_num/fee_den)`:MV=100,fee=1/10 → 110;MV=75 → fee=ceil(7.5)=8 → **83**(非 82.5/82);MV=1 → fee=1 → **2**(非免费赎回,fee 恒≥1)。
@@ -438,8 +442,8 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行金钱+资产价
 - **AC-29** [Logic·code-review] is_insolvent 消费 F-9 同源(并入 AC-27③ 单一枚举入口核查):AC-28 的 nlv 由 F-9 计算、非独立重算;F-10 不另写第二段资产枚举。
 
 **F-11 破产移交**
-- **AC-30** [Logic] 收租破产 in-kind:debtor.Cash=30 + 2 地 + 1 房,收租破产 → `creditor.Cash+=30` ∧ 全部地产/建筑转 creditor(保留抵押状态)∧ MVP 不收继承利息。
-- **AC-31** [Logic] 银行破产:税致破产(债权人=银行)→ 地产回退无主 ∧ 建筑拆除无返还 ∧ 现金蒸发 ∧ MVP 不拍卖。
+- **AC-30** [Logic] 收租破产 in-kind **现金侧**:debtor.Cash=30 + 2 地 + 1 房,收租破产 → `creditor.Cash+=30`(现金腿)∧ MVP 不收继承利息。**地产/建筑 owner in-kind 转移 + 保留抵押状态由破产9 经所有权6 执行并断言(所有权 AC-33),本系统不写 owner map、不在本 AC 断言归属转移**(范围分离,OQ-Prop-2)。
+- **AC-31** [Logic] 银行破产**现金侧**:税致破产(债权人=银行)→ 建筑拆除**无现金返还** ∧ 现金蒸发 ∧ MVP 不拍卖。**建筑拆除由破产9 调建房8 `LiquidateAllBuildings` 执行、地产回退无主由所有权6 `ReturnTileToBank` 执行并断言(所有权 AC-34),本系统只断言现金侧、不写 owner map、不拆建筑**(范围分离,OQ-Prop-2)。
 
 ### C. 确定性 / 整数纯净(F-6/F-8/F-9 — 杀 float)
 - **AC-32** [Logic·确定性] 全金钱运算整数纯净:F-6/F-8/F-9 取整路径两次冷启动 / 跨编译配置(Debug vs Shipping)位级相同(无 float→无 `/fp:fast` 截断分歧,对齐 dice F-4)。fixture:MV=75 赎回恒 83、BuildingCost=75 卖回恒 37,不因优化等级变。
@@ -461,14 +465,18 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行金钱+资产价
 - **AC-42** [Logic·可数学验证,R1 由 Advisory 升级] 抵押无套利:对任意 `MortgageValue>0` 与 `fee_rate≥0`,一抵一赎净现金 == `−fee_rate×MortgageValue ≤ 0`(恒非正)。fixture:MV=100,fee=1/10 → 抵押 +100、赎回 −110、净 −10;MV=60 → 净 −6。**证伪旧"套利回报趋正"声称**。`mortgage_warning_threshold=0.6` 是 board 数据质量警戒线、非套利防范(与本断言无耦合)。
 
 ### G. 凑钱状态机 / 自动清算兜底(CR-7,R1 blocker #4)
-- **AC-43** [Logic·状态机] 确定性自动清算兜底终止性:GIVEN Cash=50、应付=200、玩家持 3 地(MV 升序 60/80/100,无房)不行动 → 自动清算按 MV 升序抵押(60→Cash 110<200;80→Cash 190<200;100→Cash 290≥200)→ 执行 Debit(200) → Cash==90 → 回 Solvent;**断言清算顺序确定(MV 升序、两次冷启动位级一致)∧ 抵押到够即停(第3地后停,不超额清算)**。变体A(走向破产):nlv 总和 < 应付 → 清算穷尽仍不足 → `is_insolvent==true` → 移交破产(9)(证伪兜底死锁)。变体B(带房):持 1 带 2 房地(MV 100)→ 先 F-8 卖 2 房(各 sellback 50,+100)再抵押腾空地(+100),顺序=先卖房后抵押。
+- **AC-43** [Logic·状态机] 确定性自动清算兜底终止性 — 回合(2)驱动、economy 拥有顺序 spec + 现金判据:
+  - **主 fixture(mortgage-empty-first,无建筑)**:GIVEN Cash=50、应付=200、玩家持 3 空地(MV 升序 60/80/100,house_count 全为0)不行动 → 回合2按 economy spec 依次调 6.Mortgage(MV最小可抵押地):MV=60→Cash=110<200;MV=80→Cash=190<200;MV=100→Cash=290≥200 → 执行 Debit(200) → Cash==90 → 回 Solvent。**断言:清算顺序确定(MV升序、两次冷启动位级一致) ∧ 够即停(第3地后停,不超额清算) ∧ economy 仅提供"Cash<amount_due?"判据,回合2驱动调 6/8。**
+  - **变体A(走向破产)**:nlv 总和 < 应付 → 清算穷尽 → `is_insolvent==true` → 移交破产(9)(证伪兜底死锁)。
+  - **变体B(mortgage-empty-first,混合资产)**:GIVEN Cash=50、应付=300、玩家持 PropX(空地,MV=80,house_count=0)+ PropY(带 2 房,MV=100,house_count=2,BuildingCost=100)。回合2 按 economy spec:PropX 可直接抵押(house_count==0)→ 先调 6.Mortgage(PropX,MV=80)→ Cash=130<300;PropX 已抵押、PropY 带房不可抵押 → 调 8.ForcedSellNextBuilding(PropY)→ sellback=50 → Cash=180<300;再调 8.ForcedSellNextBuilding(PropY)→ sellback=50 → Cash=230<300;PropY house_count=0 转可抵押 → 调 6.Mortgage(PropY,MV=100)→ Cash=330≥300 → 执行 Debit(300) → Cash==30 → 回 Solvent。**断言:空地优先抵押(止损,零半价损失);建筑在无空地可抵押后才由 8.ForcedSellNextBuilding 卖出;顺序由回合2驱动,economy 不直调 6/8。**
+  - **变体C(奇数 BuildingCost per-building floor 验证)**:GIVEN PropZ,BuildingCost=75,house_count=3 → F-9 中 `Σ building_sellback = 3 × floor(75/2) = 3 × 37 = 111`(per-building floor) — **断言 ≠ 112**(`floor(75×3/2)=floor(112.5)=112`,合并再floor差1);F-8 单栋 sellback=37 亦同此结果。**验证逐栋取整与合并取整在奇数 BuildingCost 场景下必须用前者。**
 
 > **[Logic] gate(BLOCKING PR)= 41 条:** AC-1/2/3/5/6/7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25/26/**27🔴**/28/29/30/31/32/33/34/35/36/37/38/39/**42**/**43**。**[Advisory]= 3 条:** AC-4(受控写,可升 [Logic] 待 OQ-Econ-1)/40/41。**总计 44 条。**(R1:AC-42 由 Advisory 升 Logic;新增 AC-43。)
 > **F-1..F-11 [Logic] 覆盖:** F-1→6/7/8;F-2→9/10/11/12/13;F-3→14/15;F-4→16/17/18;F-5→19/20;F-6→21/22/**42(无套利)**;F-7→23;F-8→24;F-9→25/26/**27🔴**;F-10→28/29;F-11→30/31。**11/11 全覆盖,含全部 flagged guard。CR-7 凑钱状态机→43(R1 新增)。**
 
 ### 跨系统测试义务(OQ-T-Econ-*,回链下游 GDD,Phase 5 登记 systems-index 继承义务表)
-- **OQ-T-Econ-1 → 所有权(6):** 6 须实现 `owner/house_count/is_monopoly/station_count/utility_count/is_mortgaged` 接口供算租,**且经 push 模型把归属快照作参数传入本系统算租调用**(Dep 双向一致性①,保 index 无环)。字段供给正确性 + push 快照时机归 6 的 AC(本档 AC-9~18 假设其正确并 guard count==0/house 越界)。
-- **OQ-T-Econ-2 → 破产(9)🔴:** 9 的资产移交口径**须 verbatim 使用本系统 F-9 net_liquidation_value**(AC-27 共享不变式下游侧),9 的 AC 须断言"移交总额 == F-9 值"。**另:局末排名用的 net worth 口径(可能含未抵押地 face value,≠ nlv 变现值)归 9 裁定,本档不覆盖**(发现-2 显式化,防下游误用 nlv 当排名值)。
+- **OQ-T-Econ-1 → 所有权(6):** 6 须实现 `owner/is_monopoly/station_count/utility_count/is_mortgaged` 接口供算租(**`house_count` 归建房8,经回合2 `ResolvePhase` 聚合 6 快照 + 8 house_count 后传入,不在6 接口**),**且经 push 模型把归属快照作参数传入本系统算租调用**(Dep 双向一致性①,保 index 无环)。字段供给正确性 + push 快照时机归 6 的 AC(本档 AC-9~18 假设其正确并 guard count==0/house 越界)。
+- **OQ-T-Econ-2 → 破产(9)🔴 ✅ RESOLVED 2026-06-04**(propagate,见 bankruptcy OQ-Bankrupt-3):破产判据(F-10 `is_insolvent`)与 net_worth 排名(= Cash + F-9)须 verbatim 使用本系统 F-9 `net_liquidation_value` **估值口径**(单一枚举入口,AC-27③);但**资产移交本身是 in-kind(资产对象逐项转移、非现金等价),9 的 AC 须用 identity-check(逐对象枚举完整性,对齐本档 AC-27②)断言,~~不得断言"移交总额 == F-9 值"~~**——旧措辞与本档 AC-27②(已废"总额==F-9"循环同义反复)自相矛盾:F-9 是估值口径、已抵押地记 0 但对象仍转出,bankruptcy AC-14 已据此落 identity-check。**另:局末排名用的 net worth 口径(可能含未抵押地 face value,≠ nlv 变现值)归 9 裁定**——已由 bankruptcy F-1(= Cash + F-9,nlv 变体)裁定,face-value 变体待 OQ-Bankrupt-2/OQ-Econ-5。
 - **OQ-T-Econ-3 → 事件格(7):** 7 须把"前进到最近公用/车站"额外骰点作 dice_total 参数传入 F-4(AC-18 上游侧);卡牌金钱效果经本系统 Credit/Debit。
 - **OQ-T-Econ-4 → 存档(21):** 21 序列化每玩家 `Cash`;Raising Funds 瞬态不应中途存档(States 节 OQ,与回合2协同)。
 - **OQ-T-Econ-5 → 建房(8):** F-8 sellback 比率归本系统、建筑清单归 8 供 F-8/F-9 枚举;建/卖房现金经本系统执行。
@@ -485,5 +493,5 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行金钱+资产价
 | **OQ-Econ-6** | 原作数值核查:board-data 已 flag 本作目标是 Rento Fortune(非经典大富翁),经济数值可能有差异。真值偏离须在**设计冻结前**事实查证(类比 dice OQ-5 调查项前置),否则"全经典值"前提存疑。 | MVP 设计冻结前 |
 | **OQ-Econ-7(Alpha)** | 拍卖破产移交 / 所得税百分比变体:Alpha 拍卖(12)就位后,银行破产改走拍卖(F-11);所得税是否引入经典"200 或净资产 10%"二选一(引入 float+净资产依赖,MVP 不做)。 | Alpha(12)/House Rules(23) |
 | **OQ-Econ-8** | Raising Funds 自动清算兜底的**触发时机**(AI 即时清算 vs 人类玩家超时时长)与 UI 提示(凑钱界面/自动清算可视化)。本系统已钉"清算顺序确定性 + 有界终止"契约(CR-7.3),只差触发策略与呈现。 | 回合(2)/AI(10) 设计时 + UX(/ux-design) |
-| **OQ-Econ-9** | F-2 数据包络约束 `RentTable[1] ≥ RentTable[0]×monopoly_rent_multiplier`(防建首房降租)须经 `/propagate-design-change` 派发给**已 Approved 的棋盘(1)**,在其加载期校验增 warning(`MonopolyBaseExceedsOneHouse`)。本系统拥有约束定义、棋盘拥有校验执行。 | 棋盘(1) re-touch(propagate)/ 经济实现前 |
+| **OQ-Econ-9** | F-2 数据包络约束须经 `/propagate-design-change` 派发给**已 Approved 的棋盘(1)**,在其**加载期校验批次**新增以下三条 warning(本系统拥有约束定义、棋盘拥有校验执行):**① (既有)** `RentTable[1] ≥ RentTable[0]×monopoly_rent_multiplier`(防建首房降租,`MonopolyBaseExceedsOneHouse{TileIndex}`)。**② (新增)** `RentTable[5] > RentTable[4]`(strict,防酒店末档边际 ROI=0 的死投资——玩家花 BuildingCost 把4房升酒店却租金不涨,摧毁建酒店激励)。**③ (新增)** `RentTable[5] > RentTable[0]×monopoly_rent_multiplier`(防酒店租金低于垄断空地翻倍租金——逆激励:建到满级反不如清空,自定义棋盘需防此退化;经典棋盘满足)。②③ 仅 warning、不 fatal;经典 DA 均满足,自定义棋盘(地图编辑器26)须通过校验。 | 棋盘(1) re-touch(propagate)/ 经济实现前 |
 | **OQ-Econ-10** | F-1 溢出安全的 SalaryAmount 上界:passed_go clamp 不护 SalaryAmount,须棋盘(1)/编辑器(26)加载期校验 `SalaryAmount ≤ 2,000,000`(经典 200 安全;防自定义棋盘溢出 int32)。**并轨(R3 propagate,移动 OQ-Move-6):F-4 Utility 租 `dice_total × DiceMultiplierTable[i]` 的 `DiceMultiplierTable[i]` 上界亦须棋盘(1)/编辑器(26)加载期校验防 `12×mult` 溢出——已落 board-data AC-23j(`[1, DICE_MULT_MAX]`),最终 `DICE_MULT_MAX` 数值与本 SalaryAmount 上界并轨裁定。** | 棋盘(1)/编辑器(26) propagate;经济实现前 |

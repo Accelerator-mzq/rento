@@ -89,7 +89,7 @@
 
 **接口稳定承诺:** `Advance`/`TeleportTo`/`SetTileIndex`/`GetTileIndex` 签名稳定;事件 payload 字段只增不改语义;`EArrivalContext` 枚举只扩不改既有项(给下游 2/5/7/16/19/21 的稳定保证)。
 
-**禁绕过受控写:** 任何系统不得直接改 `PlayerState.CurrentTileIndex`,只经移动 `SetTileIndex`(沿 player-turn AC-35 软/硬约束)。
+**禁绕过受控写:** 任何系统不得直接改 `PlayerState.CurrentTileIndex`,只经移动 `SetTileIndex`(沿 player-turn AC-35 软/硬约束)。**(R-xreview 2026-06-03 交叉引用:player-turn 侧字段级 setter 称 `SetPosition`,仅供移动(4)调用;移动 `SetTileIndex` 为对外公开 API,内部最终经 player-turn `SetPosition` 落位。二者「公开 API→字段 setter」两层 vs 同层别名由 OQ-Move-3b ADR 裁定,实现期收敛单一命名链。见 player-turn 受控写接口面。)**
 
 > 跨系统义务(回链下游 GDD,Phase 5 登记 systems-index 继承义务表):事件格(7) 须经移动 `TeleportTo` 实现"前进到最近X"(paysGo=true)与去坐牢(paysGo=false);VFX(19) 须承接 `OnPawnMoveStarted` 逐格 hop 回放(端到端动画 owner)。
 

@@ -189,12 +189,15 @@ formulas:
     source: design/gdd/player-turn.md
     referenced_by:
       - design/gdd/player-turn.md
-      # 预期消费方：破产胜负(9) —— APC==1 触发胜负
+      - design/gdd/bankruptcy.md   # 破产胜负(9) CR-6/F-2 —— APC==1 触发胜负，return-only 计算
     variables:
       - players
     output_range: [0, 8]   # 0..P
     expression: "APC = count(p in players where p.bIsBankrupt == false)"
-    notes: "未破产玩家数。APC==1 触发 CR-6 胜负信号；APC==0 为正常流程不可达异常态(assert)。A 集合与 APC 须取自同一快照。"
+    notes: "未破产玩家数。APC==1 触发 CR-6 胜负信号；APC==0 为正常流程不可达异常态(assert)。A 集合与 APC 须取自同一快照。
+      【接缝注 2026-06-04】此表达式为 player-turn(2) F-2 口径——在 TurnEnd 阶段、bIsBankrupt 已写之后计算，故 count(bIsBankrupt==false) 已自然排除破产者。
+      破产(9) F-2 在 ResolveBankruptcy 内计算 APC，时点在 return-only 尚未写 bIsBankrupt 之前，须显式 `p != debtor`：APC = count(p in snapshot where p != debtor ∧ p.bIsBankrupt==false)。
+      两式同值不同时点，实现勿照搬本表达式进系统9（否则 debtor 被当活跃 → APC 偏高1 → 胜负不在正确 tick 触发，S2 级）。见 bankruptcy F-2 ⚠。"
     added: 2026-06-01
     revised: ""
   - name: doubles_to_jail
@@ -264,7 +267,8 @@ formulas:
     source: design/gdd/economy-cash.md
     referenced_by:
       - design/gdd/economy-cash.md
-      # 输入方：所有权(6) 供 house_count/is_monopoly/is_mortgaged + 棋盘(1) RentTable；AI(10)/HUD(16) 引用
+      - design/gdd/building-upgrade.md   # 建房(8) 供 house_count(F-2 输入)
+      # 输入方：所有权(6) 供 is_monopoly/is_mortgaged + 建房(8) 供 house_count（6 不持，防 6↔8 环；经回合2 ResolvePhase 聚合）+ 棋盘(1) RentTable；AI(10)/HUD(16) 引用
     variables:
       - is_mortgaged
       - is_monopoly
@@ -274,7 +278,7 @@ formulas:
     output_range: [0, 2000]   # ≥0；上限取决于 RentTable 真值（占位体系内）
     expression: "if is_mortgaged: 0; elif (is_monopoly and house_count==0): RentTable[0]×monopoly_rent_multiplier; else: RentTable[clamp(house_count,0,5)]"
     notes: "地产租金(经济 F-2,piecewise)。垄断×2 只作用无房 RentTable[0],酒店绝不翻倍。is_mortgaged 短路置 0 先于表查找。
-      house_count clamp[0,5] 防越界。归属事实由所有权(6)经 push 模型传入。注册供 /consistency-check 防下游误用翻倍规则。"
+      house_count clamp[0,5] 防越界。归属事实(is_monopoly/is_mortgaged)由所有权(6)、house_count 由建房(8) 经回合2 ResolvePhase 聚合后 push 传入。注册供 /consistency-check 防下游误用翻倍规则。"
     added: 2026-06-02
     revised: ""
   - name: railroad_rent
@@ -370,6 +374,7 @@ formulas:
     source: design/gdd/economy-cash.md
     referenced_by:
       - design/gdd/economy-cash.md
+      - design/gdd/building-upgrade.md   # 建房(8) 供建筑清单(GetPlayerBuildings 枚举,F-6)
       # 输入方：棋盘(1) BuildingCost；建房(8) 供建筑清单；net_liquidation_value 消费
     variables:
       - BuildingCost
@@ -380,12 +385,53 @@ formulas:
     notes: "卖房返还(经济 F-8)。整数 floor。sell_num/sell_den=1/2(building_sellback_ratio)。比率归经济、建筑清单归建房(8)。BuildingCost=75→37。"
     added: 2026-06-02
     revised: ""
+  - name: house_count
+    status: active
+    source: design/gdd/building-upgrade.md
+    referenced_by:
+      - design/gdd/building-upgrade.md
+      - design/gdd/economy-cash.md        # F-2 算租 / F-9 NLV 输入(经回合2聚合)
+      - design/gdd/property-ownership.md   # 6 不持(防6↔8环),仅边界声明
+      # 消费方：回合2 ResolvePhase 聚合传入经济 / AI(10) 估值 / HUD(16)/地产卡(17) 呈现
+    range: [0, 5]
+    unit: 建筑档位(0=无房,1-4=房,5=酒店)
+    notes: "每 Property 格的建筑档位,以 TileIndex 为键,建房升级(8) 拥有(CR-1)。仅 Property 格(Railroad/Utility 恒0、拒建)。
+      '一栋=一个 BuildingCost 单位',酒店=第5栋。均衡建房:任意色组 max−min≤1(CR-6)。
+      经回合2 ResolvePhase 聚合传入经济 F-2 算租 / F-9 NLV(防5→8环,6 不读防6↔8环)。注册供 /consistency-check 防下游误用范围/越界。
+      ⚠口径区分:本条是 **per-tile [0,5]**(酒店折档5);事件格7 RepairFee 用的**全盘房/酒店分开计**口径见 total_house_count/total_hotel_count(建房8 F-7,不同接口)。"
+    added: 2026-06-04
+    revised: ""
+  - name: total_house_count
+    status: active
+    source: design/gdd/building-upgrade.md
+    referenced_by:
+      - design/gdd/building-upgrade.md
+      - design/gdd/tile-events.md   # RepairFee F-1 读全盘普通房数(× per_house_fee)
+    range: [0, 32]   # 经典上界;真值取决于棋盘 Property 数×4
+    unit: 全盘普通房数(仅档1-4,酒店折档5不计入)
+    expression: "GetTotalHouseCount(player) = Σ_{t: owner==player ∧ Property} (house_count[t]==5 ? 0 : house_count[t])"
+    notes: "全盘普通房数(建房8 F-7),供事件格7 RepairFee。**与 per-tile house_count[0,5] 口径不同**(酒店折档5,此处不计为房)——防 OQ-Event-3 静默混用。"
+    added: 2026-06-04
+    revised: ""
+  - name: total_hotel_count
+    status: active
+    source: design/gdd/building-upgrade.md
+    referenced_by:
+      - design/gdd/building-upgrade.md
+      - design/gdd/tile-events.md   # RepairFee F-1 读全盘酒店数(× per_hotel_fee)
+    range: [0, 8]   # 经典上界(对齐 tile-events RepairFee Output Range)
+    unit: 全盘酒店数(仅档5)
+    expression: "GetTotalHotelCount(player) = count_{t: owner==player ∧ Property}(house_count[t]==5)"
+    notes: "全盘酒店数(建房8 F-7),供事件格7 RepairFee。酒店=house_count 档5。与 per-tile house_count 区分(OQ-Event-3 关闭)。"
+    added: 2026-06-04
+    revised: ""
   - name: net_liquidation_value
     status: active
     source: design/gdd/economy-cash.md
     referenced_by:
       - design/gdd/economy-cash.md
-      # 真正消费方：破产胜负(9) —— 移交口径须 verbatim 用此式（OQ-T-Econ-2，AC-27🔴）
+      - design/gdd/building-upgrade.md   # 建房(8) 供 building_sellback 枚举(F-6,经回合2聚合)
+      - design/gdd/bankruptcy.md   # 破产胜负(9) —— 移交口径须 verbatim 用此式（OQ-T-Econ-2，AC-27🔴）；net_worth(F-1)=Cash+本式
     variables:
       - MortgageValue
       - building_sellback
@@ -395,6 +441,34 @@ formulas:
       否则'被判破产但其实付得起'算账穿帮(AC-27)。已抵押地贡献0。区别于局末排名 net worth 口径(可能含未抵押 face value，归破产9裁定，OQ-Econ-5)。
       注册供 /consistency-check 强制破产(9)用同式。"
     added: 2026-06-02
+    revised: ""
+  - name: collect_from_each_total
+    status: active
+    source: design/gdd/tile-events.md
+    referenced_by:
+      - design/gdd/tile-events.md
+      # 输入方：玩家回合(2) 供 ActivePlayers 快照；现金转移经经济(5) Credit/Debit
+    variables:
+      - amount
+      - other_count
+    output_range: [0, 700]   # 7×amount（8人局其余7人在局），amount 牌面数据
+    expression: "collect_from_each_total = amount × other_count   // other_count = |ActivePlayers| − 1"
+    notes: "机会/命运'向每位玩家收钱'卡总额(事件格 F-1)。零和玩家间转移、不经银行;逐笔 Debit(each other) + Credit(self, 实收Σ)。other_count==0(仅1人在局)→0。amount 是牌面数据(CardData)。"
+    added: 2026-06-03
+    revised: ""
+  - name: pay_to_each_total
+    status: active
+    source: design/gdd/tile-events.md
+    referenced_by:
+      - design/gdd/tile-events.md
+      # 输入方：玩家回合(2) 供 ActivePlayers 快照；现金转移经经济(5) Credit/Debit；多债权人破产口径见 OQ-Event-4
+    variables:
+      - amount
+      - other_count
+    output_range: [0, 700]
+    expression: "pay_to_each_total = amount × other_count   // other_count = |ActivePlayers| − 1"
+    notes: "机会/命运'向每位玩家付钱'卡总额(事件格 F-1)。零和、不经银行;逐笔 Debit(self, amount) + Credit(p_i)(防造币/蒸发)。【R-xreview 2026-06-03 订正:旧注的多债权人 propagate 呼吁已 stale、不再适用】逐笔执行使每笔触发破产时债权人单一(economy F-11 单债权人路径清晰),不对称清算是经典忠实、非零和违反——**OQ-Event-4 已收口为说明性 note、无须 economy/破产9 propagate**(见 tile-events F-1 / Edge Cases / OQ-Event-4 表)。AI(10) 估值须知此性质。"
+    added: 2026-06-03
     revised: ""
 
 # Example:
@@ -461,7 +535,7 @@ constants:
     referenced_by:
       - design/gdd/board-data.md
       - design/gdd/economy-cash.md   # 经济(5) 平衡 owner（F-7 tax sink）
-      # 事件格(7) 触发扣税
+      - design/gdd/tile-events.md    # 事件格(7) CR-6 触发扣税（读 TaxAmount 调 Debit）
     value: 200                 # 经济(5)确认=flat 经典值（现金 sink；易上手④不走百分比）
     unit: cash
     notes: "所得税格(经典盘索引4)固定税额，存于该格 FBoardTileData.TaxAmount。
@@ -474,7 +548,7 @@ constants:
     referenced_by:
       - design/gdd/board-data.md
       - design/gdd/economy-cash.md   # 经济(5) 平衡 owner（F-7 tax sink）
-      # 事件格(7) 触发扣税
+      - design/gdd/tile-events.md    # 事件格(7) CR-6 触发扣税（读 TaxAmount 调 Debit）
     value: 100                 # 经济(5)确认=flat 经典值
     unit: cash
     notes: "奢侈税格(经典盘索引38)固定税额，存于该格 FBoardTileData.TaxAmount。
@@ -514,7 +588,8 @@ constants:
     source: design/gdd/player-turn.md
     referenced_by:
       - design/gdd/player-turn.md
-      # 预期消费方：事件格/监狱(7)、俄罗斯轮盘(14)、设置&House Rules(23)
+      - design/gdd/tile-events.md   # 事件格(7) CR-7 引用（3次双点入狱阈值；触发与计数归回合2，事件格只经 SendToJail 置态）
+      # 预期消费方：俄罗斯轮盘(14)、设置&House Rules(23)
     value: 3
     unit: consecutive_doubles
     notes: "连续双点入狱阈值(公式 doubles_to_jail)。默认 3=经典大富翁规则(桌游忠实①)。House Rules(23) 可覆盖(范围 2..5),但【开局锁定、局中不可改】(player-turn R1)——防存档+热切换炸弹(存3/阈3 读档改阈2 → 3>=2 未掷即入狱)。阈值随存档序列化。"
@@ -588,6 +663,49 @@ constants:
     added: 2026-06-01
     revised: 2026-06-02    # R8: active→deprecated（随 player-turn R6 RETREAT,registry 此前漂移未同步）
 
+  - name: JAIL_BAIL_AMOUNT
+    status: active
+    source: design/gdd/tile-events.md
+    referenced_by:
+      - design/gdd/tile-events.md
+      # 执行方：经济(5) Debit；消费方：AI(10) 出狱估值、设置&House Rules(23)
+    value: 50
+    unit: cash
+    notes: "监狱保释金(事件格 CR-9/F-4)。经典大富翁=50。出狱付费/第3回合强制出狱由经济(5) Debit 执行,但真值归事件格(7)(监狱规则参数,非经济平衡推导)。Rento 行为核查见 OQ-Event-6。"
+    added: 2026-06-03
+    revised: ""
+  - name: MAX_JAIL_TURNS
+    status: active
+    source: design/gdd/tile-events.md
+    referenced_by:
+      - design/gdd/tile-events.md
+    value: 3
+    unit: rounds
+    notes: "最长服刑回合(事件格 CR-9/F-4)。经典=3,第3回合非双点强制付保释出狱。不变式 JailTurnsServed∈[0,MAX_JAIL_TURNS-1]=[0,2]。Rento 核查见 OQ-Event-6。"
+    added: 2026-06-03
+    revised: ""
+  - name: CHANCE_DECK_SIZE
+    status: active
+    source: design/gdd/tile-events.md
+    referenced_by:
+      - design/gdd/tile-events.md
+      # 牌面内容(CardData)归棋盘(1)；张数语义归事件格(7)
+    value: 16
+    unit: cards
+    notes: "机会牌堆张数(事件格 CR-3)。经典=16,含 1 张出狱卡。具体牌面=CardData 数据(归棋盘1),张数=事件格旋钮。"
+    added: 2026-06-03
+    revised: ""
+  - name: CHEST_DECK_SIZE
+    status: active
+    source: design/gdd/tile-events.md
+    referenced_by:
+      - design/gdd/tile-events.md
+    value: 16
+    unit: cards
+    notes: "命运牌堆张数(事件格 CR-3)。经典=16,含 1 张出狱卡。"
+    added: 2026-06-03
+    revised: ""
+
 
   - name: die_faces
     status: active
@@ -655,12 +773,29 @@ constants:
     source: design/gdd/economy-cash.md
     referenced_by:
       - design/gdd/economy-cash.md
+      - design/gdd/building-upgrade.md   # 建房(8) 卖房 F-5 引用此比率
       # 预期消费方：建房(8) 卖房、破产(9) net_liquidation_value、AI(10) 估值
     value: 0.5
     unit: ratio
     notes: "卖房返还率(经济 F-8 building_sellback)。=经典半价。【实现用整数 num/den=1/2 + floor】。
       比率归经济拥有、建筑清单归建房(8)。"
     added: 2026-06-02
+    revised: ""
+  - name: net_worth
+    status: active
+    source: design/gdd/bankruptcy.md
+    referenced_by:
+      - design/gdd/bankruptcy.md
+      # 预期消费方：House Rules(23, Alpha) round-cap 排名；AI(10) 估值；HUD(16) 局末排名表
+    variables:
+      - Cash
+      - net_liquidation_value
+    output_range: [0, 300000]   # = Cash + nlv，单玩家上界远低于 int32
+    expression: "net_worth(player) = Cash + net_liquidation_value(player)"
+    notes: "局末排名口径(破产 F-1)。⚠ **= Cash + 经济 F-9 net_liquidation_value，非'= F-9 同口径'**——F-9 不含 Cash，实现不可直调 F-9 当 net_worth，须显式加 Cash(R4 systems/economy 双核)。
+      已抵押地贡献 0(沿 F-9 口径)；不含未抵押 face value 溢价。MVP **不计算**(round-cap/回合上限默认禁用，归 Alpha House Rules23)。
+      口径选择(nlv 变现值 vs 经典 face-value=PurchasePrice+BuildingCost)待 Rento 核查——见 bankruptcy OQ-Bankrupt-2，Alpha round-cap 实装前定。"
+    added: 2026-06-04
     revised: ""
 
 # Example:

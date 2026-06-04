@@ -87,7 +87,7 @@
 
 **CR-4 租金/倍率数组的语义随类型而变**(决策二:棋盘数据拥有金额,但不拥有公式)。**关键:Property/Railroad 用 `RentTable`(承载货币);Utility 用 `DiceMultiplierTable`(承载倍率系数)。两者是不同字段,单位永不混用——任何读取方无需类型分支也不会把倍率当成货币。**
 - **Property(`RentTable`)**:长度 6 数组 = `[无房, 1房, 2房, 3房, 4房, 酒店]` 的**未翻倍基础租金**。索引 0(无房)即"集齐同色组前的基础租金";DA 中**只存未翻倍值,绝不预存翻倍后的值**。
-- **Railroad(`RentTable`)**:长度 4 数组 = 持有 `[1,2,3,4]` 个车站时的租金(货币)。**档位查找责任(R2):本系统只供 4 级 base 数组;"数玩家持有几个车站 → 选 `RentTable` 哪一档"的运行时逻辑归地产所有权(6)(它拥有归属 map,能数持有数),结算金额归经济(5)。本系统不查档、不数持有数。** 此责任须在所有权(6)/经济(5) GDD 显式认领,避免系统间协议空白。
+- **Railroad(`RentTable`)**:长度 4 数组 = 持有 `[1,2,3,4]` 个车站时的租金(货币)。**档位查找责任(R2;R-prop 拆分两腿):本系统只供 4 级 base 数组;"数玩家持有几个车站(`station_count`)"的运行时逻辑归地产所有权(6)(它拥有归属 map,能数持有数);"选 `RentTable` 哪一档(`RentTable[station_count−1]`)+ 结算金额"归经济(5) F-3(6 无 `RentTable` 访问权,只供 count,见所有权 CR-5/AC-39)。本系统不查档、不数持有数。** 此责任已在所有权(6)/经济(5) GDD 显式认领(所有权 CR-5 供 count、经济 F-3 查表),避免系统间协议空白。
 - **Utility(`DiceMultiplierTable`)**:长度 2 数组 = 持有 `[1,2]` 个公用时的"骰点倍率"(如 `[4,10]`),实际租金 = 骰点 × 倍率,由经济公式在运行时计算。**此数组不是货币,是倍率系数。** **骰点 runtime input 来源(R2):正常落地用本次移动骰;机会牌"前进到最近公用"触发时按规则需额外掷骰——骰点由事件格(7)/移动(4)提供并传经济(5),来源歧义由事件格(7) GDD 裁定,本系统只供倍率系数。**
 
 > **垄断翻倍归属契约(CD 裁定):** "集齐同色组后租金翻倍"的系数是**经济系统(5)拥有的全局常量**(经典固定 ×2,对所有色组一致),**已注册于 entities registry `monopoly_rent_multiplier`(R3:status=placeholder,source 临时归棋盘,经济(5)成形后迁移 source 并置 active——此前 CR-4 称"注册于 registry(source=经济#5)"是未来意图非当前事实,R3 已补建该条目)**。本系统的 `RentTable[0]` 只存**未翻倍 base**;翻倍由经济系统在运行时乘算。本系统既不存倍率、也不裁决翻倍,确保棋盘数据保持通用且不与经济公式耦合。
@@ -158,7 +158,7 @@
 |---|---|---|---|
 | 移动(4) | `N`(格数)、环序、`SalaryAmount`(Go 格) | `GetTileCount()`、`AdvanceIndex(from, steps) → (newIndex, passedGo)`、`GetTileData(0).SalaryAmount` | 本系统拥有环算法接口 |
 | 经济(5) | `(passed_go, SalaryAmount)`(由移动 4 传入,非直接查本系统)、`PurchasePrice`/`RentTable` 等金额 base | 经移动(4)转交 + `GetTileData(index)` | 本系统供金额 base,经济拥有发薪/租金公式与倍率 |
-| 地产所有权(6) | `PurchasePrice`、`ColorGroup`、`MortgageValue` | `GetTileData(index)` | 本系统供数据,所有权系统拥有运行时归属 map |
+| 地产所有权(6) | `PurchasePrice`、`ColorGroup`、`MortgageValue`、`TileType` | `GetTileData(index)`、`GetTilesInGroup(group)` | 本系统供数据,所有权系统拥有运行时归属 map(6 读 `TileType` 计车站/公用持有数 F-2/F-3、读 `GetTilesInGroup` 判垄断 F-1) |
 | 事件格(7) | `TileType`、`EventDeck`、`TaxAmount`、`SpecialAction` | `GetTileData(index)` | 本系统供数据,事件系统拥有牌堆与触发逻辑 |
 | 建房(8) | `BuildingCost`、`RentTable`、`ColorGroup` 及**同组成员清单** | `GetTilesInGroup(group) → [indices]` | 本系统供数据与组查询,建房系统拥有建造规则 |
 | 存档(21) | 棋盘 DA 的引用 ID(非全量布局) | `GetBoardId()` | 本系统供标识,存档系统拥有序列化 |
@@ -298,7 +298,7 @@
 | 系统 | 关系 | 读取内容 |
 |---|---|---|
 | 移动(4) | 硬 | `GetTileCount()`、`AdvanceIndex → (newIndex, passedGo)`(单一原子接口,无独立 PassedGoCount)、`GetTileData(0).SalaryAmount` |
-| 地产所有权(6) | 硬 | `PurchasePrice`、`ColorGroup`、`MortgageValue`、`GetTilesInGroup` |
+| 地产所有权(6) | 硬 | `PurchasePrice`、`ColorGroup`、`MortgageValue`、`TileType`、`GetTilesInGroup` |
 | 事件格(7) | 硬 | `TileType`、`EventDeck`、`TaxAmount`、`SpecialAction` |
 | 建房(8) | 硬 | `BuildingCost`、`RentTable`、`ColorGroup`、`GetTilesInGroup` |
 | HUD(16) | 硬 | `DisplayName`、`ColorGroup` 颜色、`PurchasePrice` |
