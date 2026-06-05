@@ -62,7 +62,7 @@
 | h (1..5) | **Sell** → h−1 | `SellHouse`(自愿)/ `ForcedSellNextBuilding`(强制) | CR-5 均衡卖 +(强制路径无现金守卫) |
 | h (0..5) | **OwnerChange(in-kind)** → h 不变 | 破产9 / 交易11(Alpha)归属移交 | house_count 以 TileIndex 为键、随格走(见下) |
 
-- **归属移交(破产 in-kind,⚠ 接缝标注 3 → OQ-Build-3):** `house_count` 以 `TileIndex` 为键、与 owner 解耦,故归属转移时**建筑自动随格转移(本系统无需动作)**——对齐 economy 现有"建筑 in-kind 转移"措辞。**容许的冻结异常**:接收方若因此持"非垄断却带房"的格,**禁止再建/再拆该组**(CR-3 前置②失败),直至其补齐整组+解抵押;租金仍按 economy F-2 `else` 分支 `RentTable[house_count]` 计(公式对非垄断带房自洽)。**⚠ 此 in-kind 选择 vs 经典"破产前须卖房还银行"存在桌游忠实张力**,最终口径待破产(9)设计 + Rento 行为核查(镜像 OQ-Prop-5 模式);MVP 取 in-kind provisional,provisional 备选接口 `LiquidateAllBuildings(player)`(全卖还银行)留破产(9)裁。
+- **归属移交(破产 in-kind,⚠ 接缝标注 3 → OQ-Build-3):** `house_count` 以 `TileIndex` 为键、与 owner 解耦,故归属转移时**建筑自动随格转移(本系统无需动作)**——对齐 economy 现有"建筑 in-kind 转移"措辞。**容许的冻结异常**:接收方若因此持"非垄断却带房"的格,**禁止再建/再拆该组**(CR-3 前置②失败),直至其补齐整组+解抵押;租金仍按 economy F-2 `else` 分支 `RentTable[house_count]` 计(公式对非垄断带房自洽)。**⚠ 此 in-kind 选择 vs 经典"破产前须卖房还银行"存在桌游忠实张力**,最终口径待破产(9)设计 + Rento 行为核查(镜像 OQ-Prop-5 模式);MVP 取 in-kind provisional,provisional 备选接口 `LiquidateAllBuildings(debtor)` 留破产(9)裁。**该接口语义已承诺(随 OQ-Build-3 仍 provisional):** `LiquidateAllBuildings(debtor)` 是**银行破产专用**接口——遍历 debtor 全部 `house_count>0` 格逐格清零(`house_count=0`),**不调用经济5 `Credit`**(无偿清算,守 economy F-11 银行破产建筑拆除无现金返还)——与 `ForcedSellNextBuilding`(自愿/抵押腿清算,调 `Credit` 返半价 `floor(BuildingCost/2)`)**语义不同**;由破产9 在**银行破产分支**调用(收租破产建筑 in-kind 随格、不调本接口)。**⚠ provisional 边界(OQ-Build-3):** 本承诺只钉死「无 Credit / 无偿清算」语义(为 bankruptcy AC-19「Credit==0」提供 building 侧对端支撑),**不预判** OQ-Build-3 终局口径;若 Rento 行为核查裁定为经典「卖房还银行」(建筑拆除有现金 sink),须改走带 Credit-to-bank-sink 的**另一接口**、届时 re-propagate。
 
 ### Interactions with Other Systems
 
@@ -72,7 +72,7 @@
 | 经济(5) | 建房 `Debit(player, BuildingCost)`、卖房 `Credit(player, floor(BuildingCost/2))`(**8→5**);**8 不被 economy 反调**(无环) | 8→5 | 5 执行现金;8 拥有建造/卖房规则与 house_count |
 | 所有权(6) | **读** `GetOwner`/`is_monopoly`/`is_mortgaged`(建房门控,**8→6**);**8 不被 6 反调,6 不读 8 的 house_count**(防 6↔8 环) | 8→6 | 6 拥有归属;8 读作门控 |
 | 回合(2) | `ResolvePhase` 决策点调 `BuildHouse`/`SellHouse`;聚合 `GetHouseCount` 入算租(CR-3.2)+ 聚合 `GetPlayerBuildings` 入 F-9(OQ-Build-2);驱动强制清算调 `ForcedSellNextBuilding`(OQ-Build-1) | 2→8 | 2 拥有流程/决策点/清算驱动;8 供操作与读 |
-| 破产(9, Not Started) | 建筑 in-kind 随格转移(无需动作);provisional `LiquidateAllBuildings(player)` 备选 | 9→8 | 9 拥有破产裁决;8 供建筑态(OQ-Build-3) |
+| 破产(9, Not Started) | 收租破产建筑 in-kind 随格(无需动作);银行破产调 provisional `LiquidateAllBuildings(debtor)` 逐格清零、**不调 `Credit`**(无偿清算,守 economy F-11) | 9→8 | 9 拥有破产裁决;8 供建筑态+清算接口(OQ-Build-3) |
 | AI(10, Not Started) | 读 `GetHouseCount`/`CanBuildHouse` 估值建房决策 | 10→8 | 10 拥有决策;8 供读 |
 | 事件格(7) | RepairFee 牌读 `GetTotalHouseCount`/`GetTotalHotelCount`(全盘房/酒店分开计,F-7) | 7→8 | 7 拥有牌结算;8 供聚合 |
 | VFX(19)/HUD(16)/地产卡(17) | `OnBuildingChanged(tile, newCount)` 多播驱动建房 juice / 房屋图标 | 8→下游 | 8 供事件;下游拥有呈现 |
@@ -216,7 +216,7 @@
 | 系统 | 硬/软 | 对本系统的依赖 | 方向 |
 |---|---|---|---|
 | 玩家回合(2) | 硬 | `ResolvePhase` 调 `BuildHouse`/`SellHouse`;聚合 `GetHouseCount`(算租 CR-3.2)+ `GetPlayerBuildings`(F-9);驱动 `ForcedSellNextBuilding`(清算) | 2→8 |
-| 破产胜负(9, Not Started) | 硬 | 建筑 in-kind 随格转移;provisional `LiquidateAllBuildings` | 9→8 |
+| 破产胜负(9, Not Started) | 硬 | 收租破产建筑 in-kind 随格;银行破产调 provisional `LiquidateAllBuildings(debtor)`(逐格清零、**不调 `Credit`**=无偿清算,守 economy F-11) | 9→8 |
 | 事件格(7, Approved§) | 软(RepairFee 牌) | RepairFee 读 `GetTotalHouseCount`/`GetTotalHotelCount`(全盘房/酒店分开,F-7;关闭 tile-events OQ-Event-3) | 7→8 |
 | AI 对手(10, Not Started) | 硬 | 读 `GetHouseCount`/`CanBuildHouse` 估值建房决策 | 10→8 |
 | HUD(16)/地产卡 UI(17) | 软 | `GetHouseCount` + `OnBuildingChanged` 呈现房屋图标/档位 | 16,17→8 |

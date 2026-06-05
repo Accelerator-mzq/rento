@@ -1,11 +1,11 @@
 # 玩家与回合管理 (Player & Turn Management)
 
-> **Status**: APPROVED (design-review full R8 — 0 blocking,6 recommended,gating 接缝终结;5 项 R8 mandate char-by-char PASS;OQ-1 BLOCKING-ADR + OQ-8 仍开放,APPROVED 仅指 GDD 设计层、非 ADR 已满足)
+> **Status**: APPROVED ◊ (2026-06-04 R-2to9 RR:`/design-review` 重过三锁面 **APPROVED**——三锁面 F-2 胜负口径 / 受控写接口面 `bIsBankrupt` 调用方 / 胜负信号 `OnGameWon` 经主审 fresh-grep 双侧 + systems-designer/qa-lead/game-designer + CD 终审确认架构干净、双侧对齐;**真 blocker=0**。专家 4 项 must-land AC-hardening followup 已就地应用:AC-40 拆 a/b(C++ stub 不降级守 return-only CI 底线)+ 新增 AC-40c(封堵旧 2↔9 双触发 bug 复发回归守护)+ CR-6 钉边沿触发规格 + AC-12 收紧 + AC-19/F-2 Example 时序前提。工单 `docs/architecture/change-impact-2026-06-04-bankruptcy-playerturn-2to9.md`。跨档 followup(bankruptcy L75/L189 `OnGameWon` 广播者措辞 + APC==0 fallback 返回破产者 OQ-Bankrupt-1)留 bankruptcy 自身 review。OQ-1 BLOCKING-ADR + OQ-8 仍开放。原 R8:0 blocking,6 recommended,gating 接缝终结)
 > **Author**: msc + agents
 > **Last Updated**: 2026-06-01
 > **Implements Pillar**: ④易上手轻松局、②社交博弈（回合顺序=谁行动）
 > **System**: #2 in systems-index design order | Foundation | Core | MVP
-> **Review Mode**: lean(authoring) → full(R1) → fresh re-review full(R2) → full(R3) → full(R4) → fresh re-review full(R5, 5 specialist + CD) → fresh re-review full(R6, 5 specialist + CD — MAJOR REVISION,用户裁定 B-1 gating RETREAT) → fresh re-review full(R7, 5 specialist + CD — NEEDS REVISION「可收口纸面尾巴」,3 blocker 单遍收口已应用) → fresh re-review full(R8, 5 specialist + CD — **APPROVED**,0 blocking,gating 接缝终结) — 每轮 5 specialist + creative-director senior synthesis
+> **Review Mode**: lean(authoring) → full(R1) → fresh re-review full(R2) → full(R3) → full(R4) → fresh re-review full(R5, 5 specialist + CD) → fresh re-review full(R6, 5 specialist + CD — MAJOR REVISION,用户裁定 B-1 gating RETREAT) → fresh re-review full(R7, 5 specialist + CD — NEEDS REVISION「可收口纸面尾巴」,3 blocker 单遍收口已应用) → fresh re-review full(R8, 5 specialist + CD — **APPROVED**,0 blocking,gating 接缝终结) → **R-2to9 RR**(focused 三锁面 propagate re-review,systems-designer + qa-lead + game-designer + CD — **APPROVED**,真 blocker=0,4 must-land AC-hardening followup 就地应用) — 每轮多 specialist + creative-director senior synthesis
 > **R1 修订摘要**: 5 项 blocking 收口 + 低成本 recommended。详见 `design/gdd/reviews/player-turn-review-log.md`。
 >   ① F-1 守卫先行(消哨兵-枚举矛盾) ② AI 决策改同步+dev看门狗+ResolvePhase/JailTurn hook ③ 双点阈值开局锁定 ④ AC-35 措辞降级+强度推 ADR ⑤ F-4 round 全局计数。
 > **R2 修订摘要**: fresh re-review 确认 R1 原 5 blocking 全部真闭合;但 CR-8 异步→同步迁移引入 4 项新 blocking,本轮收口。
@@ -38,6 +38,7 @@
 >   ② **gating 接缝相关全删**:CR-8 回放 gating 契约/退出协议、状态表 AIPlaybackGating 行+转移、AC-5b②、payload segment 回调、Tuning 三 gating 旋钮、AC-44(重写为非阻塞 hook 测试)、OQ-1 因子⑬⑯(P0 降至 ①②③⑦⑪⑭)、OQ-3 gating 兼容评估、OQ-9(RESOLVED)、Visual/L98 reframe。零架构返工。
 >   ③ **retreat 后仍存活的独立修复(qa BLK-R6-3/4 + systems 发现-1)**:新增 AC-7b(`OnTurnEnded.bGrantsExtraTurn` 生产侧)/AC-5c(`OnPhaseChanged.ConsecutiveDoubles` 生产侧)防 payload 死字段;F-1 边界 L263 `mod(cur+1,P)`→`mod(cur_safe+1,P)`(第五面规范化对齐)。
 >   ④ **独立待办(与 retreat 无关,保留 OQ 跟踪)**:OQ-8 Player Fantasy 缺 Submission 维度(game-designer 判设计层 BLOCKING,期限 HUD 开工前,CD 复核 framing)。
+> **propagate(2026-06-05,HUD(16) R-2 design-review → OQ-HUD-12):** `FAIActionDetails`(L263)落定开口字段 **`EActionType`**(枚举)——HUD V-Own-07 文案/图标 + F-4 critical 判定(hud AC-56)依赖。**纯加性**:不改 R6 RETREAT/gating 语义、不动 AC-44(其测 `ActionIndex` 排序+非阻塞,与 `EActionType` 正交)。owner=本系统。零架构返工。
 
 <!-- 骨架由 /design-system 创建。逐节设计：新会话运行 `/design-system 玩家与回合管理` 自动从下一个未完成节续做。 -->
 <!-- 关键约束（Phase 2 上下文，供续做参考）：
@@ -95,7 +96,7 @@
 > | `Cash` | `SetCash(value)` / `Debit`/`Credit` 经济侧封装 | 经济(5) |
 > | `bIsInJail` | `SetJailState(bInJail, reason)` | 事件格(7)(进/出狱规则归7) |
 > | 当前程掷骰上下文 | `SetCurrentRollContext(FDiceRollResult)` | 事件格(7)(仅事件额外掷骰更新 holder,见 CR-3.1) |
-> | `bIsBankrupt` | `SetBankrupt(bool)` | 破产胜负(9) |
+> | `bIsBankrupt` | `SetBankrupt(bool)` | **本系统(回合2)**,据破产胜负(9) `ResolveBankruptcy` 返回 `debtorEliminated=true` 写入(9 为 return-only 编排、**不直写本字段**——防 2↔9 环,见 CR-6 / 破产9 CR-5) |
 >
 > ⚠ **`SetPosition` 与移动(4) `SetTileIndex` 的关系(OQ-Move-3b 交叉引用):** 移动(4) 对**其他系统**暴露 `SetTileIndex`/`Advance`/`TeleportTo` 作为位置写的公开 API;本系统的 `SetPosition` 是 `PlayerState.CurrentTileIndex` 的**字段级**受控写,仅供移动(4)内部最终落位调用。二者是「移动公开 API → 本系统字段 setter」的两层关系还是同层别名,由 **OQ-Move-3b ADR** 裁定,实现期须收敛为单一命名链;在裁定前两档以本注交叉引用消歧(消除 movement `SetTileIndex` ↔ player-turn `SetPosition` 的静默异名)。
 >
@@ -201,7 +202,7 @@
 
 **CR-5 回合推进与跳过:** `TurnEnd`(无额外回合)后,行动权按 `TurnOrderIndex` 顺时针传给**下一个未破产**玩家(破产者永久跳过)。**在狱玩家不跳过**——仍获得回合,但 `TurnStart` 将其路由到 Jail 分支(尝试交保释/掷双点出狱,规则归事件格7)。
 
-**CR-6 破产移出与胜负信号:** 破产(9)置 `bIsBankrupt=true` 后,该玩家永久移出轮转。本系统检测"未破产玩家仅剩 1 人"并广播 `OnLastPlayerStanding(WinnerId, bDegenerateTie)` —— **本系统只报数、不裁决胜负**,胜负由破产胜负(9)消费此信号判定。**`bDegenerateTie`(R3 新增,BLK-R3-2 退化局可测载体):** 正常单点破产路径 = `false`;F-2 `APC==0` 应急路径(Alpha 级联破产,两人同事务破产跳过 APC==1)= `true`,标记"无明确单一胜者、需破产9裁定退化局"。本系统只置标志(报"这是退化局"这一事实),退化局的胜负/平局**裁定**仍归破产9。给 AC-40③ 一个可断言的载体(此前"标记退化局"无任何字段/事件承载=不可测,board-data BLOCK-2 同型真空)。
+**CR-6 破产移出与胜负信号(R-2to9 propagate:对齐破产9 return-only 架构):** 玩家破产经破产胜负(9) `ResolveBankruptcy(debtor, creditor, activePlayersSnapshot)` 裁决——**9 为 return-only 编排、绝不回调本系统**,执行完返回 `{debtorEliminated, winnerId|INDEX_NONE, rankingEntry}`。本系统据 `debtorEliminated=true` 置 `bIsBankrupt=true`(本系统拥有的 PlayerState 字段)→ 该玩家永久移出轮转;并据返回的 `winnerId` 触发胜负信号 **`OnGameWon(winnerId)`**(`winnerId==INDEX_NONE` 表对局未结束 / 退化局无单一胜者 → **不触发**,见 F-2)。**`OnGameWon` 为边沿触发(R-2to9 RR followup,钉死 AC-12 测的边沿语义):本系统在单次 `ResolveBankruptcy` 返回 `winnerId!=INDEX_NONE` 后**恰广播一次**;对局进入 `Winner` 终态后,**不**因后续任何 F-2 计数 / 一致性自检 / 状态读取 / 定时回调再次广播 `OnGameWon`(电平→边沿,AC-12 测此幂等)。** **胜负判定归破产9**(在 `activePlayersSnapshot` 上算 APC、显式排除 debtor、不依赖本系统 flag 写时序,返回 winnerId,见 bankruptcy CR-6/F-2);本系统**不**独立裁决胜负、**不**向9 反报信号——旧 `OnLastPlayerStanding` 的 2→9 反向耦合已删除。退化局(APC==0)的检测 / fallback / 胜者取值全部归9 内部裁决(bankruptcy AC-29),本系统只据9 返回的 `winnerId` 行事。
 
 **CR-7 玩家规模:** MVP 2–4。所有顺序/数组结构按运行时玩家数 `P` 动态尺寸(不硬编码 4),接口预留至 8,为联网(25)留空间但不展开实现。
 
@@ -214,7 +215,7 @@
 | `Active` | 正常参与,轮到时正常回合 | → `Jailed`(被送监狱);→ `Bankrupt`(破产9判定) |
 | `Jailed` | 仍在局中、仍获回合,但走 Jail 分支 | → `Active`(出狱,规则归7);→ `Bankrupt` |
 | `Bankrupt` | 终态,永久移出轮转 | (不可逆) |
-| `Winner` | 最后存活者(由9据 `OnLastPlayerStanding` 标记) | 终局 |
+| `Winner` | 最后存活者(破产9 经 `ResolveBankruptcy` 返回 `winnerId`,本系统据此触发 `OnGameWon` 标记) | 终局 |
 
 > 注:`Jailed` 是 `Active` 的子状态(在狱玩家仍在局中、仍获回合),非平行第四态;为表达回合路由差异单列。
 
@@ -244,7 +245,7 @@
 | 移动(4) | `MovePhase` 委派移动;移动改 `CurrentTileIndex`(经本系统 `SetPosition` 受控写) | 移动拥有位置改写逻辑 |
 | 经济(5) | 经济读/改 `Cash`(经受控写);发薪经移动(4)传入;**本系统在 `ResolvePhase` 暴露「当前程掷骰上下文」`Total` 供经济 Utility 租 PULL(holder=回合2,见 CR-3.1 / 移动 CR-3.1 / 经济 F-4)** | 经济拥有现金公式;本系统持当前程 `Total` 单源 |
 | 事件格(7) | `ResolvePhase` 委派;进/出狱规则、`bIsInJail` 改写归7;本系统持字段+服刑计数+跳过逻辑 | 7 拥有牌堆/监狱规则 |
-| 破产胜负(9) | 9 置 `bIsBankrupt`;本系统据此移出轮转、报 `OnLastPlayerStanding` | 9 拥有破产判定与胜负裁决 |
+| 破产胜负(9) | 本系统 `ResolvePhase` 在 `is_insolvent` 时调 `9.ResolveBankruptcy(debtor,creditor,snapshot)`→`{debtorEliminated,winnerId\|NONE,rankingEntry}`(**9 return-only,不回调本系统**);本系统据返回值置 `bIsBankrupt` + 移出轮转 + 触发 `OnGameWon(winnerId)` | 9 拥破产判定+胜负裁决+APC 计算;本系统拥 `bIsBankrupt` 字段写 + 流程/轮转 |
 | AI(10) | AI 玩家回合本系统发 `OnTurnStarted(bIsAI=true)`,AI 接管 `PostRollAction` 决策,完成回调结束回合 | AI 拥有决策 |
 | HUD(16) | 读 `PlayerState` 全字段 + 当前回合玩家 + 当前阶段 | HUD 拥有呈现 |
 | 主菜单大厅(20) | 开局传入玩家数/名/色/AI 档 → 本系统初始化 `PlayerState` 列表并定序 | 大厅配置,本系统建实体 |
@@ -252,16 +253,16 @@
 
 **接口稳定承诺**:`PlayerState` 字段一旦发布只增不改语义;回合阶段枚举 `ETurnPhase` 通过扩展新增、不破坏既有转换。这是给 8 个尚未成形下游的稳定保证。
 
-> **事件广播形态(R1 新增,推 OQ-1 ADR 钉死默认):** 8 个下游需挂接同一回合事件 = 1-对-多广播。事件(`OnTurnStarted`/`OnPhaseChanged`/`OnTurnEnded`/`OnLastPlayerStanding`/`OnTurnOrderResolved`/`OnAIActionExecuted`(R2))应为 `DECLARE_DYNAMIC_MULTICAST_DELEGATE_*` + `UPROPERTY(BlueprintAssignable)`——UE 中 1-对-多、BP 与 C++ 均可绑定的标准模式。**不可**用 `BlueprintImplementableEvent`(1-对-1,多消费方无法同时挂接)。OQ-1 ADR 把此作为推荐默认。
+> **事件广播形态(R1 新增,推 OQ-1 ADR 钉死默认):** 8 个下游需挂接同一回合事件 = 1-对-多广播。事件(`OnTurnStarted`/`OnPhaseChanged`/`OnTurnEnded`/`OnGameWon`/`OnTurnOrderResolved`/`OnAIActionExecuted`(R2))应为 `DECLARE_DYNAMIC_MULTICAST_DELEGATE_*` + `UPROPERTY(BlueprintAssignable)`——UE 中 1-对-多、BP 与 C++ 均可绑定的标准模式。**不可**用 `BlueprintImplementableEvent`(1-对-1,多消费方无法同时挂接)。OQ-1 ADR 把此作为推荐默认。
 > ⚠ **delegate 参数类型约束(R2 新增,unreal;R3 补具体 payload 清单):** dynamic multicast delegate 的参数 struct **必须标 `USTRUCT(BlueprintType)`**(否则 BP `BlueprintAssignable` 绑定时编译报错);`TArray`/`TMap` **不能直接作** dynamic delegate 参数(须包进 USTRUCT)。具体 payload 清单(列为 OQ-1 ADR 决策因子 C-5/⑪,ADR 须显式列出):
 > - `OnTurnOrderResolved` 携带 TurnOrder 数组 → **必须包进 `FTurnOrderResult { TArray<int32> OrderedPlayerIds; bool bResolvedBySeatTiebreak; }`**(裸 `TArray<int32>` 作 dynamic delegate 参数编译失败 —— R3 unreal 点名)。
-> - `OnLastPlayerStanding` → **R3 增退化局标记 payload `bDegenerateTie`**(BLK-R3-2:`FLastPlayerStandingResult { int32 WinnerId; bool bDegenerateTie; }`,APC==0 应急路径下 `bDegenerateTie=true` 且 **`WinnerId=INDEX_NONE`**(R4),给 AC-40③④ 可测载体;本系统只报标志,胜负/退化局裁定归破产9)。
+> - `OnGameWon(int32 WinnerId)` → 胜负信号(**R-2to9 propagate:取代旧 `OnLastPlayerStanding` / `FLastPlayerStandingResult` 的 2→9 反向信号**)。`WinnerId` 取自破产9 `ResolveBankruptcy` 返回的 `winnerId`(9 在 `activePlayersSnapshot` 上算 APC 裁定、退化局 APC==0 时9 内部 fallback,见 bankruptcy AC-29/F-2);本系统据此触发广播供下游(VFX19/HUD16/音频22)呈现封王 juice。`winnerId==INDEX_NONE`(对局未结束 / 退化局无单一胜者)→ **不触发**。单 `int32` 参数可直接作 dynamic multicast delegate 参数(无须包 USTRUCT)。事件归破产9 供(enable-not-own,见 bankruptcy L75/L189)、本系统据9 返回值触发、下游拥呈现。
 > - **三核心事件 payload(R4,unreal——R3 漏列致 8 下游无法判断是否需额外查询):**
 >   - `OnTurnStarted` → `FTurnStartedInfo { int32 PlayerId; bool bIsAI; }`(携当前玩家 id + 是否 AI,免下游回查 TurnManager 当前玩家;`bIsAI` 供 AI10/HUD16 路由)。
 >   - `OnPhaseChanged` → `FPhaseChangedInfo { ETurnPhase OldPhase; ETurnPhase NewPhase; int32 ConsecutiveDoubles; }`(**携新旧阶段**供 HUD 做过渡动画;`ConsecutiveDoubles` 让 HUD 区分"首次 RollPhase"与"双点额外回合 RollPhase",见 L129 重发语义)。
 >   - `OnTurnEnded` → `FTurnEndedInfo { int32 PlayerId; bool bGrantsExtraTurn; }`(`bGrantsExtraTurn`=双点额外回合标志,供 HUD 区分"同玩家继续"与"移交新玩家"的切换动画)。
-> - `OnAIActionExecuted` → USTRUCT(`FAIActionDetails`),**含 `ActionIndex`(R5 引入;R6 RETREAT 后定性为**框架拥有的轻量排序契约**——框架不再消费它做 gating 收敛,但仍**保证**按实际执行顺序自增 `0..M-1`(M=实际执行动作数,被跳过动作不广播亦不占号,见 AC-44①②),供 HUD 排序展示。**非"可选提示":自增值域是框架的 [Logic] 可测契约,BP 实现不得填 `-1` 等空值**)** + ActingPlayerId/TargetTileIndex/Amount 等(其余字段由 HUD16/VFX19 呈现需求 + AI10 定)。
-> - **⚠ payload 字段扩展的 UE 特有代价(R5 unreal #6——扩展到全部 payload struct,非仅 FAIActionDetails):** 上述全部 dynamic multicast delegate 的参数 USTRUCT(`FTurnOrderResult`/`FLastPlayerStandingResult`/`FTurnStartedInfo`/`FPhaseChangedInfo`/`FTurnEndedInfo`/`FAIActionDetails`)**任何字段变更**(增/改名/改类型)都波及绑定该 delegate 的全部下游 BP 图(HUD16/AI10/存档21 等)。UE 中此变更**不主动报编译错误**——BP 节点按 pin 名称匹配,字段**改名会致下游 BP 引脚静默断线**(runtime null),仅在打开该 BP 时出现 "out of date node" 警告。**故"字段扩展"的真正代价 = 须重新打开并检查绑定该 delegate 的全部 BP 图的 payload 引脚连接,防静默断线,非"编译一次"。** 这是接口稳定承诺(L184「只增不改语义」)在 UE 实现层的强约束依据。
+> - `OnAIActionExecuted` → USTRUCT(`FAIActionDetails`),**含 `ActionIndex`(R5 引入;R6 RETREAT 后定性为**框架拥有的轻量排序契约**——框架不再消费它做 gating 收敛,但仍**保证**按实际执行顺序自增 `0..M-1`(M=实际执行动作数,被跳过动作不广播亦不占号,见 AC-44①②),供 HUD 排序展示。**非"可选提示":自增值域是框架的 [Logic] 可测契约,BP 实现不得填 `-1` 等空值**)** + `ActingPlayerId`/`TargetTileIndex`/`Amount`/**`EActionType`**(枚举:`BuyProperty`/`BuildHouse`/`Mortgage`/`Unmortgage`/`Move`/`PayRent`/`Bankrupt`…)等。**`EActionType` 为 HUD16 R-2 propagate 落定(2026-06-05,OQ-HUD-12;兑现原"其余字段由 HUD16/VFX19 呈现需求 + AI10 定"开口)**:HUD V-Own-07 文案/图标 + F-4 critical 判定(hud AC-56)+ VFX19 juice 选型依赖;owner=本系统(框架广播每条实际执行动作时填其 `ActionType`)。**字段扩展遵 L264 UE 代价:核验绑定 `FAIActionDetails` 的全部下游 BP 图(HUD16/AI10/存档21)引脚连接,防静默断线。**
+> - **⚠ payload 字段扩展的 UE 特有代价(R5 unreal #6——扩展到全部 payload struct,非仅 FAIActionDetails):** 上述全部 dynamic multicast delegate 的参数 USTRUCT(`FTurnOrderResult`/`FTurnStartedInfo`/`FPhaseChangedInfo`/`FTurnEndedInfo`/`FAIActionDetails`;**R-2to9 propagate:`FLastPlayerStandingResult` 已随 `OnLastPlayerStanding`→`OnGameWon` 删除——`OnGameWon(int32 WinnerId)` 单 int 参数无 USTRUCT,不在此列**)**任何字段变更**(增/改名/改类型)都波及绑定该 delegate 的全部下游 BP 图(HUD16/AI10/存档21 等)。UE 中此变更**不主动报编译错误**——BP 节点按 pin 名称匹配,字段**改名会致下游 BP 引脚静默断线**(runtime null),仅在打开该 BP 时出现 "out of date node" 警告。**故"字段扩展"的真正代价 = 须重新打开并检查绑定该 delegate 的全部 BP 图的 payload 引脚连接,防静默断线,非"编译一次"。** 这是接口稳定承诺(L184「只增不改语义」)在 UE 实现层的强约束依据。
 > - **`OnAIActionPlaybackSegmentComplete(ActionIndex)`(R3-R5 曾存在;R6 RETREAT 删除)**:此回调是 R3-R5 框架 gating 的核心介质(呈现层→框架的逐段回放完成回调,驱动集合收敛)。R6 retreat 后框架不再等待呈现层回放,**此回调彻底删除**——呈现层无须向框架报告回放进度,框架在 AI 决策执行完即时移交。
 >
 > **枚举扩展 append-only(R1 新增):** `ETurnPhase`/`EPlayerColor`/`EAIDifficulty` 用 `UENUM(BlueprintType) enum class : uint8`,扩展**只增不删不改顺序**(末尾追加)。理由:已序列化的 `.uasset`/存档存的是枚举整数索引,重排会使旧数据错位。"枚举扩展不破坏既有转换"的承诺靠此规则在实现层兑现。**例外澄清(R7,unreal 发现3):** append-only 仅约束**已被分配过持久化索引的值**(出现在已提交 `.uasset` 或 SaveGame 数据中)。GDD 审稿阶段引入、随后在任何引擎资产正式使用前即删除的草稿值(如 R3-R6 曾拟的 `AIPlaybackGating` 相位)**从未被分配索引**,删除它不违反 append-only,`ETurnPhase` 当前合法值仍为 7 个(TurnStart/RollPhase/MovePhase/ResolvePhase/PostRollAction/TurnEnd/JailTurn)。实现确认标准:该值从未出现在已提交 `.uasset` 或存档数据中。
@@ -317,8 +318,9 @@
 | 破产标志 | `p.bIsBankrupt` | bool | {T,F} | 一旦 T 永不翻转 |
 | 活跃数 | `APC` | int32 | 0..P | 未破产玩家数 |
 
-**Output Range:** `[0, P]`,不 clamp。`APC==1` → 触发 CR-6 胜负信号(唯一未破产者即胜者);`APC==P` 为开局态。
-**`APC==0` 应急路径(R1 新增,Alpha 前向兼容):** MVP 主路径破产单点逐个发生,APC 单调减必经 1 → CR-6 必触发,`APC==0` 不可达(assert)。但 **Alpha 交易/拍卖/级联破产**可能使两名玩家在同一结算事务内同时破产,APC 从 2 直接跳 0、跳过 1 → CR-6(APC==1 触发)从未 fire → 死锁。**契约要求**:① 破产胜负(9)须保证"最后两名玩家不得在同一事务内同时被判破产而不确定胜者"(先破产者负,后判定者胜,或定义平局规则);② 本系统 F-2 在检测到 `APC==0` 时**不仅 assert**,而是走应急路径**广播 `OnLastPlayerStanding(WinnerId, bDegenerateTie=true)`**(R3:退化局标记置 true,给 AC-40③ 可测载体)并标记需(9)裁定的退化局(防止静默死锁)。**`WinnerId` 取值(R4,systems-designer——堵 APC==0 时 WinnerId 无规格):** APC==0 全员破产、无明确单一胜者,`WinnerId` 置 **`INDEX_NONE`(-1)**;破产9 消费时以 `bDegenerateTie==true` 为主信号、**不依赖 WinnerId** 取胜者(退化局胜负/平局裁定归9)。正常单点破产路径 `WinnerId` 为唯一存活者 `PlayerId`、`bDegenerateTie=false`。MVP 阶段此路径仅为防御;Alpha 设计交易(11)/拍卖(12)时由(9)落实事务级保证。
+**Output Range:** `[0, P]`,不 clamp。`APC==P` 为开局态。
+**⚠ 胜负判定归属(R-2to9 propagate——口径单源):** 本系统 F-2 是据 `bIsBankrupt` 字段的**计数辅助**(供轮转 / 一致性自检 / 诊断),**非独立胜负裁决器**。胜负条件由破产胜负(9) `ResolveBankruptcy` 在 `activePlayersSnapshot` 上算 APC(**显式排除 debtor、不依赖 flag 写时序**,见 bankruptcy F-2/CR-6)并返回 `winnerId`;本系统据返回的 winnerId 触发 `OnGameWon`(见 CR-6)。本系统**不**在破产结算时独立重算"`APC==1`→胜利"——return-only 下9 算 APC 时 debtor 的 `bIsBankrupt` 尚未由本系统写入,本系统若同刻用 `|{!bIsBankrupt}|` 重算会**多计 debtor**、与9 给出相反的"是否终局"判定(此即 2↔9 旧矛盾根因)。故本 F-2 计数仅在本系统**已据返回值写完 `bIsBankrupt` 之后**作为一致性自检 / 轮转辅助使用,胜负口径恒以9 返回的 winnerId 为准。
+**`APC==0` 退化局归属(R1 引入 → R-2to9 propagate 改归9):** MVP 主路径破产单点逐个发生,APC 单调减必经 1。**Alpha 交易/拍卖/级联破产**可能使两名玩家在同一结算事务内同时破产,APC 从 2 直接跳 0、跳过 1。**此退化局的检测、fallback 与胜者取值全部归破产胜负(9) 内部**——9 在 `activePlayersSnapshot` 上算 APC,`APC==0` 时 dev `assert`+log + fallback 取除 debtor 外末名 `bIsBankrupt==false` 存活者(无则 fatal log),返回 `winnerId|INDEX_NONE`(见 bankruptcy F-2/AC-29)。本系统**不**广播任何 2→9 反向退化局信号(旧 `OnLastPlayerStanding(bDegenerateTie)` 已随 return-only 删除);只据9 返回的 `winnerId` 行事:`winnerId!=INDEX_NONE` → 触发 `OnGameWon`;`winnerId==INDEX_NONE` → 不触发、对局态由9 裁决。Alpha 事务级"最后两人不得同事务同时破产而不定胜者"的保证亦归破产9(见 bankruptcy F-2 应急契约)。
 **快照契约(R1 强化;R2 强度降级对齐 AC-35):** `A`(F-1)与 `APC` 须取自**同一只读快照**。实现要求:`TurnEnd` 阶段进入时取 `players` 一次只读副本(BP 中 local array copy,深拷贝,后续对原数组修改不影响副本——此层 BP 可硬实现),后续所有 F-1/F-2 调用使用该副本。
 > **⚠ 强度澄清(R2,与 AC-35 受控写同构——systems-designer BLOCKING):** "破产胜负(9)的 `bIsBankrupt` 写入须在 ResolvePhase 内完成、不得在 TurnEnd 进行中修改"是一项**软约束(架构约定)**,**非引擎级硬保证**——与 AC-35 受控写同构:BP 中任何持 PlayerState 引用的系统可在任意时点写字段,本系统**无法引擎层硬拦截** (9) 的写入时机,强度随 OQ-1 ADR 容器选择(C++强封装可硬门 / BP约定=软约束+code-review)。R1 用"契约要求"硬措辞 over-claim,R2 校正为软约束。
 > **必要性前提(R2):** 此契约防的是"A 与 APC 来自不同快照"的竞态。但 **MVP 单线程 BP + OQ-1 禁 Latent Action(同步函数调用栈)下,TurnEnd 内不存在并发修改,竞态理论不可达**——故快照契约在 MVP 实为**防御性过设计(无害但非必需)**。其真正必要性出现在:(a) 若 OQ-1 ADR 最终允许某种异步等待,或 (b) Alpha 交易/拍卖致 TurnEnd 进行中破产写入。**前提**:本系统保证 `TurnEnd` 阶段内**不委派任何可能触发 `bIsBankrupt` 写入的外部调用**(TurnEnd 只做额外回合判定/移交,不再委派经济结算),使"快照取用后无新破产写入"在本系统侧成立;(9) 侧的写入时机约束为软约束,经 code-review 守。`APC==0` 应急路径(下方)为此软约束失效时的最终防御。
@@ -326,7 +328,7 @@
 > - **快照A —— `PostRollAction` 的 `DecidePostRollActions` T0 快照(CR-8):故意允许漂移**。逐动作执行会改 Cash/地产/均匀约束,逐动作重校验、不可行静默跳过。漂移是预期行为。
 > - **快照B —— `TurnEnd` 进入时取的 `players` 只读副本(F-1/F-2):要求不漂移**。A 与 APC 同源。
 > - **时序关系:** `PostRollAction(快照A,允许漂移)→ EndTurn → TurnEnd(快照B,在 A 之后取、禁漂移)`。快照A 内的所有状态写入(含**执行者因建房/抵押在 PostRollAction 内破产**——破产写入发生在 PostRollAction 阶段)在 TurnEnd 取快照B **之前**落定,故 B 是 A 之后的一致视图,链条**无未定义时序缺口**(前提:L223 "TurnEnd 不再委派经济结算"成立)。
-**Example:** bIsBankrupt=[F,T,F,F] → APC=3;[F,T,T,T] → APC=1 → CR-6 触发。
+**Example:** bIsBankrupt=[F,T,F,F] → APC=3(本系统计数辅助);[F,T,T,T] → 本系统已据9 返回值写完 flag 后 APC=1,胜负仍以9 返回的 `winnerId` 为准触发 `OnGameWon`(口径见上方归属注,本系统不独立判 APC==1→胜利);**[T,T,T,T] → APC=0(退化局,MVP 单线程不可达、属 Alpha 异步路径)→ 本系统仅 `assert`(AC-20),退化局检测 / fallback / 胜者取值全归破产9(bankruptcy AC-29),本系统不独立触发任何信号**。
 
 ### F-3 DoublesToJail — 连续双点入狱判定
 
@@ -375,15 +377,15 @@
 > *lean 模式:`systems-designer` 未咨询(仅 D/H 派发)。本节由主会话起草。*
 
 - **若开局玩家数 `P < 2`**:拒绝开局。回合制对战至少需 2 人;大厅(20)须保证 `P∈[2,4]`(MVP)。
-- **若当前玩家在自己回合内破产**(无力付租/税):完成破产结算(9 置 `bIsBankrupt`)→ 本回合立即 `TurnEnd`,该玩家移出轮转,行动权按 F-1 传下一未破产玩家。
-- **若非当前玩家在他人回合内 `bIsBankrupt` 翻转**(如交易/拍卖致破产,Alpha):本系统在任意 `bIsBankrupt` 翻转时即更新 `A` 集合;若被移出者恰是"下一个"待行动者,F-1 自动跳过。MVP 主路径破产只发生在破产者自己回合,此条为前向兼容。
+- **若当前玩家在自己回合内破产**(无力付租/税):完成破产结算(9 `ResolveBankruptcy` 返回 `debtorEliminated=true`,本系统据此置 `bIsBankrupt`)→ 本回合立即 `TurnEnd`,该玩家移出轮转,行动权按 F-1 传下一未破产玩家。
+- **若非当前玩家在他人回合内 `bIsBankrupt` 翻转**(如交易/拍卖致破产,Alpha;翻转仍由本系统据9 `ResolveBankruptcy` 返回值写,见 CR-6):本系统在任意 `bIsBankrupt` 翻转时即更新 `A` 集合;若被移出者恰是"下一个"待行动者,F-1 自动跳过。MVP 主路径破产只发生在破产者自己回合,此条为前向兼容。
 - **若掷出双点但本回合被送监狱**(落 GoToJail 格 / 抽到入狱牌 / 第 3 次连续双点):**不发放额外回合**(CR-4 "未因此回合入狱"前置条件)。入狱优先于双点额外回合。
 - **若移动回报 `OnPawnLanded.arrivalContext == SentToJail`**(因 GoToJail 格 / 入狱牌 / 第 3 次双点被直接传送入狱,见移动 AC-12b 强制透传)(R3 propagate,移动 OQ-T-Move-1 对端):`ResolvePhase` **不进**买地/收租/事件结算分支——被传送入狱非"正常落地",Jail 格不可购买 / 无租 / 无事件。本系统据 `arrivalContext` 路由:`SentToJail` → 跳过全部落地结算分支,直接置 `bIsInJail` 相关状态(进/出狱规则归7)并推进至 `PostRollAction`/`TurnEnd`。**危害域**:MVP 经典盘 Jail 格本不可购买 / 无租,即便不抑制也无实际收租;但自定义棋盘 / House Rules(23) 下 Jail 格可能携带可购买属性,届时不抑制将造成"被捕同时买地 / 收租"逻辑错误 → 标 **pre-Alpha gate**,不得无限期搁置(见 AC-46)。
 - **若掷双点出狱**(在狱玩家掷双点离狱,规则归7):移动该点数,但**不触发 CR-4 额外回合**(用双点出狱是离狱条件,非"自由回合"的双点)。`ConsecutiveDoubles` 不因出狱双点累加。此交互边界归事件格(7)落实,本系统约定"出狱双点不进双点链"。
 - **若掷双点后即破产**(双点移动 → 落地付租无力支付):破产移出,**不发放额外回合**(破产者已出局)。
 - **若在狱玩家服刑达上限**(`JailTurnsServed` 达 7 定义的上限,经典 3):强制交保释(规则归7)后移动;本系统只计数 `JailTurnsServed`,上限值与强制逻辑归事件格(7)。
 - **若开局定序连续平手达 `MAX_TIEBREAK_ROUNDS`**:剩余平手按席位索引升序裁定(F-4),保证有限终止。
-- **若未破产玩家仅剩 1**:F-1 返回 `INDEX_NONE`,不进轮转;本系统广播 `OnLastPlayerStanding`,胜负(9)终局。回合推进逻辑**不得**在此情形继续调用 F-1。
+- **若未破产玩家仅剩 1**:F-1 返回 `INDEX_NONE`,不进轮转;胜负由破产9 `ResolveBankruptcy` 返回 `winnerId`、本系统据此触发 `OnGameWon` 终局(R-2to9 propagate:取代旧"本系统广播 `OnLastPlayerStanding`")。回合推进逻辑**不得**在此情形继续调用 F-1。
 - **若读档发生在回合中途**(如 `PostRollAction` 阶段存档):恢复时还原**精确阶段** + 当前回合玩家 + `ConsecutiveDoubles` + **当前掷骰结果完整 `FDiceRollResult`(含 Die1/Die2/Total/bIsDouble)** + **锁定的 `DOUBLES_JAIL_THRESHOLD`** + 全部 11 个 `PlayerState` 字段(逐一,含 `JailTurnsServed`),从该阶段续行。不得回退到 `TurnStart` 重掷(会重复掷骰/移动)。其中完整 `FDiceRollResult` 必须序列化:`bIsDouble` 供读档后 `TurnEnd` 判定是否该发双点额外回合;**`Die1`/`Die2` 供 VFX 读档后忠实重现两骰面值(dice B1/OQ-T-Dice-5,仅存 `Total=4` 无法判定是 1+3 还是 2+2)**。
   - **开局定序进行中禁止存档**(R1 明确):`TurnOrderInitRank` 阶段(可能多轮重掷)不允许存档,避免序列化"哪些席位已定 rank / 当前 round"的瞬态;存档仅在定序完成、进入首个 `TurnStart` 后可用。
   - **⚠ UE 实现地雷(R1 警告,归 OQ-1 ADR):** "还原精确阶段"要求状态机用 **`ETurnPhase` 枚举字段 + delegate 推进**(可序列化、读档 `switch(CurrentPhase)` 重入),**不可**用 Latent Action(Blueprint `Delay`/`WaitForEvent`)实现阶段等待——Latent Action 的等待状态在 Save 时丢失,读档无法从中途恢复,会强制回退 `TurnStart`,与本 Edge Case 直接冲突。此约束须在 OQ-1 ADR 落实。
@@ -410,8 +412,8 @@
 | 移动(4) | 硬 | `MovePhase` 委派;经 `SetPosition` 受控写 `CurrentTileIndex` |
 | 经济(5) | 硬 | 经受控写读改 `Cash`;读当前回合玩家 |
 | 事件格(7) | 硬 | `ResolvePhase` 委派;写 `bIsInJail`(进/出狱规则归7);本系统持 `JailTurnsServed` |
-| 破产胜负(9) | 硬 | 写 `bIsBankrupt`;消费 `OnLastPlayerStanding` 判定胜负 |
-| AI(10) | 硬 | 消费 `OnTurnStarted(bIsAI)`,驱动 `PostRollAction` 决策;消费 `GameStateSnapshot`(OQ-1⑦,开工硬前提);**继承测试义务:AC-37b(同步决策+顺畅移交,N 须 AI GDD 定义回填 OQ-T-3④)+ RNG checklist + snapshot 字段齐备**;**须钉"三档 `AIDifficulty` 产生玩家可感知行为差异"契约(R3 OQ-6)** |
+| 破产胜负(9) | 硬 | 本系统调 `9.ResolveBankruptcy(debtor,creditor,snapshot)`→裁决;据返回值写 `bIsBankrupt` + 触发 `OnGameWon(winnerId)`(9 return-only,**不回调本系统、不直写字段**——见 CR-6/F-2) |
+| AI(10) | 硬 | 消费 `OnTurnStarted(bIsAI)`,驱动 `PostRollAction` 决策;消费 `GameStateSnapshot`(OQ-1⑦,开工硬前提);**继承测试义务:AC-37b(同步决策+顺畅移交,N=1 ✅ 已由 AI(10) AC-46 回填 2026-06-04)+ RNG checklist + snapshot 字段齐备**;**须钉"三档 `AIDifficulty` 产生玩家可感知行为差异"契约(R3 OQ-6)** |
 | 俄罗斯轮盘(14) | 软(Alpha) | 读 `PlayerState`、挂接回合(索引已标 14 depends 2,9) |
 | HUD(16) | 硬 | 读 `PlayerState` 全字段 + 当前回合玩家 + 当前阶段;**消费 `OnAIActionExecuted(ActionIndex)`(非阻塞逐步播放 AI 买地/建房,按 ActionIndex 排序)+ `OnTurnOrderResolved`(席位裁定可见)+ `OnTurnEnded`(回合切换过场;payload `bGrantsExtraTurn` 区分"同玩家继续"vs"移交新玩家",两分支须各有动画 AC)**;**(R6 RETREAT:删除原 `OnAIActionPlaybackSegmentComplete` 回放完成回调义务——框架不再 gating,HUD 自主非阻塞呈现 AI 行动,见 Visual/Audio + OQ-8/OQ-9)**;**继承测试义务:AC-36(OnPhaseChanged 驱动 UI)+ AC-41 呈现侧 + AC-44 呈现侧(非阻塞展示 AI 行动)** |
 | 主菜单大厅(20) | 硬 | 开局配置玩家数/名/色/AI 档 → 初始化 `PlayerState` |
@@ -443,7 +445,7 @@
 
 ## Visual/Audio Requirements
 
-**n/a —— 本系统是数据/流程层,不渲染视觉、不触发音频。** 玩家可见的回合呈现——"轮到你了"高亮、回合切换过场、当前玩家聚光、掷骰/双点反馈 juice——由 HUD(16)、游戏反馈 VFX(19)、音频(22) 的 GDD 拥有并实现。本系统只为这些呈现层**提供数据与事件**:`PlayerState` 字段、当前回合玩家、当前阶段、`OnTurnStarted`/`OnPhaseChanged`/`OnTurnEnded`/`OnLastPlayerStanding`/`OnTurnOrderResolved` 事件。自身无视觉/音频职责。
+**n/a —— 本系统是数据/流程层,不渲染视觉、不触发音频。** 玩家可见的回合呈现——"轮到你了"高亮、回合切换过场、当前玩家聚光、掷骰/双点反馈 juice——由 HUD(16)、游戏反馈 VFX(19)、音频(22) 的 GDD 拥有并实现。本系统只为这些呈现层**提供数据与事件**:`PlayerState` 字段、当前回合玩家、当前阶段、`OnTurnStarted`/`OnPhaseChanged`/`OnTurnEnded`/`OnGameWon`/`OnTurnOrderResolved` 事件。自身无视觉/音频职责。
 
 > **Fantasy→接口最低契约(R1 新增,防"聚光灯感无人认领";R2 扩充):** 本系统的 Player Fantasy(聚光灯感、清晰轮流)兑现委派给呈现层,但本 GDD 须为下游钉一组**最低接口要求**(具体数值由 HUD(16)/VFX(19) GDD 定,此处声明"应有此需求"):
 > - **当前玩家高亮**:HUD(16) 接到 `OnTurnStarted` 后须在**感知即时延迟内**呈现高亮。**R2 数值化(game-designer NR-2):** "感知即时"= **≤100ms 起呈现、≤500ms 完成视觉切换**(Flow 微反馈标准);HUD(16) AC 须用此可测数字,否则"延迟 2 秒仍合规但毁 Fantasy"。
@@ -485,7 +487,7 @@
 - **AC-10** [Logic] CR-5 推进跳过破产(见 F-1 AC-14~18)。
 - **AC-11** [Logic](GAP-3)下一玩家在狱(非破产)→仍获回合(路由 JailTurn),不跳过。
 - **AC-11b** [Logic](R1 新增,JailTurnsServed 计数时机)在狱玩家 JailTurn 进入时 JailTurnsServed 尚未变;事件格(7) mock 返回"留狱"后 +1;返回"出狱"时**不**增加(出狱无需计入)。明确计数发生在"确认留狱"后,非进入即 +1。
-- **AC-12** [Logic](R2 校正测试对象:测本系统 `OnLastPlayerStanding` 广播幂等,非系统9胜负逻辑)APC 从 2 降至 1 时,fixture 注入 **`OnLastPlayerStanding` 事件监听计数器**(初值 0);触发破产后断言监听计数**精确等于 1**(事件恰好广播一次);再次调用 F-2/胜负检查(不再次触发破产)后断言计数**仍等于 1**(本系统不 double-broadcast)。同时断言 F-1 守卫返回 INDEX_NONE。(注:胜负**判定**的幂等归破产9 AC;本系统只测事件广播次数。)**前提澄清(R3,qa-lead REC-R3-4):** "再次查询计数仍==1"成立的隐含前提是 **`OnLastPlayerStanding` 绑定在 `APC` 首次降至 1 的边沿广播一次、后续查询不重发**——此边沿语义须在 CR-6 实现层保证(本 AC 测的是该已规格化行为)。
+- **AC-12** [Logic](**R-2to9 propagate 重写;R-2to9 RR 收紧——测本系统 `OnGameWon` 边沿幂等,非系统9 胜负逻辑**)fixture 注入可**连续返回**的 mock 破产9 `ResolveBankruptcy` + `OnGameWon` 监听计数器(初值 0)。WHEN ① 第一次返回 `{debtorEliminated=true, winnerId==B.PlayerId}`(末局 APC→1)→ 本系统据此触发;② **立即再次**以同 fixture 调 `ResolveBankruptcy` 返回**相同** `{debtorEliminated=true, winnerId==B.PlayerId}`(模拟意外重入 / 重试 / 终态后再查询)。THEN 监听计数**精确等于 1**——第一次触发,第二次因本系统已进 `Winner` 终态被边沿守卫拦截、**不重发**(CR-6 已规格化「终态不重发」,本 AC 是该规格的可测载体,非测未定义实现细节)。同时断言 F-1 守卫返回 INDEX_NONE。**时序前提(R-2to9 RR,REC-6):** 本系统须**先**完成 `bIsBankrupt` 写入(AC-40a③ 语义)→**再**触发 `OnGameWon`→**再**更新 F-1 输出;F-1 守卫返回 INDEX_NONE 隐含依赖此顺序,若实现乱序则 F-1 断言失败提示**时序 bug**(非 F-1 公式错误)。(注:胜负**判定**幂等归破产9 AC;本系统只测事件广播次数。)
 - **AC-13** [Logic] P=2 与 P=4 结构按 P 动态尺寸(无硬编码 4)。
 
 ### B. 公式(F-1~4)
@@ -499,7 +501,7 @@
   - **② cur=-2(负·非整除)** → `cur_safe=((-2%4)+4)%4=((-2)+4)%4=2` → next=3。(真正考验欧几里得取模 `+P` 项;漏 `+P` 的错误实现在此变体失败而①通过。)
   - **③ cur=5(正向越界)** → `cur_safe=((5%4)+4)%4=(1+4)%4=1` → next=2。(覆盖 cur≥P 越界分支。)
   验证 F-1 主公式入口规范化(`cur_safe=((cur%P)+P)%P`)对负·整除/负·非整除/正越界三分支均消除枚举无命中洞。**(R5:此前仅① cur=-4 是整除特例,单点抽样不足以验证规范化实现——qa F-1/systems 1-C/ai ISSUE-7 收敛。)**
-- **AC-19** [Logic] F-2 ([F,T,F,F])→3;([F,T,T,T])→1。
+- **AC-19** [Logic] F-2 ([F,T,F,F])→3;([F,T,T,T])→1。**前提(R-2to9 RR,REC-2):** fixture 在本系统**已据9 返回值写完 `bIsBankrupt` 之后**读取 F-2(对齐 L321「写后计数辅助」口径,避免与「debtor flag 未写时刻」混淆——后者归9 在快照上显式排除 debtor 算,见 bankruptcy F-2);`[F,T,T,T]→1` 末局变体的 `OnGameWon` 触发由 **AC-40a** 覆盖,本条只测 F-2 计数输出、不重测信号触发。
 - **AC-20** [Logic](GAP-6)F-2 ([T,T,T,T])→0 触发 assert(正常流程不可达)。
 - **AC-21** [Logic] F-3 DoublesToJail(3,3)→true;(2,3)→false。
 - **AC-22** [Logic](GAP-7)非双点→ConsecutiveDoubles 置 0、DoublesToJail→false。
@@ -524,12 +526,14 @@
 - **AC-36** [Advisory](LABEL-1 + OQ-T-4)`OnPhaseChanged` 驱动 UI;归 HUD(16) Integration,回链 OQ-T-4。
 - **AC-37a** [Logic](R1 新增;R2 删除不可实现的虚拟时钟挂死测试;R3 补 mock 可注入性前提)AI `PostRollAction` 同步决策:注入 mock AI 同步返回动作列表→框架执行毕→断言阶段切到 TurnEnd、行动权移交下一未破产玩家。**确定性 fixture,作本系统 PR gate。** **前提(R3,qa-lead REC-R3-1):** AI hook 须经 interface/依赖注入暴露,fixture 可替换为 mock——**具体形态待 OQ-1⑤(BlueprintNativeEvent / UInterface);若 ADR 最终选不可注入形态,AC-37a 降级 [Advisory]**(避免重蹈 AC-35a「强度依赖未决 ADR 的 [Logic] gate」风险)。 (R2:原第二段"挂死 mock AI + 虚拟时钟→强制 EndTurn"已删——同步死循环是 GameThread 忙循环,单线程下虚拟时钟无法推进、测试线程被卡,该测试技术不可实现。"永不返回"由测试框架进程级超时暴露,非本 AC 范围;"慢调用诊断"见 AC-37c。)
 - **AC-37c** [Advisory · 非自动化](R2 新增;**R3 BLK-R3-1 改写——斩断 wall-clock 后门复活**)dev 构建下 `AITurnWatchdog` 事后帧预算诊断为**不可自动断言的辅助日志**(无约定 log category/格式 → 不能作测试 oracle;且制造"超阈值"须 mock 真烧 wall-clock → 把 R1/R2 清除两轮的 wall-clock 非确定性引回、违反 Determinism 规则、CI flaky)。**验证方式 = 人工 dev 构建跑慢 mock,目视 Output Log 出现诊断行,记录于 `production/qa/evidence/`。非自动化测试,非 PR gate,不写「断言 UE_LOG fire」。** (R2 原写法"断言诊断 fire"已删——dev 日志不是可断言 oracle、wall-clock 计时不可进确定性测试体系。)
-- **AC-37b** [Advisory](OQ-T-3;R2 措辞可测化)真实 AI(10) 集成:AI 决策在**单帧预算(≤16ms,60FPS)内同步返回**、行动权在 `OnTurnStarted` fire 后**≤N 帧内移交**下一未破产玩家(具体 N 由 AI(10) GDD 定);归 AI(10) Integration,回链 OQ-T-3。("正常预算/顺畅"已改为可观测帧数指标。)
+- **AC-37b** [Advisory](OQ-T-3;R2 措辞可测化)真实 AI(10) 集成:AI 决策在**单帧预算(≤16ms,60FPS)内同步返回**、行动权在 `OnTurnStarted` fire 后**≤N 帧内移交**下一未破产玩家(**N=1**,已由 AI(10) GDD AC-46 回填——AI 决策+批执行+EndTurn 单帧完成,无 async/Latent,2026-06-04;将来若引入 Latent 节点须重裁 N 并同步本 AC);归 AI(10) Integration,回链 OQ-T-3。("正常预算/顺畅"已改为可观测帧数指标。)
 - **AC-38** [Logic](R1 新增,CR-8)ResolvePhase 买地决策点:AI 落无主地产→框架同步调 `DecideBuyProperty` hook(mock 返回 true/false)→断言购买意图按返回值触发/不触发。验证 AI **有买地 hook**(消除"AI 永远无法买地"断链)。
 - **AC-38b** [Logic](R3 新增,BLK-1 买地失败语义)mock `DecideBuyProperty` **返回 true 但 fixture `Cash < PropertyData.Price`**(或地产 mock 为已被买)→框架委派经济5/所有权6 执行期校验→断言:① **不扣成负现金**(Cash 字段未变);② 购买**视同 `false`(不买,地产所有权未变更)**;③ 回合不崩、正常推进到下一阶段。验证 CR-8「执行期可行性校验归经济5/所有权6、不可行视同 false」收口(可行性 mock 由经济5 模拟)。**(R4 BLOCK-1:删原断言项③「dev 诊断 fire」——dev 诊断日志为辅助信息、非断言对象,不写「断言 UE_LOG fire」,对齐 AC-42 标准;断言对象只留可观测状态。)**
 - **AC-39** [Logic](R2 新增,CR-8 覆盖缺口)JailTurn AI hook:在狱 AI 玩家 JailTurn 进入→框架同步调 `DecideJailAction`(mock 返回 `EJailAction::PayBail`/`RollDouble`/`UseCard`)→断言出狱/留狱路径按返回值正确发起(保释意图/掷骰意图)。验证"在狱 AI 无 hook"黑盒不存在(CR-8/Edge Cases 承诺)。
 - **AC-39b** [Logic](R3 新增,BLK-2 非法 JailAction 失败语义)mock `DecideJailAction` 返回**前提不成立的非法值**:① 返回 `PayBail` 但 fixture `Cash < 保释金`→断言降级为"留狱"(`JailTurnsServed+1`)、**Cash 未变(不扣成负现金)**;② 返回 `UseCard` 但 fixture 无出狱卡→断言降级留狱(**`JailTurnsServed+1`,与 ① 对称——R5 ai ISSUE-5:降级留狱=留狱的一种,同 AC-11b「确认留狱后 +1」语义**)、**出狱卡持有数未变(不凭空消卡)**。两路均断言回合不崩、正常推进。验证非法返回不崩、按 CR-8「校验归事件格7、不可行降级留狱」收口(可行性 mock 由事件格7 模拟)。**(R4:① dev 诊断日志降为辅助、非断言对象,对齐 AC-42/AC-38b;② 前提:事件格7 可行性校验须经 interface/依赖注入暴露[OQ-1⑤],fixture 可替换为 mock;若 ADR 选不可注入形态,AC-39b 降级 [Advisory]——同 AC-37a。)**
-- **AC-40** [Logic](R2 新增,F-2 APC==0 应急路径覆盖;**R3 BLK-R3-2 给③可测载体**)fixture 强制全员 `bIsBankrupt=true`(APC==0,Alpha 级联破产模拟)→断言:① assert 或特定错误码 fire;② `OnLastPlayerStanding` 被广播(监听计数==1,非静默死锁);③ **断言广播 payload `bDegenerateTie==true`**(退化局标记落在 `OnLastPlayerStanding` 的 USTRUCT 字段上,可观测可断言——R3 取代 R2"标记需破产9裁定的退化局"这一无载体不可测写法);④ **断言 payload `WinnerId==INDEX_NONE`**(R4:APC==0 无单一胜者,WinnerId 规格化为 -1,破产9 以 bDegenerateTie 为主信号)。退化局的**裁定**仍归破产9(本系统只置标志)。(补 AC-20 只测 assert 的缺口。)
+- **AC-40a** [Logic](**R-2to9 propagate 核心 return-only 契约;R-2to9 RR 拆分——不随 OQ-1⑤ 降级**)在 **C++ headless test 层**注入 `IResolveBankruptcy` stub(C++ stub 注入于 UE Automation headless **恒可行**,独立于 OQ-1⑤ 容器/BP-注入形态选择),断言本系统侧三条契约:① 返回 `{debtorEliminated=true, winnerId==B.PlayerId}`(APC==1)→本系统触发 `OnGameWon(WinnerId)` 恰 1 次、payload `WinnerId==B.PlayerId`;② 返回 `winnerId==INDEX_NONE`(对局未结束 APC>1 / 退化局 APC==0 两情形)→本系统**不**触发 `OnGameWon`(广播计数==0);③ 据返回 `debtorEliminated=true` 断言本系统置 `bIsBankrupt` + 移出轮转。**此条是无环 return-only 架构安全阀的机器证明底线 —— 不得降级**(stakes 高于 AC-37a 的「AI 可观察性」:本条验的是「游戏能否正确结束 + bIsBankrupt 是否正确写入」,return-only 无环纪律若无机器证明则 CI 无法验,qa-lead RR BLK-3)。退化局(APC==0)的 assert/fallback/胜者取值归破产9 内部(见 bankruptcy AC-29),本系统不重测。旧"本系统广播 `OnLastPlayerStanding` + `bDegenerateTie` payload"随 return-only 删除。**对应9 输出侧验证见 bankruptcy AC-40(两条 AC 互引,改接口须同步)。**
+- **AC-40b** [Logic→Advisory](BP mock 注入变体,OQ-1⑤ 依赖)在 **Blueprint fixture 层**注入 mock 破产9 `ResolveBankruptcy`,覆盖 AC-40a 同三条契约的 BP 层验证;若 OQ-1⑤ ADR 选**不可注入形态**,本变体降 [Advisory]——但 **AC-40a(C++ stub)已兜机器证明底线,核心 return-only 契约不掉出 CI**(降级先例同 AC-37a,但底线由 AC-40a 守,非整条契约可降)。
+- **AC-40c** [Logic](**R-2to9 RR followup —— 封堵旧 2↔9 双触发 bug 复发路径;qa-BLK-4 + systems-REC-1 收敛**)GIVEN 2 名玩家:玩家A `bIsBankrupt=true`(**直接置 flag、不经9 `ResolveBankruptcy`**,模拟 A 已在前序回合被9 裁决出局)、玩家B `bIsBankrupt=false`;WHEN 玩家B 完成 TurnEnd、F-1 推进(本回合**无任何 `ResolveBankruptcy` 调用发生**);THEN `OnGameWon` 广播计数 **==0** —— 本系统**不**因自身 F-2 `APC==1` 独立触发胜负信号(只有9 返回 `winnerId!=INDEX_NONE` 时才触发,见 L321/CR-6)。**与 AC-40a② 互补:②测「9 返回 INDEX_NONE→不触发」;本条测「9 根本未被调→不触发」**——验证 L321 散文禁令(回合2 不独立判胜)在代码层有回归覆盖,直击 change-impact §1 旧 bug 根因(旧 player-turn 在9 写 flag 前自算 APC 触发 `OnLastPlayerStanding` 致双发/反向)。
 - **AC-41** [Logic](R2 新增,CR-2 OnTurnOrderResolved 覆盖)定序完成→断言 `OnTurnOrderResolved` 被广播且 payload 含最终 TurnOrder 数组:① 无平手正常定序完成也广播;② 平手达 MAX_TIEBREAK_ROUNDS→席位裁定后广播(呈现层有反馈钩子,席位裁定不静默)。
 - **AC-42** [Logic](R2 新增,CR-8 批处理失败策略;**R3 BLK-R3-3 ① 改状态断言**)`DecidePostRollActions` 返回含"执行时已不可行"动作的列表(如先抵押耗尽现金、后续建房动作付不起)→框架逐动作执行前重校验→断言:① **不可行动作被跳过 = 该动作的目标状态未被改变**(如被跳过的建房动作→该地产房屋数不变;`UE_LOG` 诊断为辅助、非断言对象——R3 取代 R2"断言 UE_LOG fire",因 [Logic]/PR gate 不可依赖无约定格式的日志);② 列表后续合法动作仍执行;③ 回合不中断、处理完毕后 EndTurn。验证"批处理遇过期快照不崩、不丢整批"。**覆盖 L104 两类过期:** 含"先抵押耗现金致后续建房付不起"与"先建房改均匀约束致后续建房违反约束"两个 fixture 变体(R3 N-1)。
 - **AC-43** [Advisory](R2 新增,append-only 枚举约束)`ETurnPhase`/`EPlayerColor`/`EAIDifficulty` 已有枚举值的整数索引未变化(防重排破坏旧存档)。C++ 实现可加 `static_assert` 固定既有枚举值整数;BP-only 环境靠 code-review。归架构约束,与 AC-35a 同性质,强度随 OQ-1 ADR。
@@ -568,7 +572,7 @@
 | **OQ-T-2** 跨系统测试追踪 | 存档(21) GDD 须含"中途还原精确阶段+ConsecutiveDoubles"集成测试,回链本 GDD **AC-34**。 | 存档(21) GDD;审21时核对。 |
 | **OQ-T-3** 跨系统测试追踪 | AI(10) GDD 须含:① "PostRollAction AI **同步决策**正常完成 + 回合顺畅移交"集成测试,回链本 GDD **AC-37b**;② **(R2)** "AI 内部 RNG 仅走骰子(3)可种子化接口、禁调引擎随机"的 code-review checklist 条目(CR-8 约束的下游落实,**BP-only 下为软约束、C++ 强封装可加静态扫描硬门——见 CR-8 确定性 bullet 强度标注**;为 OQ-3 重放预留);③ **(R2)** AI 决策消费 `GameStateSnapshot`(OQ-1 ADR ⑦定义)所需字段在 snapshot 中齐备的验证(以 OQ-1⑭ per-hook 字段清单为对照);④ **(R3,qa-lead REC-R3-2)** AI(10) GDD **须定义并记录 AC-37b 的 `N`(行动权移交帧数上限)具体值及依据,回填本 GDD AC-37b**(防"两边都以为对方定 N"真空);⑤ **(R5 qa F-9)** fixture 验证 `OnTurnStarted.bIsAI=false`(人类回合)时 AI 决策 hook **不被调用**(防 AI 在人类回合干预,payload `bIsAI` 路由分支的防护性 AC)。(R1:原 wall-clock 超时模型已废,改 CR-8 同步;dev 兜底详见 R2 Edge Cases。) | AI(10) GDD;审10时核对。骰子(3)/所有权(6)/建房(8)/**事件格(7,出狱卡持有)** 须为 snapshot 注入只读视图。 |
 | **OQ-T-4** 跨系统测试追踪 | HUD(16) GDD 须含:① "OnPhaseChanged/OnTurnStarted 驱动 UI 高亮(≤100ms 起/≤500ms 完成)"集成测试,回链本 GDD **AC-36**;② **(R3 B-2)** "Pass'N Play handoff 高亮与前一回合 outro 不叠帧(前 outro 完成→才起 handoff 高亮)"可测下限测试;③ **(R3-R5 → R6 RETREAT 简化)** "Animated 模式 HUD 经 `OnAIActionExecuted(ActionIndex)` 非阻塞逐步播放 AI 行动(按 ActionIndex 排序),不阻塞框架推进"呈现侧测试,回链 **AC-44 呈现侧**;(R6:删除原 `OnAIActionPlaybackSegmentComplete` 集合收敛回调义务——框架不再 gating。)④ **(R5 qa F-8)消费 `OnTurnEnded`,须含两 fixture 变体:`bGrantsExtraTurn=true`→"同玩家继续"动画(不显示换手 UI)、`bGrantsExtraTurn=false`→"移交新玩家"动画,两分支各有 AC**(否则 payload 该字段无下游消费测试=死字段),回链本 GDD AC-5a/AC-7。 | HUD(16) GDD;审16时核对。 |
-| **OQ-5**(R3,game-designer RECOMMENDED) | 破产即出局(终态不可逆)→ 4 人局早出局者可能干等 30+ 分钟(支柱②社交受众体验黑洞,"出局即出席"反模式)。MVP 不解决,但本系统(流程 owner)是否应预留 `OnPlayerBankrupt` 事件 payload 供 Alpha 做观察者/预测/对赢家下注?**论据修正(R4,game-designer——R3 原写"Alpha 改事件签名破坏接口稳定承诺"为误):** 新增 `OnPlayerBankrupt` multicast delegate 是**追加事件、非改写现有事件语义**,**不违反** L184「只增不改语义」承诺(该承诺明确允许"扩展新增")。真正代价是:Alpha 时下游(HUD16/俄罗斯轮盘14)已对接无此事件的接口,需补接新钩子=有限开发成本,**非接口破坏**。另:当前 CR-6 仅有最终胜者信号 `OnLastPlayerStanding`,无"谁出局了"的逐次破产事件——MVP 期 HUD 只能轮询 `bIsBankrupt` 变化做"XX已出局"提示(可行但不如事件干净)。是否 MVP 即补 `OnPlayerBankrupt`(低成本=一个 multicast)留作裁定。**(R5 F-R5-6,game-designer 重申建议升 MVP):** 4 人局 MVP 场景下首个破产者中途出局即"体验真空"(无出局仪式/旁观视角/交互),`OnPlayerBankrupt` 成本极低(一个 multicast),建议 MVP 即补"最小可行出局感",Alpha 再设计观察者/下注完整后置体验。**升 MVP 与否属 scope 裁定,留 producer/用户 sprint planning 决定**(本轮不单方扩 MVP scope)。 | Alpha 设计/MVP scope 裁定;MVP 记开口。建议 Alpha 俄罗斯轮盘(14)/交易(11) 设计时一并评估 post-elimination 参与。 |
+| **OQ-5**(R3,game-designer RECOMMENDED) | 破产即出局(终态不可逆)→ 4 人局早出局者可能干等 30+ 分钟(支柱②社交受众体验黑洞,"出局即出席"反模式)。MVP 不解决,但本系统(流程 owner)是否应预留 `OnPlayerBankrupt` 事件 payload 供 Alpha 做观察者/预测/对赢家下注?**论据修正(R4,game-designer——R3 原写"Alpha 改事件签名破坏接口稳定承诺"为误):** 新增 `OnPlayerBankrupt` multicast delegate 是**追加事件、非改写现有事件语义**,**不违反** L184「只增不改语义」承诺(该承诺明确允许"扩展新增")。真正代价是:Alpha 时下游(HUD16/俄罗斯轮盘14)已对接无此事件的接口,需补接新钩子=有限开发成本,**非接口破坏**。另:当前 CR-6 仅有最终胜者信号 `OnGameWon`(R-2to9 propagate:原 `OnLastPlayerStanding` 已删),无"谁出局了"的逐次破产事件——MVP 期 HUD 只能轮询 `bIsBankrupt` 变化做"XX已出局"提示(可行但不如事件干净)。是否 MVP 即补 `OnPlayerBankrupt`(低成本=一个 multicast)留作裁定。**(R5 F-R5-6,game-designer 重申建议升 MVP):** 4 人局 MVP 场景下首个破产者中途出局即"体验真空"(无出局仪式/旁观视角/交互),`OnPlayerBankrupt` 成本极低(一个 multicast),建议 MVP 即补"最小可行出局感",Alpha 再设计观察者/下注完整后置体验。**升 MVP 与否属 scope 裁定,留 producer/用户 sprint planning 决定**(本轮不单方扩 MVP scope)。 | Alpha 设计/MVP scope 裁定;MVP 记开口。建议 Alpha 俄罗斯轮盘(14)/交易(11) 设计时一并评估 post-elimination 参与。 |
 | **OQ-6**(R3,game-designer RECOMMENDED) | `AIDifficulty`(None/Casual/Normal/Sharp)字段存在,但 MVP 无"三档难度产生玩家**可分辨行为差异**"的契约——可能三档在玩家眼里无区别,支柱④易上手的 Competence 阶梯失效。本系统拥有字段、不拥有决策(归 AI10)。 | AI(10) GDD;须钉"三档难度产生玩家可感知行为差异(不仅数值权重)"契约。本系统 Dependencies AI(10) 行登记此要求。 |
 | **OQ-7**(R3,qa-lead RECOMMENDED) | 继承测试义务节(systems-index)强制力仍是程序性(依赖 qa-lead 在 /design-review 时主动核对),非结构性。建议:① 把"核对继承义务"升为 `/design-review` skill 硬步骤(grep 下游 GDD 的 AC 确认回链存在,否则 BLOCKING);② 把该表纳入 `/consistency-check` 双向校验(回链 AC 必须在目标 GDD 存在,防编号漂移失链)。 | 跨 skill 改进(非本 GDD);记此处供后续 skill-improve 采纳。 |
 | **OQ-8**(R4,game-designer RECOMMENDED) | Player Fantasy 节(L39 lean 模式自标"未经 CD 复核 framing")存两处 MDA framing 问题:① "基础层"用 Fantasy 术语包装基础设施需求(玩家无"感到隐形正确"的幻想,实为"流畅"=Flow/Fellowship)——类型错位;② 缺 **Submission 维度**(轮流制核心松弛感"等到你了才需专注",与支柱④易上手轻松局对应),Fantasy 节只提 Fellowship。不影响规则实现,但 Fantasy→HUD 下游指导力弱(可能被误读为"无需特别设计"、削回合切换 juice 投入)。 | **(R5 F-R5-4)期限收紧:由"生产前"改为"HUD(16) GDD 开工前"**——Player Fantasy 节是 HUD/VFX/音频的设计指导文件,缺 Submission 维度(轮流制松弛感)会让 HUD 设计 AI 回合观察体验时无从知晓"等待 AI 时玩家处于放松注意力状态、AI 动画应节奏舒缓"这一取向(与 gating downtime F-R5-3/OQ-9 连锁)。由 `creative-director` 在 HUD GDD 开工前复核 framing(L39 警告已搁置四轮);非规则层缺陷,转 OQ 跟踪而非主会话单方改写 framing。 |

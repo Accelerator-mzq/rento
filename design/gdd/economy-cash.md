@@ -62,6 +62,7 @@
 **CR-5 抵押与赎回。** 拥有者可抵押其未建房地产:
 - **抵押**:抵押事务 `Mortgage(tileIndex, playerId)` 由**所有权(6)拥有**;6 调本系统 `Credit(拥有者, MortgageValue)` 执行放款腿(**6→5**)。本系统只执行 `Credit`,**不标记/不通知 6**——`bIsMortgaged` 标记由 6 在 `Credit` 成功后自置(economy 不反调 6,保无环)。已抵押地产**不收租**(CR-3)。**带房不可抵押的 `house_count==0` 前置由决策点(回合2/AI10)在调 `Mortgage()` 前校验**(决策点能读建房8 的 `house_count`),**非本系统在 `Credit` 内校验**(`Credit` 是通用入账接口,不知该笔是抵押还是收租;卖房归建房(8))。
 - **赎回**:赎回事务 `Unmortgage(tileIndex, playerId)` 由**所有权(6)拥有**;6 调本系统 `Debit(拥有者, MortgageValue × (1 + 赎回费率))`(`赎回费率` 本系统拥有,真值见 D 节/Tuning)执行扣款腿。本系统只执行 `Debit`,成立后**由 6 自行解除抵押标记**(本系统不通知 6)。现金不足无法赎回。
+- **赎回价显示侧读接口(R-2 propagate ← 地产卡 UI #17 OQ-PC-8)**:本系统额外暴露**纯函数只读** `GetUnmortgageCostForDisplay(MortgageValue: int32) → int32`(返回 F-6 `unmortgage_cost = MortgageValue + ceil(MortgageValue×fee_num/fee_den)`,**无副作用、不改任何状态、不触事件**)。供地产卡 UI(17)显示赎回价(CR-3⑤/AC-42):#17 读棋盘(1)的 `MortgageValue` 传入本函数,**#17 不自算 ceil**——赎回费率/取整口径**单源归本系统**(防与 #17 取整分歧)。本函数不破 5↔6 无环(纯计算,不读归属/不反调 6)。
 
 **CR-6 缴税(现金回收 sink)。** 玩家落在 `Tax` 格,本系统 `Debit(玩家, TaxAmount)`(税额读棋盘(1),真值由本系统平衡推导)。税款流向银行(蒸发,不进任何玩家),是经济的现金 sink。不足额则进入 CR-7。
 
@@ -108,6 +109,7 @@
 | 交易(11)/拍卖(12)(Alpha) | 玩家间现金+资产转移 / 中标扣款由本系统执行 | 11/12 拥有谈判/出价流程;本系统执行金钱 |
 | 命运之轮(13)/策略卡(15)(Alpha) | 金钱类效果(奖惩现金)经本系统结算 | 各机制拥有规则;本系统执行金钱 |
 | HUD(16) | 监听 `OnCashChanged` 显示现金;读应付额提示 | 呈现层拥有显示 |
+| 地产卡 UI(17) | 调纯函数 `GetUnmortgageCostForDisplay(MV)` 显示赎回价(CR-5,R-2 propagate);**F-1 同构维护债(OQ-PC-11)**:本系统改 `property_rent`/`railroad_rent`/`utility_rent` piecewise 须触发 #17 重核 F-1/AC-11 期望表 | 呈现层拥有显示;本系统拥租金公式口径单源 |
 | VFX(19) | 监听经济事件呈现金币飞溅/收租/破产 juice | 呈现层拥有动画 |
 | 存档(21) | 序列化每玩家 `Cash` | 存档拥有序列化 |
 
@@ -117,7 +119,7 @@
 - `OnInsufficientFunds(Player, AmountDue, AmountShort)` — 进入 Raising Funds 瞬态(供 UI 弹"需筹资"、回合阻塞)。
 - `OnBankruptcyDeclared(Debtor, Creditor)` — 破产结算转移完成时广播(裁决归 9,本系统在执行完**现金侧**转移后广播金钱侧完成;地产归属转移由 9 经 6 执行)。
 
-**接口稳定承诺:** `Credit`/`Debit`/`GetCash` 签名稳定;事件 payload 字段只增不改语义;`EChangeReason` 枚举只扩不改既有项(给下游 6/7/8/9/16/19/21 的稳定保证)。
+**接口稳定承诺:** `Credit`/`Debit`/`GetCash`/`GetUnmortgageCostForDisplay`(纯函数只读,R-2 新增)签名稳定;事件 payload 字段只增不改语义;`EChangeReason` 枚举只扩不改既有项(给下游 6/7/8/9/16/17/19/21 的稳定保证)。
 
 **禁双重发薪/双重收租(防御契约):** 发薪唯一由 `passed_go>0` 授权(CR-2);收租唯一由"他人拥有且未抵押的落地"授权(CR-3)。任何系统不得绕过本系统接口直接改 `Cash`(受控写,沿用 player-turn AC-35 软/硬约束)。
 
@@ -299,7 +301,7 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行**现金侧**结
 **破产移交边界**
 - **若收租破产**(债权人=玩家):债务人现金 + 全部地产/建筑 in-kind 转债权人(保留抵押状态,MVP 不收继承利息,F-11)。
 - **若银行破产**(税/银行=债权人):债务人地产回退无主、建筑拆除无返还、现金蒸发(MVP 不拍卖,F-11)。
-- **若债务人破产后仅剩 1 名未破产玩家**:破产(9)触发胜负(`OnLastPlayerStanding`,player-turn 契约),本系统停止经济交互。
+- **若债务人破产后仅剩 1 名未破产玩家**:破产(9)在 `ResolveBankruptcy` 返回 `winnerId`,回合(2)据此触发 `OnGameWon(winnerId)`(信号名 + 广播者统一,见 bankruptcy CR-6/AC-40、player-turn CR-6),本系统停止经济交互。
 - **若同一笔破产的债权人本身已出局**:不可达(债权人=当前收租地主,必为存活玩家;税场景债权人=银行)。dev `ensure`。
 
 **确定性/精度**
@@ -325,6 +327,7 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行**现金侧**结
 | 破产胜负(9) | 硬 | 消费 `is_insolvent` 判据(F-10)+ 按 F-11 移交;**net_liquidation_value 须与本系统 F-9 同式** |
 | AI(10) | 硬 | 读现金/资产估值做买地/抵押/建房决策 |
 | HUD(16) | 硬 | 监听 `OnCashChanged` 显示现金、应付额提示 |
+| 地产卡 UI(17) | 软(R-2 新增) | 调纯函数 `GetUnmortgageCostForDisplay(MV)` 显示赎回价(OQ-PC-8);**F-1 同构维护债(OQ-PC-11)**:本系统改租金 piecewise 须触发 #17 重核 F-1/AC-11 |
 | 游戏反馈 VFX(19) | 硬 | 监听 `OnRentPaid`/`OnCashChanged`/`OnBankruptcyDeclared` 呈现金币 juice |
 | 存档(21) | 硬 | 序列化每玩家 `Cash` |
 | 交易(11)/拍卖(12)/命运之轮(13)/策略卡(15) | 软(Alpha) | 玩家间转移/中标扣款/奖惩现金经本系统结算 |
@@ -374,7 +377,7 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行**现金侧**结
 
 ## UI Requirements
 
-**n/a —— 本系统无任何 UI。** 它不绘制屏幕元素,只暴露 `Credit`/`Debit`/`GetCash` 接口与 4 个事件。现金数值显示、应付额提示、买地/抵押/赎回按钮、筹资(Raising Funds)界面均由 **HUD(16)** 实现,本系统供 `OnCashChanged` 事件 + `GetCash` 查询。
+**n/a —— 本系统无任何 UI。** 它不绘制屏幕元素,只暴露 `Credit`/`Debit`/`GetCash` 接口、纯函数只读 `GetUnmortgageCostForDisplay(MV)`(R-2 新增,供 #17 显示赎回价,非 UI)与 4 个事件。现金数值显示、应付额提示、买地/抵押/赎回按钮、筹资(Raising Funds)界面均由 **HUD(16)** 实现;赎回价显示由 **地产卡 UI(17)** 调上述纯函数,本系统供 `OnCashChanged` 事件 + `GetCash` 查询 + 赎回价口径单源。
 
 > 📌 **UX Flag — 经济与现金**:HUD 现金面板、Raising Funds 筹资 UI(玩家抵押/卖房凑钱的交互)、买地/抵押决策 UI 须在 Pre-Production 由 `/ux-design` 为相关 HUD 屏出规格,再交 `/team-ui`。Stories 引用 `design/ux/[screen].md`,非本 GDD。
 
