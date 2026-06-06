@@ -1,6 +1,6 @@
 ---
 Epic: foundation-framework
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: M
@@ -70,6 +70,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
+
 > 本 story 为 Integration（宿主生命周期跨 World 边界）。每 AC 一条 Given/When/Then；headless `-nullrhi`。
 
 - **TC-1 (AC-1/AC-2)**: GIVEN 一个测试用游戏 World 与一个 editor-preview World，WHEN 查询 `UMatchSubsystemBase::ShouldCreateSubsystem`，THEN 游戏 World 返回 true、editor-preview World 返回 false。
@@ -88,3 +90,14 @@ Last Updated: 2026-06-06
 
 - **Depends on**: 无（依赖根，ADR-0001 已 Accepted）。
 - **Unlocks**: story-002（IGameClock DI 挂本基类 Initialize）、story-003（异步加载纪律挂本基类 Deinitialize）、story-005（Event Bus 订阅生命周期锚本基类 Init/Deinit）、story-007（PIE 隔离验证基于本基类）。
+
+## Completion Notes
+**Completed**: 2026-06-06
+**Criteria**: 6/6 passing（AC-1~6 全 COVERED；`OnWorldBeginPlay` 运行时触发验证 DEFER FF-007——需 `World->BeginPlay()` PIE 实测，story-001 scope 外，骨架存在已覆盖）
+**Deviations**:
+- ADVISORY：`OnWorldBeginPlay` 运行时触发验证 DEFER FF-007（文件头已更正不过度声称）
+- ADVISORY：`UWorld::CreateWorld(bInformEngineOfWorld=false)`+`DestroyWorld` 的 GC root 清理建议后续 memreport 实测（post-cutoff，10/10 跑通未观察泄漏）
+- SUGGESTION（非偏离）：可重写 `DoesSupportWorldType` 替代 `ShouldCreateSubsystem` 双过滤（当前遵 ADR-0001 Key Interfaces 合规）
+**Test Evidence**: Integration — `Source/rentoTests/Private/MatchSubsystemBaseTest.cpp`（10 测试，类目 `Rento.Foundation.MatchSubsystemBase`）；独立核实日志 10× `Result={Success}` + `EXIT CODE: 0`，0 Fail
+**Code Review**: Complete — `/code-review` 本会话 APPROVED（独立 unreal-specialist + qa-tester；CHANGES REQUIRED 的 4 项 must-fix〔TC-2 silent-skip 假绿 / AC-6 假覆盖 / Edge 掩盖残留 / CastChecked 硬化〕已修+重测+独立验证）
+**Files**: `Source/rento/MatchSubsystemBase.h`·`.cpp`、`Source/rentoTests/Private/MatchSubsystemBaseTest.cpp`·`TestMatchSubsystem.h`·`.cpp`、`Source/rento/rento.Build.cs`
