@@ -1,0 +1,46 @@
+name: Automated Tests
+
+# 《骰子大亨》(Dice Tycoon) — UE5.7 Automation 测试 CI
+# 每次 push 到 main + 每个 PR 自动跑 UE Automation 测试；失败阻塞合并。
+#
+# ⚠ UE CI 须 self-hosted runner（装了 Unreal Editor 5.7）+ 设 UE_EDITOR_PATH 环境变量。
+#   云端 hosted runner 不含 UE，无法跑 UE Automation。
+#   实现阶段建 .uproject + 测试模块后，本 workflow 才会真正执行测试（当前 SampleFormulaSpec 为 #if 0 模板）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Run UE Automation Tests
+    runs-on: self-hosted   # UE 须本地 runner 装编辑器；hosted runner 不含 UE
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Run Automation Tests (headless -nullrhi)
+        run: |
+          "$UE_EDITOR_PATH" "${{ github.workspace }}/DiceTycoon.uproject" \
+            -nullrhi -nosound \
+            -ExecCmds="Automation RunTests DiceTycoon.; Quit" \
+            -log -unattended \
+            -TestExit="Automation Test Queue Empty" \
+            -ReportOutputPath="${{ github.workspace }}/Saved/Automation"
+        shell: bash
+        # 占位项目名 DiceTycoon.uproject —— 实现阶段建 .uproject 后生效。
+        # UE_EDITOR_PATH 在 self-hosted runner 上指向 UnrealEditor 可执行文件。
+
+      - name: Upload Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: |
+            Saved/Logs/
+            Saved/Automation/
