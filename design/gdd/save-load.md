@@ -51,6 +51,7 @@
 | 地产所有权(6) | owner map(每可购买格一 `PlayerId`,`INDEX_NONE`=无主)+ `bIsMortgaged`(每可购买格一 `bool`) | per-tile(`TileIndex`) | 读 6 的 owner map + 抵押标记 / 读档写回。**派生量(`is_monopoly`/`station_count`/`utility_count`)不存,读档后重算**(property L97/L99) | property L99 / L114 |
 | 建房(8) | `house_count`(每 Property 格一 `int32` ∈ [0,5],**per-tile**) | per-tile(`TileIndex`) | 读 8 的 per-tile house_count / 读档写回 | building L57 / L63 |
 | 骰子(3) | **MVP 不序列化当前 `Seed`**(当前骰结果由回合2 完整 `FDiceRollResult` 保护;读档重设新非确定种子) | — | 不存 / 读档 `SetSeed(非确定值)`,**不可重设回开局种子** | dice L59 / L73 / L190 / OQ-2 |
+| 事件格(7) | **牌堆数组顺序**(`ChanceDeckOrder`/`ChestDeckOrder`,`TArray<FCardData>`,model B 无指针——`FCardData` 须标 `UPROPERTY(SaveGame)`)+ `bHoldsChanceOutCard`/`bHoldsChestOutCard`(按堆出狱卡持有,离堆期)+ 开局洗牌种子(定序后首回合确定,随存档序列化) | 牌堆级 + 全局 | 读 7 的两牌堆数组顺序 + 出狱卡持有 + 洗牌种子 / 读档写回数组顺序即精确重现牌序(model B 存数组即重现)、还原出狱卡标记。**洗牌种子存取经 RNG 服务 `GetCurrentSeed()`/`SetSeed()`(ADR-0004,禁 struct 反射)** | tile-events CR-3(L44/L45) / L94 / L110 / AC-64 / ADR-0005 |
 | 破产(9) | **无独立可序列化状态**——`bIsBankrupt` 归回合2 PlayerState(已在 2 行覆盖);`net_worth`/排名为派生/MVP 不计算 | — | 见回合2 行 | bankruptcy CR-5 / F-1 |
 
 > **关键裁定**:`bIsBankrupt` 字段归**回合2** PlayerState(bankruptcy CR-5 / L50),不归破产9,故在回合2 行序列化,破产9 无独立存档腿。`house_count` 是 **per-tile [0,5]**(建房8 拥有,**非6**,防 6↔8 环;building L57),与破产/AI 用的"全盘 house 总数"是不同接口,本档只存 per-tile 原始态。

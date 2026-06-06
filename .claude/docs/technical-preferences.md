@@ -59,7 +59,15 @@
 ## Architecture Decisions Log
 
 <!-- Quick reference linking to full ADRs in docs/architecture/ -->
-- [No ADRs yet — use /architecture-decision to create one]
+
+**Foundation 层（Accepted 2026-06-06）— coding 硬前提，ADR-0001 依赖根须最先：**
+- **[ADR-0001](../../docs/architecture/ADR-0001-uobject-host-lifecycle.md)** — UObject 宿主与生命周期：per-match 服务挂 `UWorldSubsystem`（World=一局边界/PIE 隔离）、跨局持久挂 `UGameInstanceSubsystem`、联网 game state 留 Full Vision
+- **[ADR-0002](../../docs/architecture/ADR-0002-board-data-container.md)** — 棋盘数据容器：`UPrimaryDataAsset`（DataTable CSV 不支持 `TArray` 列，已实证）；`AdvanceIndex` 返回 struct
+- **[ADR-0003](../../docs/architecture/ADR-0003-event-bus-delegate.md)** — 事件总线：去中心化 owner-held `DYNAMIC_MULTICAST_DELEGATE`（Foundation Event Bus=命名/payload 纪律层）；破产职责切分（下游主反馈订经济5 `OnBankruptcyDeclared`）
+- **[ADR-0004](../../docs/architecture/ADR-0004-deterministic-rng.md)** — 确定性 RNG：单权威 `FRandomStream`（dice 拥有）+ 各系统独立非权威流（AI 决策扰动走权威流须重放，juice 走独立流）
+- **[ADR-0005](../../docs/architecture/ADR-0005-save-serialization-contract.md)** — 存档契约：`USaveGame`+`UPROPERTY(SaveGame)`+四重完整性门+存 DA 引用不存布局+枚举 append-only+MVP 单槽
+
+**Required（待裁，见 architecture.md §8）：** ADR-0006 GameStateSnapshot · 0007 BP-vs-C++ 边界 · 0008 HUD 驱动+IGameClock DI · 0009 卡通材质 · 0010 音频架构 · 0011 Enhanced Input · 0012 CommonUI
 
 ## Engine Specialists
 
