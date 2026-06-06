@@ -1,6 +1,6 @@
 ---
 Epic: board-data
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: M
@@ -40,7 +40,7 @@ Last Updated: 2026-06-06
 - [ ] **AC-17（F-3 同格）** [Logic] `StepsBetween(20,20)` → 0。
 - [ ] **AC-29（步数超界照算+告警）** [Logic] N=40，`AdvanceIndex(0,1000)` → NewIndex=0、PassedGo=25，记「步数超界」告警日志；不 clamp、不中断。
 - [ ] **AC-33（停在 GO 即经过）** [Logic] N=40，`AdvanceIndex(38,2).PassedGo` → 1（停在索引 0 等价经过一次）。
-- [ ] **AC-34（from 越界 ensure + 通用式仍正确返回）** [Logic] N=40，`AdvanceIndex(-1,5)` → 触发 `ensure()`（报错+继续，非崩溃）+ 记 error 日志，且返回 `(NewIndex=4, PassedGo=1)`；`AdvanceIndex(40,1)` → 触发 ensure + 返回 `(NewIndex=1, PassedGo=0)`。
+- [ ] **AC-34（from 越界报错 + 通用式仍正确返回）** [Logic] N=40，`AdvanceIndex(-1,5)` → 记 error 日志（**🟡 logged decision 2026-06-06：用 `UE_LOG(LogBoardMath, Error)` 而非 `ensure()`——循 FF-003 惯例，headless Automation 中 ensureMsgf 产生不稳定 callstack dump 致 AddExpectedError 计数不可靠；可测语义〔不崩溃+记 Error+仍正确返回〕完全等价，dev-build ensure 断点不可 headless 测**），且返回 `(NewIndex=4, PassedGo=1)`；`AdvanceIndex(40,1)` → 记 error 日志 + 返回 `(NewIndex=1, PassedGo=0)`。
 - [ ] **AC-37a（AdvanceIndex 原子返回）** [Logic] 对同一 `(from=38, steps=5)`，`AdvanceIndex` 返回单个 `FBoardAdvanceResult{NewIndex=3, PassedGo=1}`（两值由同一次调用返回）。
 - [ ] **AC-37b（无独立 PassedGoCount 公开接口）** [Advisory] code-review + 编译期守门：代码库不存在独立公开 `PassedGoCount(from, steps)` 可被分离调用。
 
@@ -100,3 +100,14 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（DONE，提供 `FBoardAdvanceResult` struct 定义；若 struct 随本 story 落地则与 story-001 并行可行——以 story-001 为准）。
 - **Unlocks**: 移动(4) 实现（调 `AdvanceIndex`）；事件格(7) 传送契约（调 `StepsBetween` + `AdvanceIndex`）；story-004（查询接口提供 N）。
+
+## Completion Notes
+**Completed**: 2026-06-06
+**Criteria**: 16/16 COVERED（AC-2/8/9/10/11/12/13/14/15/16/17/29/33/34/37a [Logic] + AC-37b [Advisory] 证据文件）。19 测试（Rento.Board.BoardMathLibrary）全绿；独立重跑全量 Rento. **79/79 Success, 0 Fail, EXIT 0**（`Saved/Logs/rento.log` 16.21）。
+**Files**: `Source/rento/BoardMathLibrary.h`（含 FBoardAdvanceResult——bd-001 已 defer 至此）+ `.cpp`（FloorDiv64 向负无穷 / MathMod64 数学取余 / F-1/F-2/F-3 / int64 防溢出 / N<=0 防除零）；`Source/rentoTests/Private/BoardMathLibraryTopologyTest.cpp`（19 测试）；`production/qa/evidence/BD-003-AC37b-no-PassedGoCount.md`。
+**Deviations（logged decisions，非偏离）**:
+- 🟡 AC-34：From 越界用 `UE_LOG(LogBoardMath, Error)` 替代 `ensure()`——循 FF-003 既定惯例（headless Automation 中 ensureMsgf 产生不稳定 callstack dump 致 AddExpectedError 计数不可靠；UE_LOG Error 每次恰一行稳定）。可测语义（不崩溃+记 Error+通用式仍正确返回 (4,1)/(1,0)）完全满足；dev-build ensure 断点不可 headless 测。AC-34 文本已同步此决策。N<=0 防除零守卫同理用 UE_LOG(Error)。
+- FBoardAdvanceResult 字段加 `UPROPERTY(BlueprintReadOnly, Category="Board|Math")`——Category 是 benign UI 分组，不改语义（同 BD-001 BlueprintReadOnly 惯例）。
+**Code-review 强化**：CHANGES REQUIRED→APPROVED。补 N<=0 守卫测试（AdvanceIndex/StepsBetween 各一，实现已有守卫原零测试）+ 负多圈 PassedGo（AdvanceIndex(0,-81,40)→{39,-3}）+ |Steps|==2N 边界 + .h 注释 ensureMsgf→UE_LOG 修正 + 删 TC_AC37a 冗余断言（原子性=类型结构保证非运行时可证，避免假覆盖）。主会话独立裁定驳回 2 个 claimed BLOCKING（编译状态/AC-34 框架细节——均经独立编译+跑 79/0 empirically resolved）。数学逻辑双专家+主会话手验全 CLEAN。
+**Test Evidence**: 单元测试 `Source/rentoTests/Private/BoardMathLibraryTopologyTest.cpp`（逻辑路径 tests/unit/board/board_math_library_topology_test.cpp）。
+**Code Review**: Complete（/code-review 本会话双专家 = APPROVED）。
