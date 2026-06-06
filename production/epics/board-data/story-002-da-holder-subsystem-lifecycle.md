@@ -1,6 +1,6 @@
 ---
 Epic: board-data
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: M
@@ -74,3 +74,16 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（DONE）— 需 `UBoardDataAsset` 类型。
 - **Unlocks**: story-004（查询接口由持有者暴露）；下游移动(4)/所有权(6)/事件格(7)/建房(8) 实现 story（经持有者获取 DA 引用）。
+
+## Completion Notes
+**Completed**: 2026-06-06
+**Criteria**: AC-L1/L2/L3 BLOCKING COVERED + AC-L4/L5 Advisory。9 测试（Rento.Board.DAHolderLifecycle）全绿；独立重跑全量 Rento. 60/60 Success, 0 Fail, EXIT 0（`Saved/Logs/rento.log` 15.35.05）。
+**Files**: `Source/rento/BoardDataAssetHost.h` + `.cpp`（UBoardDataAssetHost : UDataAssetHostSubsystem 窄化，最大复用 ff-003 基类）；`Source/rentoTests/Private/BoardDataAssetHostLifecycleTest.cpp`（9 测试）+ `BoardDataAssetHostTestProxy.h`（测试代理，注入非 board DA 验 Cast 守卫）。
+**Deviations（logged decisions，非偏离）**:
+- fork#1：AC-L1 字面 `TObjectPtr<UBoardDataAsset> LoadedBoard` 由基类 `UPROPERTY LoadedDataAsset` 强引用（UBoardDataAsset IS-A UPrimaryDataAsset，GC 防护等价）+ `GetLoadedBoard()` 类型化访问器满足；不新增第二个强引用成员。
+- fork#2：复用 ff-003 基类**异步**加载路径（RequestAsyncLoadDataAsset + CancelHandle）；story 主 ADR-0001 prescribe 异步、AC-L3 需要。ADR-0002「同步即可满足 R5」是允许非强制（async 由 ADR-0001 显式许可）。
+**Code-review deferrals/限制**:
+- AC-L3 真磁盘 deferred-callback UAF 完整验证 → ff-007（headless 不可靠驱动，同 ff-003）。
+- Cast 失败（非 UBoardDataAsset）停在 Loaded 态、无恢复路径（RequestReset 需 Active）= 已知类型安全守卫限制；正式 LoadFailed/恢复设计 → story-005（基类 EHostLoadState 当前无 LoadFailed 态）。TC_L2d 已 pin 当前行为。
+**Test Evidence**: 集成测试 `Source/rentoTests/Private/BoardDataAssetHostLifecycleTest.cpp`（逻辑路径 tests/integration/board/da_holder_lifecycle_test.cpp）。
+**Code Review**: Complete（/code-review 本会话双专家 = CHANGES REQUIRED→APPROVED；闭合测试假覆盖〔TC-L3 结构性 false-negative + 死代码计数器〕+ Cast 失败诚实性〔新增 TC_L2d〕+ TC_BoardToLoadNull 空 seam pin + W-1/W-4 polish；主会话独立裁定 B-1 同步/异步非违规、B-2 AC-L1=logged decision）。
