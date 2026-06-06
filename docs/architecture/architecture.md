@@ -17,7 +17,7 @@
 | **Engine** | Unreal Engine 5.7（Blueprint 为主 + C++ 框架） |
 | **Target Platform** | PC（Steam），60 FPS / 16.6 ms 帧预算 |
 | **GDDs Covered** | 16 个 Approved MVP 系统（#1/2/3/4/5/6/7/8/9/10/16/17/19/20/21/22） |
-| **ADRs Referenced** | 5 Accepted（ADR-0001~0005 Foundation 层 2026-06-06 Accepted）+ 7 Required（0006~0012，见 §8） |
+| **ADRs Referenced** | **12 Accepted**（ADR-0001~0012 全部 2026-06-06 Accepted；ADR-0012 CommonUI 含 HIGH post-cutoff 风险，实现首日须对照引擎源码核验签名） |
 | **Source of Truth** | `design/gdd/systems-index.md`（Dependency Map / Inherited Test Obligations / registry）+ 16 个 Approved GDD |
 
 > **核验声明**：本文件 Input/UI/Rendering/Audio 的 UE 5.7 范式均对照 `docs/engine-reference/unreal/modules/{input,ui,rendering,audio}.md` + `current-best-practices.md` + `deprecated-apis.md`（pinned UE 5.7，verified 2026-02-13）逐条核实，**未采信模型 ~5.3 训练记忆**。所有所有权裁定、接口签名、防环约束均对照各 GDD Dependencies 节与 systems-index registry 逐条核实，未臆造接口名。
@@ -906,6 +906,7 @@ Sprint 1+（相关系统建前，依赖 Foundation）
 | **OQ-VFX-7** | #2/#6/#1 depended-on-by 应含 #19 + line 83 回链 AC 补全 | pending（VFX19 R-8 Approved 后留） |
 | **OQ-Audio-2** | 各 owner GDD「事件供 UI/VFX 订阅」措辞平行补「音频(22)」消费方 + `PlayUISound` 在 UI 屏 GDD 登记被调义务 | pending |
 | **RepairFee 单价 owner 真空（OQ-Event-5）** | `per_house_fee`/`per_hotel_fee`（RepairFee 单价）尚未落 owner 档——未归入任何模块 Owns，待 producer 裁定归棋盘1/CardData DA | 真空，待 producer 裁定 |
+| **ADR-0007 AC 升格 propagate 债** | ADR-0007（2026-06-06 Accepted）裁定 AI 决策/RNG/经济/状态机落 C++ + 权威模块「无 BP 类」目录级断言 + C++ grep 禁全局 RNG 硬门。下游后果：hud（AC-47/AC-36c）、ai-opponent（AC-44）、property-card-ui（相关 RNG/绑定软约束 AC）中**逻辑已落 C++ 的部分**可由「BP 软约束 [Advisory·code-review]」升格为「C++ 硬门 [Logic]」（`static_assert`/`constexpr`/grep 兑现）；仍在 BP 的纯呈现部分维持 [Advisory]。**本次仅登记，不改三档 GDD**——升格落档归 producer，留 `/architecture-review` 阶段处理（执行时须对各档 fresh-grep 全集核对，旧行号仅作线索） | 登记，留 /architecture-review |
 
 ---
 
