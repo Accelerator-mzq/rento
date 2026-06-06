@@ -1,6 +1,6 @@
 ---
 Epic: foundation-framework
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: M
@@ -75,3 +75,13 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（异步加载纪律挂宿主基类 `Initialize`/`Deinitialize`）。
 - **Unlocks**: board epic 的 DA 解析/校验实现（TR-board-007/008 功能面）；story-007（PIE 隔离验证③ CancelHandle 后无悬挂回调）。
+
+## Completion Notes
+**Completed**: 2026-06-06
+**Criteria**: 5/5 passing（全部由通过的集成测试覆盖；AC-4 真磁盘 deferred-callback 完整验证 DEFER story-007）
+**实现**: 新建 `UDataAssetHostSubsystem : UMatchSubsystemBase`（UCLASS Abstract，泛型 `UPrimaryDataAsset` 层；不动 story-001 基类，保 TC-4 零字段不变式）。TSharedPtr handle 成员 + UPROPERTY TObjectPtr 防 GC + `EHostLoadState{Empty→Loading→Loaded→Validated→Active}` 状态机 + Deinitialize CancelHandle/ReleaseHandle + TWeakObjectPtr/bIsDeinitializing 双 guard + 同步完成补偿路径（HasLoadCompleted→ResolveAndStoreAsset，幂等）。`UBoardDataAsset`/校验/`GetTileData` 严守 Out of Scope 归 board epic。
+**Deviations**:
+  - ADVISORY: AC-4 真磁盘 DA 的真 deferred-callback UAF 防护完整验证 → DEFER story-007 PIE 实测（ADR-0001 Verification ③）。headless transient 路径已覆盖 CancelHandle 调用 + guard 逻辑，真异步 deferred 回调 headless 不可达。已登记 docs/tech-debt-register.md。
+  - 新增 protected 测试 seam `DidLastHandleCancel()` / `DriveResolveForTesting()`，文档标注生产不用（测试支持）。
+**Test Evidence**: Integration — `Source/rentoTests/Private/AsyncLoadCancelHandleTest.cpp`（逻辑路径 `tests/integration/foundation/async_load_cancel_handle_test.cpp`）；独立核实 15/15 Result={Success}，全量 Rento. 回归 28/28 绿。F2（AC-3 CancelHandle 断言）经变异测试坐实非 vacuous。
+**Code Review**: Complete（本会话 /code-review 双专家 → 首轮 CHANGES REQUIRED → 全改 → APPROVED）。
