@@ -5,7 +5,7 @@ name: Automated Tests
 #
 # ⚠ UE CI 须 self-hosted runner（装了 Unreal Editor 5.7）+ 设 UE_EDITOR_PATH 环境变量。
 #   云端 hosted runner 不含 UE，无法跑 UE Automation。
-#   实现阶段建 .uproject + 测试模块后，本 workflow 才会真正执行测试（当前 SampleFormulaSpec 为 #if 0 模板）。
+#   工程脚手架已建（rento.uproject + rento/rentoTests 模块，2026-06-06）；CI 跑 Rento.* Automation 测试。
 
 on:
   push:
@@ -26,15 +26,15 @@ jobs:
 
       - name: Run Automation Tests (headless -nullrhi)
         run: |
-          "$UE_EDITOR_PATH" "${{ github.workspace }}/DiceTycoon.uproject" \
+          "$UE_EDITOR_PATH" "${{ github.workspace }}/rento.uproject" \
             -nullrhi -nosound \
-            -ExecCmds="Automation RunTests DiceTycoon.; Quit" \
+            -ExecCmds="Automation RunTests Rento.; Quit" \
             -log -unattended \
             -TestExit="Automation Test Queue Empty" \
             -ReportOutputPath="${{ github.workspace }}/Saved/Automation"
         shell: bash
-        # 占位项目名 DiceTycoon.uproject —— 实现阶段建 .uproject 后生效。
         # UE_EDITOR_PATH 在 self-hosted runner 上指向 UnrealEditor 可执行文件。
+        # 首次跑前 self-hosted runner 须已 Generate Project Files + 编译 rentoEditor target。
 
       - name: Upload Test Logs
         if: always()
