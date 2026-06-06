@@ -77,6 +77,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
+
 > Integration（事件契约跨 owner→consumer 边界）；headless `-nullrhi`，spy 直接挂 owner delegate。
 
 - **TC-1 (AC-1)**: GIVEN 代码库，WHEN grep 集中式 `UGameEventBus` 注册表对象，THEN 不存在（Event Bus 为纪律层非对象）。

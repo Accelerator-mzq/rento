@@ -58,6 +58,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
+
 - **AC-L3（PIE 隔离）**：GIVEN PIE 反复 Start/Stop（含 Stop 发生在异步加载中途）WHEN 第二局 Start THEN 棋盘正确加载、无空棋盘崩溃、无悬挂回调写已 GC 对象。Edge：Stop 恰在 `RequestAsyncLoad` 回调前 → `CancelHandle` 生效。（headless `-nullrhi`：`UWorldSubsystem::Initialize/Deinitialize` 随 PIE World 触发；若 -nullrhi 下 PIE 行为不可观测，降级为 PIE 手动 + code-review，记 `production/qa/evidence/`。）
 - **AC-L4（热切换）**：[Advisory·code-review] Verify 代码库无 public 接口在 `Active` 态替换 `LoadedBoard`；换盘唯一路径是重走 `Loaded→Validated→Active`。Pass condition：review sign-off + 记录于 `production/qa/evidence/`。
 - **AC-L5（载入预算）**：GIVEN `DA_Board_Classic40` WHEN 对局初始化加载 THEN 加载+校验耗时 < 100ms（性能 Advisory，目标硬件实测）。

@@ -17,6 +17,8 @@ Accepted
 2026-06-06 — 对照 dice.md（APPROVED R3）/ ai-opponent.md（CR-5④）/ vfx-feedback.md（CR-9）/
 architecture.md §8 ADR-0004 条目 + API 边界 1 逐条核实。
 
+2026-06-06 — **Sprint0 引擎验证 spike**（`docs/architecture/sprint0-engine-verification-2026-06-06.md`，6 探针 + 对抗复核，全 grounded/high-confidence）对 UE 5.7 源码核验：**① `RandRange` 仍走 `Min+TruncToInt(FRand()*Range)` 浮点中介 ✅ CONFIRMED**（`RandomStream.h` L186-202；跨平台位级重放依赖单精度 float 一致——同平台/同构建绝对安全，MVP 单机无影响）；**③ `FRandomStream()` 默认构造种子恒 0 ✅ CONFIRMED**（L30-33，作 lazy-init 兜底安全前提成立）；**④ 5.7 无新官方确定性/网络 RNG 子系统 ✅ CONFIRMED**（全树零命中；Mass `UE::RandomSequence` 仅无状态 hash helper、非权威服务，登记供 Full Vision 联网阶段参考）。手搓单权威 `FRandomStream` 方案 **5.7 verified**。（② Seed 序列化属 OQ-2/ADR-0005，未在本次 spike 范围。）
+
 ## Decision Makers
 
 msc（用户）+ Technical Director（主笔）— 2026-06-06 Accepted；
@@ -43,6 +45,7 @@ msc（用户）+ Technical Director（主笔）— 2026-06-06 Accepted；
 
 > **Note**: Knowledge Risk = MEDIUM → 若项目升级引擎版本，本 ADR 须重新验证 ①–④。
 > 若 5.7 源码确认 `RandHelper` 已改为纯整数路径，则 F-4 跨平台 off-by-one 警告可放宽——届时标 Superseded 重写。
+> **2026-06-06 spike 结论**：①③④ 已对 5.7 源码 verified（见 Last Verified）。① `RandHelper` **仍走浮点中介**（F-4 跨平台 off-by-one 警告维持；同平台/同构建重放安全）——故不放宽、不 Superseded。
 
 ## ADR Dependencies
 

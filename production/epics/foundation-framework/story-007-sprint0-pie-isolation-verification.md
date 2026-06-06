@@ -61,6 +61,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
+
 > Integration（headless 引擎行为验证）；`-nullrhi`，固定 Seed + mock 时钟，零方差确定性。
 
 - **TC-1 (AC-1)**: GIVEN `-nullrhi` 游戏 World，WHEN PIE Start 然后 Stop，THEN 派生子类 `Initialize` 计数==1、`Deinitialize` 计数==1。

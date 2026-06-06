@@ -17,8 +17,8 @@ Last Updated: 2026-06-06
 - **ADR Governing**:
   - **ADR-0002（primary）— 棋盘数据容器**：F-1/F-2 封装为 `UBoardMathLibrary` 的 `BlueprintPure` 静态函数；`AdvanceIndex` 返回 `FBoardAdvanceResult` struct（非 out-param），强制原子性（AC-37a/b）；无独立公开 `PassedGoCount` 接口。
   - **ADR-0001 — UObject 宿主与生命周期**：纯函数库可在 `-nullrhi` headless 实例化测试（DI/可测前提）；本库无状态，不持服务实例。
-- **Engine**: Unreal Engine 5.7 — Risk: MEDIUM（Blueprint `Floor(float)→int32` 重载类型推导 post-cutoff）
-- **Engine Notes**: ADR-0002 §决策③ 关联实现层指针 + **Sprint0 引擎验证 #6**：Blueprint `Floor` float/double 重载在 5.7 的类型推导规则须实测（知识缺口 (d)：UE5.x 有 float/double 两条路径，误用 double 重载返回 int64 会隐式截断）。`UBoardMathLibrary` 为 `UBlueprintFunctionLibrary`（无状态静态），单测直测 C++ 函数无需 Blueprint 运行环境——载体与逻辑解耦。
+- **Engine**: Unreal Engine 5.7 — Risk: LOW（2026-06-06 spike 已核验：`Floor`/`Floor to Integer64` 入参均 double、差在节点名+返回类型；用 int32 `Floor` 节点棋盘 32 安全）
+- **Engine Notes**: ADR-0002 §决策③ 关联实现层指针 + **Sprint0 引擎验证 #6（2026-06-06 spike 完成）**：**机制更正**——5.7 `Floor`(→int32) 与 `Floor to Integer64`(→int64) **入参均 double**，差在 DisplayName + 返回类型（**非** float/double 两条入参推导路径）；风险是误选 int32 的 `Floor` 处理需 int64 的值 → 在 `static_cast<int32>` 截断（`KismetMathLibrary.inl` L709）。棋盘 32 格用 int32 `Floor` 节点本就安全。`UBoardMathLibrary` 为 `UBlueprintFunctionLibrary`（无状态静态），单测直测 C++ 函数无需 Blueprint 运行环境——载体与逻辑解耦。
 - **Control Manifest Rules（Foundation 层）**:
   - **Required**：F-1/F-2 封装为 `UBoardMathLibrary` 的 `BlueprintPure` 静态函数（source: ADR-0002）。
   - **Required**：`AdvanceIndex` 返回 `FBoardAdvanceResult` struct（非 out-param）（source: ADR-0002）。
@@ -64,6 +64,8 @@ Last Updated: 2026-06-06
 - 传送类事件先调 F-3 求步数再调 F-1/F-2 的串联 → 事件格(7) epic（AC-39）。
 
 ## QA Test Cases
+
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
 
 确定性 fixture，每 AC 一条（N=40 除非另注）：
 

@@ -56,6 +56,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
+
 | AC | Given | When | Then | Edge |
 |---|---|---|---|---|
 | AC-1 | 已校验 N=40 经典盘 | GetTileCount() | 40 且 Tile[0].TileType==Go | — |

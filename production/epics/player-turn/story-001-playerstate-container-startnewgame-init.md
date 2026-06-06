@@ -59,6 +59,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。⚠ `StartNewGame` 入口宿主依赖 FF-004（Sprint1），见 plan「跨 Sprint 依赖缺口」。
+
 > 本 story 为 Logic；每 AC 一条 Given/When/Then；确定性 fixture、headless `-nullrhi` 可跑。定序掷骰用 mock 骰子3 返回固定点数序列。
 
 - **TC-1 (AC-1)**: GIVEN 构造一个 PlayerState，WHEN 读其全 11 字段，THEN 字段类型/默认值正确（`bIsAI=false`→`AIDifficulty=None`，`bIsBankrupt`/`bIsInJail=false`，`JailTurnsServed`/`ConsecutiveDoubles=0`）。

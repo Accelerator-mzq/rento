@@ -69,6 +69,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
+
 > 每 AC 一条 Given/When/Then，开发据此实现（非自创）。`-nullrhi` headless。
 
 - **AC-23（接口编译/BP 可调）**

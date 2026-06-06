@@ -19,12 +19,12 @@ Last Updated: 2026-06-06
   - **ADR-0001 — UObject 宿主与生命周期**：资产为设计期 `Authored` 态，运行时由持有者加载（story-002）；本 story 聚焦资产内容 + 资产层测试。
   - **ADR-0005 — 存档序列化契约**（参考，非 primary）：`bIsPlaceholderData==true` 的棋盘不得进入 Alpha 构建（producer/gate-check 守门），与本 story AC-4c cook 门控对齐。
 - **Engine**: Unreal Engine 5.7 — Risk: MEDIUM（`UAssetManager` 枚举扫描 + DataTable CSV `TArray` 限制二次确认 post-cutoff）
-- **Engine Notes**: ADR-0002 **Verification Required ①**：UE5.7 编辑器实测 DataTable CSV 导入含 `TArray<int32>` 列报 `Unsupported Property type`（须项目内编辑器二次确认坐实选型；对端是确认 `UBoardDataAsset` Details 面板 `TArray` 多值输入正常）。**Sprint0 引擎验证 #6**：`UAssetManager` 加载签名 + DataTable CSV `TArray` 列报错二次确认。**[Config] 测试约束**：需编辑器/commandlet 环境，**不能在 `-nullrhi` headless 跑**——因此只能作 nightly/staging gate，不能作 PR merge gate（须传递给 devops-engineer 配置 CI pipeline）。`bIsPlaceholderData` 用 `WITH_EDITORONLY_DATA` 包裹、Shipping 剥离，gate-check 在 cook **前** commandlet 读取（非运行时）。
+- **Engine Notes**: ADR-0002 **Verification Required ①（2026-06-06 spike 更正）**：DataTable CSV 类型层 `FArrayProperty` 受支持（**不报** `Unsupported Property type`），DataTable 调参不便属**实务层**（数组字面量 `(a,b,c)`/逗号冲突、转义复杂）；本 story 编辑器实测确认 `UBoardDataAsset` Details 面板 `TArray` 多值输入正常（DA 选型实务可用性坐实）。**Sprint0 引擎验证 #6**：`UAssetManager` 加载签名 + DataTable CSV `TArray` 列报错二次确认。**[Config] 测试约束**：需编辑器/commandlet 环境，**不能在 `-nullrhi` headless 跑**——因此只能作 nightly/staging gate，不能作 PR merge gate（须传递给 devops-engineer 配置 CI pipeline）。`bIsPlaceholderData` 用 `WITH_EDITORONLY_DATA` 包裹、Shipping 剥离，gate-check 在 cook **前** commandlet 读取（非运行时）。
 - **Control Manifest Rules（Foundation 层）**:
   - **Required**：`bIsPlaceholderData` 用 `WITH_EDITORONLY_DATA` 包裹、Shipping 剥离，cook 前 commandlet 检测（source: ADR-0002）。
   - **Required**：`BoardIdentifier: FName` 作顶层 `UPROPERTY` 作者手填，与路径解耦（source: ADR-0002）。
   - **Required**：数据驱动——gameplay 数值与可调参数外置 Data Asset，绝不硬编码（source: ADR-0002/coding-standards）。
-  - **Forbidden**：Never use DataTable 作棋盘载体（CSV 不支持 `TArray` 列，5.7 仍报 `Unsupported Property type`，已核验）（source: ADR-0002）。
+  - **Forbidden**：Never use DataTable 作棋盘载体（CSV 调参 TArray 列**实务受限**——2026-06-06 spike 更正：类型层 `FArrayProperty` 受支持、不报 `Unsupported Property type`，DataTable 不便属实务层〔数组字面量/逗号冲突〕；DA 选型不变）（source: ADR-0002）。
   - **Naming**：Data Asset 用 `DA_` 前缀（`DA_Board_Classic40`）（source: Global Rules）。
 
 ## Acceptance Criteria
@@ -60,6 +60,8 @@ Last Updated: 2026-06-06
 - 经济(5) 真实数值推导 + 置 `bIsPlaceholderData=false`（OQ-1 关闭条件）→ 经济 epic。
 
 ## QA Test Cases（[Config] Setup/Verify/Pass）
+
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。⚠ 完整 harness 依赖 BD-004/006（Sprint1），见 plan「跨 Sprint 依赖缺口」。
 
 - **AC-3**：Setup：加载 `DA_Board_Classic40`。Verify：统计 40 格各 `TileType` 出现次数。Pass：精确计数 Go=1/Jail=1/FreeParking=1/GoToJail=1/Tax=2/Chance=3/CommunityChest=3/Railroad=4/Utility=2/Property=22，无非法整数枚举。
 - **AC-4-asset**：Setup：同上。Verify：遍历 Property 格。Pass：每格 `PurchasePrice>0 && BuildingCost>0`。

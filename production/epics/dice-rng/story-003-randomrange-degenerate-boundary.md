@@ -61,6 +61,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
+
 > 每 AC 一条 Given/When/Then。`-nullrhi` headless、固定种子、确定性。
 
 - **AC-10（Min==Max 不推进游标）**

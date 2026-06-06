@@ -12,7 +12,7 @@
 实现棋盘的**静态空间地基**——零依赖、纯只读的格子布局数据系统。采用 `UBoardDataAsset : UPrimaryDataAsset`
 作为 `FBoardTileData`（`TileType`/`ColorGroup`/`PurchasePrice`/`MortgageValue`/`RentTable`/
 `BuildingCost`/`DiceMultiplierTable`/`TaxAmount`/`SalaryAmount`/`EventDeck`/`SpecialAction`/
-`JailIndex`/`DisplayName`）的运行时载体（DataTable CSV 不支持 `TArray` 列已实证）。④ Board DA Holder
+`JailIndex`/`DisplayName`）的运行时载体（DataTable CSV 调参 TArray 列实务受限，非类型拒绝——2026-06-06 spike 更正，详见 ADR-0002）。④ Board DA Holder
 （宿主以 `UPROPERTY` 强引用防 GC）向上层供 `GetTileData`/`GetTilesInGroup`/`AdvanceIndex`（原子返回
 `(newIndex, passedGo)`）/`GetTileWorldTransform`/环序 N 等只读查询，被移动(4)/所有权(6)/事件(7)/建房(8)
 消费。接口隔离保证载体可逆迁移；存档存 `BoardIdentifier:FName` 引用而非全量布局。
@@ -21,7 +21,7 @@
 
 | ADR | Decision Summary | Engine Risk |
 |-----|-----------------|-------------|
-| ADR-0002: 棋盘数据容器 | `UPrimaryDataAsset` 载体（非 DataTable，CSV 不支持 TArray 列）；`AdvanceIndex` 返回 struct；`UBoardMathLibrary` BlueprintPure；接口隔离可逆迁移 | **MEDIUM**（`UAssetManager` 同步/异步加载 Primary DA 的 5.7 API 签名待验证）|
+| ADR-0002: 棋盘数据容器 | `UPrimaryDataAsset` 载体（非 DataTable，CSV 调参 TArray 实务受限）；`AdvanceIndex` 返回 struct；`UBoardMathLibrary` BlueprintPure；接口隔离可逆迁移 | **MEDIUM**（`UAssetManager` 加载签名 ✅ 2026-06-06 spike verified）|
 | ADR-0001: UObject 宿主与生命周期 | DA Holder 宿主 + `UPROPERTY` 强引用防 GC；`Deinitialize` `CancelHandle` 防 PIE Stop 空棋盘 | LOW |
 | ADR-0005: 存档序列化契约 | 存 DA 引用 `BoardIdentifier` 不存全量布局（TR-board-006）| LOW |
 
@@ -56,7 +56,7 @@ This epic is complete when:
 - All acceptance criteria from `design/gdd/board-data.md` verified
 - All Logic stories（拓扑算法 F-1/F-2/F-3、AdvanceIndex 原子性、校验错误码）有 headless 通过的测试于 `tests/unit/board-data/`
 - [Config] 资产校验 harness（commandlet/编辑器，非 -nullrhi）就位
-- **Sprint0 引擎验证 ADR-0002 #6**：`UAssetManager` 同步/异步加载 Primary DA 的 5.7 API 签名 + DataTable CSV `TArray` 列报错二次确认 + Blueprint `Floor(float)→int32` 重载类型推导
+- **Sprint0 引擎验证 ADR-0002 #6（2026-06-06 spike 完成）**：`UAssetManager` 加载签名 ✅ verified；DataTable CSV `TArray` 列**实为类型层受支持**（非报错，spike 更正——不便属实务层）；Blueprint Floor 机制更正（`Floor`→int32 / `Floor to Integer64`→int64 入参均 double）。详见 `docs/architecture/sprint0-engine-verification-2026-06-06.md`
 
 ## Stories
 
@@ -71,7 +71,7 @@ This epic is complete when:
 | 007 | DA_Board_Classic40 temp-fill + [Config] 资产校验 harness + cook 门控 | Config-Data | Ready | ADR-0002 (primary), ADR-0001/0005 | TR-board-004/014/015 |
 | 008 | 棋盘 DA 存档引用契约（BoardIdentifier）：存引用不存布局 | Integration | Ready | ADR-0005 (primary), ADR-0002/0001 | TR-board-006 |
 
-**TR 覆盖**：17/17 全覆盖（每 TR 至少被一个 story Covers）。Sprint0 引擎验证 ADR-0002 #6（`UAssetManager` 加载签名 + DataTable CSV `TArray` 列报错二次确认 + Blueprint `Floor(float)→int32` 重载）分布于 story-002（加载签名）、story-003（Floor 重载）、story-007（CSV `TArray` 二次确认）。
+**TR 覆盖**：17/17 全覆盖（每 TR 至少被一个 story Covers）。Sprint0 引擎验证 ADR-0002 #6（2026-06-06 spike 完成：加载签名 ✅；CSV TArray 实为类型受支持、不便属实务层；Floor 机制更正）分布于 story-002（加载签名）、story-003（Floor 重载）、story-007（CSV `TArray` 二次确认）。
 
 **推荐实现顺序**：001 → (002 ∥ 003 ∥ 005 ∥ 006) → 004 → 007 → 008。基础结构先，拓扑/校验可并行，UI/资产/存档引用后。
 

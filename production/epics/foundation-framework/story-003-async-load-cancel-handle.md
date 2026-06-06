@@ -55,6 +55,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
+
 > Integration（异步加载 + 宿主生命周期跨 PIE 边界）；headless `-nullrhi`。
 
 - **TC-1 (AC-1/AC-2)**: GIVEN 宿主 `Initialize` 发起 DA 异步加载，WHEN 检查宿主成员，THEN `TSharedPtr<FStreamableHandle>` 成员非空；加载完成后 `UPROPERTY` DA 引用非空（防 GC）。

@@ -15,7 +15,7 @@ Last Updated: 2026-06-06
 - **GDD**: `design/gdd/board-data.md` — CR-3（扁平 struct 字段表）、CR-5.1（色键表）、CR-6（顶层元数据 `bIsPlaceholderData`）、Interactions（接口稳定承诺）
 - **Requirement TR-IDs**: TR-board-001、TR-board-002、TR-board-003、TR-board-005、TR-board-007、TR-board-016、TR-board-017
 - **ADR Governing**:
-  - **ADR-0002（primary）— 棋盘数据容器**：裁定载体 = `UBoardDataAsset : public UPrimaryDataAsset`（非 DataTable，CSV 不支持 `TArray` 列已实证），顶层持元数据 + `TArray<FBoardTileData> Tiles`；接口隔离保证可逆迁移。
+  - **ADR-0002（primary）— 棋盘数据容器**：裁定载体 = `UBoardDataAsset : public UPrimaryDataAsset`（非 DataTable，CSV 调参 TArray 列**实务受限**——2026-06-06 spike 更正：非类型拒绝，`FArrayProperty` 受支持，详见 ADR-0002），顶层持元数据 + `TArray<FBoardTileData> Tiles`；接口隔离保证可逆迁移。
   - **ADR-0001 — UObject 宿主与生命周期**：DA 由宿主以 `UPROPERTY` 强引用持有防 GC（持有者实现见 story-002）。
 - **Engine**: Unreal Engine 5.7 — Risk: MEDIUM（`UPrimaryDataAsset` 本体 LOW/长期稳定；`TArray` 列原生支持需编辑器内确认）
 - **Engine Notes（ADR-0002 Engine Compatibility）**: `UPrimaryDataAsset` 自 5.7 长期稳定（LOW）。**Verification Required ①**：UE5.7 编辑器实测 DataTable CSV 导入含 `TArray<int32>` 列报 `Unsupported Property type`（已通过文档核验为仍不支持，须项目内编辑器二次确认以坐实选型）；本 story 的对端验证是确认 `UBoardDataAsset` 的 Details 面板可正常 `+` 添加 `TArray` 元素。`bIsPlaceholderData` 用 `WITH_EDITORONLY_DATA` 包裹、Shipping 剥离。
@@ -58,6 +58,8 @@ Last Updated: 2026-06-06
 - `DA_Board_Classic40` 实例 temp-fill 与 `[Config]` 资产测试 → story-007。
 
 ## QA Test Cases
+
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
 
 - **AC-4**：GIVEN `FBoardTileData{TileType=Property, ColorGroup=Red, PurchasePrice=300, RentTable={20,60,180,500,700,900}, BuildingCost=200, MortgageValue=150, DiceMultiplierTable={}}` WHEN schema 断言 THEN `ColorGroup!=None && PurchasePrice>0 && RentTable.Num()==6 && BuildingCost>0 && DiceMultiplierTable.Num()==0` 全真。Edge：`RentTable.Num()==5` 应令断言 FAIL（守住长度即语义）。
 - **AC-4b**：GIVEN `FBoardTileData{TileType=Utility, PurchasePrice=150, DiceMultiplierTable={4,10}, RentTable={}}` WHEN 读字段 THEN `PurchasePrice>0 && DiceMultiplierTable.Num()==2 && RentTable.Num()==0`。Edge：`RentTable` 非空 → 该 fixture 不应作为合法 Utility（与 story-005 反向校验对接）。

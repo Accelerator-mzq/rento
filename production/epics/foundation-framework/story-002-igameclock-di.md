@@ -56,6 +56,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
+
 > Integration（DI 注入点跨宿主生命周期）；headless `-nullrhi`。
 
 - **TC-1 (AC-1/AC-2)**: GIVEN `FWorldGameClock` 注入有效 World，WHEN 调 `NowSeconds()`，THEN 返回与 World 当前时间一致的秒值（单调不减）。

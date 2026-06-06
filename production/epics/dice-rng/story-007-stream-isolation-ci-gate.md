@@ -66,6 +66,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
+
 > Logic/Integration 给 Given/When/Then；CI/审查门给 Setup/Verify/Pass。`-nullrhi` headless。
 
 - **[CI 硬门]（grep + 目录断言）**

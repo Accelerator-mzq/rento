@@ -65,6 +65,8 @@ Last Updated: 2026-06-06
 
 ## QA Test Cases
 
+> 📋 已同步 QA Plan：`production/qa/qa-plan-sprint-0-2026-06-06.md`（2026-06-06）——测试规格以本节为权威，plan 为汇总索引。
+
 每 AC 一条 Given/When/Then（fixture struct 构造，无文件 I/O）：
 
 - **AC-18**：GIVEN 3 格盘 WHEN Validate THEN `LoadFailed` + `BoardTooSmall`。
