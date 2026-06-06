@@ -8,7 +8,7 @@
 #   - IDs are PERMANENT. Never renumber, never delete (use status: deprecated).
 #   - Add new entries only at the END of each system's list.
 #   - When a GDD requirement is reworded (same intent): update `requirement`
-#     text and add a `revised` date. The ID stays the same.
+#     text. The ID stays the same.
 #   - When a requirement is removed from the GDD: set status: deprecated.
 #   - When a requirement is split or replaced: set status: superseded-by with
 #     the new TR-ID(s).
@@ -22,35 +22,2549 @@
 #   system-slug = short slug matching the GDD system name
 #   NNN = three-digit zero-padded sequence per system, starting at 001
 #
-# STATUS VALUES: active | deprecated | superseded-by: TR-[system]-NNN
-
-version: 1
-last_updated: ""
-
-requirements: []
-
-# --- EXAMPLE ENTRIES (remove when first real entries are added) ---
+# ENTRY SCHEMA (per /architecture-review):
+#   id          — stable TR-ID, never renumbered
+#   system      — owning GDD system slug
+#   gdd         — source GDD path
+#   requirement — technical requirement text (authoritative wording)
+#   domain      — engineering domain classification
+#   adr         — comma-separated ADR number(s) addressing this TR (empty = Gap)
+#   status      — Covered | Partial | Gap
+#   persists    — true if the requirement involves persisted (serialized) state
 #
-# - id: TR-combat-001
-#   system: combat
-#   gdd: design/gdd/combat-system.md
-#   requirement: "Player takes damage from enemies based on attack power minus defence"
-#   created: 2026-03-10
-#   revised: ""
-#   status: active
-#
-# - id: TR-combat-002
-#   system: combat
-#   gdd: design/gdd/combat-system.md
-#   requirement: "Combo window timing is 0.4 seconds between hits"
-#   created: 2026-03-10
-#   revised: "2026-04-01"
-#   status: active
-#
-# - id: TR-combat-003
-#   system: combat
-#   gdd: design/gdd/combat-system.md
-#   requirement: "Old damage formula using raw stats"
-#   created: 2026-03-10
-#   revised: ""
-#   status: superseded-by: TR-combat-001
+# COVERAGE STATUS VALUES: Covered | Partial | Gap
+
+version: 1.1
+last_updated: 2026-06-06
+
+requirements:
+
+  # ===========================================================================
+  # SYSTEM: board  (Board Data — 棋盘数据)  GDD: design/gdd/board-data.md
+  # ===========================================================================
+
+  - id: TR-board-001
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "FBoardTileData 扁平 struct 含 TArray<int32> 列(RentTable/DiceMultiplierTable),载体须无损承载"
+    domain: DataStructure
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-002
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "运行时载体选定(DataTable vs Primary Data Asset)——BLOCKING-ADR,下游4/6/7/8 硬依赖"
+    domain: DataStructure/EngineCapability
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-003
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "棋盘级顶层元数据 BoardIdentifier/色键表/bIsPlaceholderData 落位"
+    domain: DataStructure
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-004
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "bIsPlaceholderData 须可被 cook 前 gate-check 检测(CI/构建门控语义)"
+    domain: Persistence/Toolchain
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-005
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "GetBoardId() 取值与资产路径/PrimaryAssetId 解耦(FName,改名不损存档)"
+    domain: CrossSystem/Persistence
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-006
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "存档存棋盘 DA 引用 ID(BoardIdentifier:FName)而非全量布局"
+    domain: Persistence
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-board-007
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "运行时 DA 持有者宿主 + UPROPERTY 强引用防 GC"
+    domain: Threading/Lifecycle
+    adr: "0001"
+    status: Covered
+    persists: false
+
+  - id: TR-board-008
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "热切换边界:换盘走完整 Loaded→Validated→Active,禁 Active 对局热替换 DA;Deinitialize CancelHandle/ReleaseHandle 防 PIE 空棋盘"
+    domain: Threading/Lifecycle
+    adr: "0001,0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-009
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "GetTileData(index) 运行时只读 O(1) 访问,载入预算 <100ms"
+    domain: Performance
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-010
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "只读查询接口集(GetTileCount/GetTileData/GetTilesInGroup 升序/GetBoardId)供 7+ 上层系统"
+    domain: CrossSystem
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-011
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "AdvanceIndex 单一原子接口返回 (new_index, passed_go) 元组——强制原子性(联网回放一致)"
+    domain: CrossSystem/DataStructure
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-012
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "F-1/F-2/F-3 拓扑算法封装为 UBoardMathLibrary BlueprintPure;签名定型(struct 返回 vs out-param)"
+    domain: EngineCapability/BP-Cpp-Boundary
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-013
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "加载期完整性校验(Validated 状态),失败返回结构化错误码并拒绝进入对局(LoadFailed)"
+    domain: DataStructure/Threading
+    adr: "0002"
+    status: Partial
+    persists: false
+
+  - id: TR-board-014
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "[Config] 资产校验测试 harness(commandlet/编辑器,非 -nullrhi);[Logic] fixture headless 可跑"
+    domain: EngineCapability/Testing
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-015
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "地图编辑器(26)产出符合 schema 新棋盘实例,设计师可输入 RentTable 多值(无 CSV TArray 限制)"
+    domain: CrossSystem/Toolchain
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-board-016
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "接口契约一旦发布只增不改语义(向后兼容);枚举 append-only 扩展"
+    domain: DataStructure/Versioning
+    adr: "0002,0005"
+    status: Partial
+    persists: false
+
+  - id: TR-board-017
+    system: board
+    gdd: design/gdd/board-data.md
+    requirement: "载体可逆迁移:GetTileData 接口隔离载体细节,迁移成本可控"
+    domain: DataStructure
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: turn  (Player Turn — 玩家回合)  GDD: design/gdd/player-turn.md
+  # ===========================================================================
+
+  - id: TR-turn-001
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "中心 PlayerState 实体(11 字段)的运行时宿主与随局生灭生命周期(挂 World Subsystem)"
+    domain: DataStructure/Lifecycle
+    adr: "0001"
+    status: Covered
+    persists: true
+
+  - id: TR-turn-002
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "回合阶段状态机 ETurnPhase 枚举字段 + delegate 推进、结构不可变、禁 Latent/FTimerHandle"
+    domain: StateMachine/Engine
+    adr: "0001"
+    status: Covered
+    persists: true
+
+  - id: TR-turn-003
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "受控写接口面(SetPosition/SetCash/SetJailState/SetBankrupt 等)强度=C++ 强封装(字段 private + C++ setter)硬保证 vs BP 软约束"
+    domain: BoundaryEnforcement
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  - id: TR-turn-004
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "6 个回合事件(OnTurnStarted/OnPhaseChanged/OnTurnEnded/OnTurnOrderResolved/OnGameWon/OnAIActionExecuted)用 dynamic multicast delegate(BlueprintAssignable)、1-对-多去中心化"
+    domain: EventComms
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-turn-005
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "delegate payload 必须 USTRUCT(BlueprintType)(FTurnOrderResult/FTurnStartedInfo/FPhaseChangedInfo/FTurnEndedInfo/FAIActionDetails);裸 TArray 须包入 USTRUCT"
+    domain: EventComms/DataStructure
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-turn-006
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "OnGameWon 单一事件源纪律:由回合2 据破产9 return-only 返回的 winnerId 广播(9 不直触发、不回调)"
+    domain: EventComms
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-turn-007
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "GameStateSnapshot 的 UE 类型(值语义只读 const FGameStateSnapshot&)与字段构成,供 CR-8 四 AI hook 消费"
+    domain: DataStructure/CrossSystem
+    adr: "0006"
+    status: Covered
+    persists: false
+
+  - id: TR-turn-008
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "CR-8 三/四 AI 决策 hook 签名传 const FGameStateSnapshot&(决策期冻结、AI 不写状态)"
+    domain: CrossSystem/Boundary
+    adr: "0006"
+    status: Covered
+    persists: false
+
+  - id: TR-turn-009
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "snapshot 装配方/宿主=回合2 World Subsystem,跨系统聚合注入面"
+    domain: CrossSystem/Lifecycle
+    adr: "0001,0006"
+    status: Covered
+    persists: false
+
+  - id: TR-turn-010
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "AI 同步决策随机须走骰子3 可种子化权威 RNG 流、禁自调引擎 RNG(为重放预留)"
+    domain: Determinism/RNG
+    adr: "0004"
+    status: Covered
+    persists: false
+
+  - id: TR-turn-011
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "回合消费完整 FDiceRollResult(Die1/Die2/Total/bIsDouble);RNG 服务与回合2 同生命周期层"
+    domain: RNG/CrossSystem
+    adr: "0004"
+    status: Covered
+    persists: false
+
+  - id: TR-turn-012
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "中途读档序列化:精确阶段 CurrentPhase + 全 11 PlayerState 字段 + ConsecutiveDoubles + 锁定阈值 + 完整 FDiceRollResult"
+    domain: Persistence
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-turn-013
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "读档后 delegate 重绑(invocation list 不序列化)+ 拓扑序重建(反序列化→重绑→才广播)"
+    domain: Persistence/EventComms
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-turn-014
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "枚举 append-only 纪律(ETurnPhase/EPlayerColor/EAIDifficulty 整数索引不可重排)"
+    domain: Persistence/Versioning
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-turn-015
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "开局入口 StartNewGame(const FGameSetupConfig&) 宿主 + FGameSetupConfig/FPlayerSetupEntry USTRUCT 归属(owner=回合2)"
+    domain: Lifecycle/CrossSystem
+    adr: "0001"
+    status: Covered
+    persists: false
+
+  - id: TR-turn-016
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "回合状态机/编排逻辑落 C++ 权威模块(目录内无 BP 派生类,CI 断言),保可审可测可重放"
+    domain: Boundary/Determinism
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-turn-017
+    system: turn
+    gdd: design/gdd/player-turn.md
+    requirement: "可存档点查询接口(瞬态/定序进行中拒存)签名(CanSaveNow/bIsSafeToSave)冻结"
+    domain: Persistence/CrossSystem
+    adr: "0005"
+    status: Partial
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: dice  (Dice — 骰子)  GDD: design/gdd/dice.md
+  # ===========================================================================
+
+  - id: TR-dice-001
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "DiceService 持唯一权威 FRandomStream,所有随机抽取走此流;禁旁路引擎全局 RNG(CR-2)"
+    domain: RNG/Determinism
+    adr: "0004"
+    status: Covered
+    persists: false
+
+  - id: TR-dice-002
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "种子初始化 SetSeed(InitialSeed) + 性质 D 确定性(同种子+同有序抽取序列→同输出)(CR-3/F-4)"
+    domain: RNG/Determinism
+    adr: "0004"
+    status: Covered
+    persists: false
+
+  - id: TR-dice-003
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "RandomRange 退化契约:Min==Max 早退不推进 Seed、Min>Max ensure+不交换(F-2/Edge)"
+    domain: RNG/InterfaceContract
+    adr: "0004"
+    status: Covered
+    persists: false
+
+  - id: TR-dice-004
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "跨平台浮点位级一致风险(RandRange 走 FRand() 浮点中介)→ Full Vision 重放 desync 处置(F-4)"
+    domain: RNG/CrossPlatform
+    adr: "0004"
+    status: Covered
+    persists: false
+
+  - id: TR-dice-005
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "OnDiceRolled(FDiceRollResult) 事件契约:DYNAMIC_MULTICAST_DELEGATE+BlueprintAssignable+USTRUCT payload(事件节)"
+    domain: EventComms
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-dice-006
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "广播/返回同源顺序:固化本地值→广播→返回同一值(同步返回值==事件 payload)(AC-14/16c)"
+    domain: EventComms/Timing
+    adr: "0003"
+    status: Partial
+    persists: false
+
+  - id: TR-dice-007
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "禁单线程重入:订阅者纯呈现只读,不得在 OnDiceRolled 回调内二次抽取(F-4②/AC-16b)"
+    domain: Timing/Determinism
+    adr: "0004,0003"
+    status: Partial
+    persists: false
+
+  - id: TR-dice-008
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "DiceService UE 宿主形态 + Seed 注入点(与 player-turn 同生命周期层)(OQ-1/IG-3)"
+    domain: Lifecycle/Host
+    adr: "0001"
+    status: Covered
+    persists: false
+
+  - id: TR-dice-009
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "FDiceRollResult 标 USTRUCT(BlueprintType)、字段 UPROPERTY(BlueprintReadOnly)、接口稳定承诺(AC-21~23)"
+    domain: DataStructure/Interface
+    adr: "0003,0007"
+    status: Covered
+    persists: false
+
+  - id: TR-dice-010
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "FRandomStream/RollDice/RandomRange/RandomFloat01 须 C++ 封装为 UFUNCTION(BlueprintCallable)(FRandomStream 非 BP callable)(UE5.7 标注)"
+    domain: BP-Cpp-Boundary
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-dice-011
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "确定性权威逻辑(RNG)落 C++ 以加禁全局 RNG 静态符号扫描硬门(CR-2 强度联动/AC-20)"
+    domain: BP-Cpp-Boundary
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-dice-012
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "当前回合骰结果序列化为完整 FDiceRollResult(含 Die1/Die2,不只存 Total/bIsDouble);读档不重掷(B1/OQ-T-Dice-5)"
+    domain: Persistence
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-dice-013
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "MVP 不序列化当前 Seed;Full Vision 重放经 GetCurrentSeed()/SetSeed() 显式存取(勿靠 struct 反射,L176 陷阱)(OQ-2)"
+    domain: Persistence/Determinism
+    adr: "0005,0004"
+    status: Covered
+    persists: true
+
+  - id: TR-dice-014
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "lazy-init 兜底种子须取非确定源(FPlatformTime::Cycles()),禁退化为 FRandomStream 默认构造种子 0(Edge/AC-17b)"
+    domain: RNG/Determinism
+    adr: "0004"
+    status: Partial
+    persists: false
+
+  - id: TR-dice-015
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "通用原语 RandomRange/RandomFloat01 供 AI(10)/Alpha 抽取走权威流(可重放),juice/audio 走独立非权威流隔离(CR-2/Dependencies)"
+    domain: RNG/StreamIsolation
+    adr: "0004"
+    status: Covered
+    persists: false
+
+  - id: TR-dice-016
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "多线程并发抽取禁止:后台线程需随机须用独立 FRandomStream,不共享权威流(Edge/OQ-3)"
+    domain: Threading/Determinism
+    adr: "0004"
+    status: Covered
+    persists: false
+
+  - id: TR-dice-017
+    system: dice
+    gdd: design/gdd/dice.md
+    requirement: "F-5 层一确定性种子序列 fixture(≥20 抽取逐字段精确相等)为 PR-gate headless 可测前提(AC-8/9)"
+    domain: Testability/Determinism
+    adr: "0004,0007"
+    status: Partial
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: move  (Movement — 移动)  GDD: design/gdd/movement.md
+  # ===========================================================================
+
+  - id: TR-move-001
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "CurrentTileIndex (int32 ∈[0,N−1]) 物理存于 PlayerState,经移动受控写;唯一持久态"
+    domain: DataStructure
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-move-002
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "受控写宿主形态 + SetTileIndex 封装强度(BP 软约束 vs C++ private 强封装),决定 AC-3 能否升 [Logic]"
+    domain: EngineCapability
+    adr: "0007,0001"
+    status: Partial
+    persists: false
+
+  - id: TR-move-003
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "上游 AdvanceIndex(from,steps)→(newIndex,passedGo) 原子元组接口(移动落点与发薪门唯一来源)"
+    domain: CrossSystem
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-move-004
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "上游 StepsBetween(board 输出 steps_forward) + GetTileCount() 只读查询(TeleportTo 前向步数)"
+    domain: CrossSystem
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-move-005
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "上游 GetTileData(0).SalaryAmount 只读(发薪 push 金额由经济算,移动只传 base)"
+    domain: CrossSystem
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-move-006
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "EArrivalContext 枚举 {DiceMove,AdvanceCard,SentToJail},UENUM(BlueprintType)+uint8,append-only"
+    domain: DataStructure
+    adr: "0003,0005"
+    status: Covered
+    persists: true
+
+  - id: TR-move-007
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "OnPawnMoveStarted(Player,From,To,Steps,PassedGo) dynamic multicast delegate 广播契约"
+    domain: CrossSystem
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-move-008
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "OnPawnLanded(Player,TileIndex,EArrivalContext) dynamic multicast delegate + 落地移交 ResolvePhase"
+    domain: CrossSystem
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-move-009
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "发薪 push (passedGo, SalaryAmount) 编排门 → 经济 F-1(orchestrated,非反向读)"
+    domain: CrossSystem
+    adr: "0003"
+    status: Partial
+    persists: false
+
+  - id: TR-move-010
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "Utility 租 dice_total 由经济在 ResolvePhase 从回合掷骰上下文 PULL(holder=回合2,移动不缓存/不投递)"
+    domain: CrossSystem
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-move-011
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "单帧同步结算 + 三步有序契约(①受控写 < ②发薪 push < ③落地广播);逻辑先于表现,动画不回授"
+    domain: Threading/Timing
+    adr: "0001"
+    status: Partial
+    persists: false
+
+  - id: TR-move-012
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "程间原子性/非重入(Advance/TeleportTo 完整返回后回合方发起下一程,双点链排序归回合2编排)"
+    domain: Threading/Timing
+    adr: "0001"
+    status: Partial
+    persists: false
+
+  - id: TR-move-013
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "联网重放迁移路径:OnPawnMoveStarted/Landed 本地广播 → OnRep_CurrentTileIndex/NetMulticast(Full Vision 技术债,非自由互换)"
+    domain: EngineCapability
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-move-014
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "SetTileIndex 入口守界 ensure(0≤index<N)+早返拒写(用 ensure 非 assert/check)"
+    domain: EngineCapability
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  - id: TR-move-015
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "Advance/TeleportTo/GetTileIndex 标 UFUNCTION(BlueprintCallable) 编排接口编译可调(CI 构建验证)"
+    domain: EngineCapability
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  - id: TR-move-016
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "from 每次调用实时读 PlayerState.CurrentTileIndex 不跨帧缓存(防双点第二程读旧起点)"
+    domain: DataStructure
+    adr: "0005,0001"
+    status: Partial
+    persists: false
+
+  - id: TR-move-017
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "passedGo 理论无界 + steps 超界冒泡告警上传回合2/结构化日志;int32 溢出兜底依赖数据校验层(OQ-Econ-10 仅护发薪侧)"
+    domain: CrossSystem
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-move-018
+    system: move
+    gdd: design/gdd/movement.md
+    requirement: "受控写接口命名收敛:移动 SetTileIndex(对外) ↔ player-turn SetPosition(字段 setter),两层 vs 同层别名待 ADR 裁"
+    domain: CrossSystem
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: econ  (Economy / Cash — 经济/现金)  GDD: design/gdd/economy-cash.md
+  # ===========================================================================
+
+  - id: TR-econ-001
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "经济服务对局期 UObject 宿主(Cash 权威服务实例随局生灭)"
+    domain: Lifecycle/Host
+    adr: "0001"
+    status: Partial
+    persists: false
+
+  - id: TR-econ-002
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "受控写宿主形态:Cash 容器私有 + Credit/Debit 强封装,禁外部直写(OQ-Econ-1)"
+    domain: Engine/Encapsulation
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-econ-003
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "经济公式(F-1..F-11)落 C++ 权威层,[Logic] AC headless 可测、非 BP graph"
+    domain: Engine/CodeBoundary
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-econ-004
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "Credit/Debit/GetCash/GetUnmortgageCostForDisplay 标 UFUNCTION(BlueprintCallable)、BP 可调(AC-39)"
+    domain: Engine/Reflection
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-econ-005
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "4 事件 DYNAMIC_MULTICAST_DELEGATE+BlueprintAssignable、payload USTRUCT(BlueprintType)、append-only(AC-38)"
+    domain: CrossSystemComms
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-econ-006
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "事件次数/payload spy 可断言(恰 1 次 OnRentPaid + 2 次 OnCashChanged 等,AC-34/36/37)"
+    domain: CrossSystemComms
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-econ-007
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "方向由消费方派生(EChangeReason 无方向位,delta 符号 + Payer/Payee 视角,AC-33/34)"
+    domain: CrossSystemComms
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-econ-008
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "OnBankruptcyDeclared(经济5,现金侧完成信号)与破产9 OnPlayerBankrupt 双事件源切分、禁双发(AC-36)"
+    domain: CrossSystemComms
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-econ-009
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "每玩家 Cash 序列化(CashByPlayer:TMap<int32,int32>,SaveGame,OQ-T-Econ-4)"
+    domain: Persistence
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-econ-010
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "读档 Cash 经容器写回、不经 Credit/Debit,OnCashChanged 触发 0 次(AC-3 路径)"
+    domain: Persistence
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-econ-011
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "Raising Funds 瞬态不中途存档(瞬态债务不序列化,OQ-Econ-4)"
+    domain: Persistence
+    adr: "0005"
+    status: Partial
+    persists: false
+
+  - id: TR-econ-012
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "preaggregated_nlv(F-9/F-10)由回合2 装配期预聚合 6(MV)+8(sellback),AI 严禁自算(防 5→8 反向环)"
+    domain: CrossSystemComms
+    adr: "0006"
+    status: Covered
+    persists: false
+
+  - id: TR-econ-013
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "AI 经只读 GameStateSnapshot 读经济估值(SelfCash/PreaggregatedNlv/Rent_top1/2),不持活指针(R3 冻结)"
+    domain: CrossSystemComms
+    adr: "0006"
+    status: Covered
+    persists: false
+
+  - id: TR-econ-014
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "F-6/F-8/F-9 整数取整路径跨编译配置/两次冷启动位级一致、无 float(AC-32 确定性)"
+    domain: Determinism
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-econ-015
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "int32 溢出硬防护:passed_go clamp[0,1000] + SalaryAmount≤2e6/DiceMultiplierTable 上界加载期校验(F-1/F-4,OQ-Econ-10)"
+    domain: Engine/DataValidation
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-econ-016
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "F-2 数据包络跨公式约束加载期校验(RentTable[1]≥RentTable[0]×2 等,OQ-Econ-9,派发已 Approved 棋盘1)"
+    domain: Engine/DataValidation
+    adr: "0002"
+    status: Partial
+    persists: false
+
+  - id: TR-econ-017
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "经济读棋盘 base 金额(GetTileData→Price/RentTable/MortgageValue/TaxAmount/SalaryAmount),DA 容器供给"
+    domain: Data/Container
+    adr: "0002"
+    status: Covered
+    persists: true
+
+  - id: TR-econ-018
+    system: econ
+    gdd: design/gdd/economy-cash.md
+    requirement: "现金转移原子性(单一 R 局部变量 Debit+Credit,无中间态、无造币/丢币,CR-8/AC-2);破产移交期 bIsMidBankruptcyTransfer 锁拦回写"
+    domain: Threading/Atomicity
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: prop  (Property Ownership — 地产归属)  GDD: design/gdd/property-ownership.md
+  # ===========================================================================
+
+  - id: TR-prop-001
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "owner map 容器形态(TArray<int32> 稠密索引 vs TMap)+ 非可购买格哨兵槽语义 + TileIndex 连续无洞前提(OQ-Prop-1①)"
+    domain: DataStructure
+    adr: "0002,0001"
+    status: Gap
+    persists: true
+
+  - id: TR-prop-002
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "抵押标记容器须避 TArray<bool> bitfield specialization(改 TArray<uint8>/TBitArray),保 AC-34b 批量清零/序列化(OQ-Prop-1① unreal Issue1)"
+    domain: DataStructure
+    adr: ""
+    status: Gap
+    persists: true
+
+  - id: TR-prop-003
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "owner map / 抵押标记运行态服务的 UObject 宿主与生命周期(随局生灭)(OQ-Prop-1③)"
+    domain: Persistence/Lifecycle
+    adr: "0001"
+    status: Covered
+    persists: false
+
+  - id: TR-prop-004
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "PostLoad 派生量(is_monopoly/count)重算须晚于棋盘1 加载完成(GetTilesInGroup 可用)(OQ-Prop-1⑥)"
+    domain: Threading
+    adr: "0001,0005"
+    status: Partial
+    persists: false
+
+  - id: TR-prop-005
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "owner map + bIsMortgaged 序列化随存档21;派生量不存读档后重算(States/序列化)"
+    domain: Persistence
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-prop-006
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "受控写封装:owner map/bIsMortgaged 只经受控接口,外部系统禁直写(CR-1/AC-3,OQ-Prop-1② BlueprintPrivate 强度)"
+    domain: Engine/Encapsulation
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  - id: TR-prop-007
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "归属快照值拷贝接口 BuildOwnershipSnapshot(owner/is_mortgaged/is_monopoly/station_count/utility_count,不含 house_count),供经济算租,单向 push 防 5↔6 环(CR-6)"
+    domain: CrossSystem
+    adr: "0006,0001"
+    status: Covered
+    persists: false
+
+  - id: TR-prop-008
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "快照隔离:值拷贝非活引用,防结算期归属漂移(AC-30b)"
+    domain: CrossSystem/Timing
+    adr: "0006"
+    status: Covered
+    persists: false
+
+  - id: TR-prop-009
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "买地/抵押事务方向 6→5(本系统调 economy Debit/Credit,economy 不反向调 6,防 5↔6 环)(CR-2/CR-3)"
+    domain: CrossSystem
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  - id: TR-prop-010
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "OnOwnershipChanged/OnMortgageChanged 事件契约:DYNAMIC_MULTICAST_DELEGATE + BlueprintAssignable,payload USTRUCT/blittable(事件节)"
+    domain: CrossSystem/EngineCapability
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-prop-011
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "破产级联逐格广播 + 重入锁 bIsMidBankruptcyTransfer(锁须无条件解除)vs deferred broadcast queue(OQ-Prop-1④/States 破产级联)"
+    domain: Threading/EngineCapability
+    adr: "0003"
+    status: Partial
+    persists: false
+
+  - id: TR-prop-012
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "批量移交原子性(全或全无,owner 与 bIsMortgaged 同格原子清零)(States/AC-33b/34b)"
+    domain: Persistence/DataIntegrity
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-prop-013
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "监听器读档重绑合约(OnOwnershipChanged 绑定不随序列化,防 dangling delegate)(OQ-Prop-1⑤)"
+    domain: CrossSystem/Timing
+    adr: "0005,0003"
+    status: Covered
+    persists: false
+
+  - id: TR-prop-014
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "派生量(is_monopoly/station_count/utility_count)非存储态、每次实时重算无缓存(确定性,AC-40b)"
+    domain: DataStructure/Determinism
+    adr: "0005"
+    status: Covered
+    persists: false
+
+  - id: TR-prop-015
+    system: prop
+    gdd: design/gdd/property-ownership.md
+    requirement: "公共接口标 UFUNCTION(BlueprintCallable)、事件 BlueprintAssignable、headless -nullrhi 编译通过(AC-41)"
+    domain: EngineCapability
+    adr: "0007,0003"
+    status: Covered
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: event  (Tile Events — 事件格)  GDD: design/gdd/tile-events.md
+  # ===========================================================================
+
+  - id: TR-event-001
+    system: event
+    gdd: design/gdd/tile-events.md
+    requirement: "事件格 per-match 服务宿主形态(UWorldSubsystem,RNG 经 DiceService(3) 隔离流注入)"
+    domain: Core/Lifecycle
+    adr: "0001"
+    status: Covered
+    persists: false
+
+  - id: TR-event-002
+    system: event
+    gdd: design/gdd/tile-events.md
+    requirement: "程间非重入机制:卡触发二次 TeleportTo 不在 OnPawnLanded 同步回调内发起(deferred 队列 vs bIsResolvingTileEvent 守门,具体机制 OQ-Event-7①待 ADR)"
+    domain: Core/Reentrancy
+    adr: "0001"
+    status: Partial
+    persists: false
+
+  - id: TR-event-003
+    system: event
+    gdd: design/gdd/tile-events.md
+    requirement: "牌堆内存容器:有序 TArray<FCardData>(model B,无独立抽牌指针,抽=取 index0 append 回尾);牌堆宿主 UObject 型 OQ-Event-7②待裁"
+    domain: DataStructure
+    adr: "0002,0005"
+    status: Partial
+    persists: false
+
+  - id: TR-event-004
+    system: event
+    gdd: design/gdd/tile-events.md
+    requirement: "开局 Fisher-Yates 洗牌经骰子(3)FRandomStream 权威流 + 种子序列化,禁 FMath::Rand 全局随机(确定性可重放)"
+    domain: RNG/Determinism
+    adr: "0004"
+    status: Covered
+    persists: true
+
+  - id: TR-event-005
+    system: event
+    gdd: design/gdd/tile-events.md
+    requirement: "牌堆数组顺序 + 出狱卡持有标记 + 洗牌种子序列化(SaveGame,FCardData 标 UPROPERTY(SaveGame))"
+    domain: Persistence/Serialization
+    adr: "0005,0004"
+    status: Covered
+    persists: true
+
+  - id: TR-event-006
+    system: event
+    gdd: design/gdd/tile-events.md
+    requirement: "事件广播契约:OnCardDrawn/OnTileEventResolved/OnPlayerJailed/OnPlayerReleased 标 DYNAMIC_MULTICAST_DELEGATE+BlueprintAssignable,payload USTRUCT(BlueprintType),enum 字段 uint8 基底(防 BP 绑定失效)"
+    domain: Event/Communication
+    adr: "0003"
+    status: Partial
+    persists: false
+
+  - id: TR-event-007
+    system: event
+    gdd: design/gdd/tile-events.md
+    requirement: "监狱态字段 bIsInJail/JailTurnsServed 物理存于 player-turn 中心 PlayerState、由 player-turn 序列化;本系统经 player-turn 受控写接口改写(单写路径)"
+    domain: CrossSystem/Persistence
+    adr: "0001,0005"
+    status: Partial
+    persists: true
+
+  - id: TR-event-008
+    system: event
+    gdd: design/gdd/tile-events.md
+    requirement: "出狱卡持有态 bHoldsChanceOutCard/bHoldsChestOutCard 为本系统(7)自有状态、随存档序列化(不在 player-turn PlayerState)"
+    domain: Persistence/State
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-event-009
+    system: event
+    gdd: design/gdd/tile-events.md
+    requirement: "RepairFee 读建房(8)全盘聚合接口 GetTotalHouseCount/GetTotalHotelCount(与 per-tile [0,5] 口径区分,防静默混用)"
+    domain: CrossSystem/Interface
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-event-010
+    system: event
+    gdd: design/gdd/tile-events.md
+    requirement: "MoveToNearest Utility 额外掷骰 dice_total 经 player-turn 受控写接口 SetCurrentRollContext(FDiceRollResult) 注入当前程上下文 holder(供经济 F-4 PULL,不串程)"
+    domain: CrossSystem/Communication
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-event-011
+    system: event
+    gdd: design/gdd/tile-events.md
+    requirement: "ECardEffectType 10 类效果 dispatch 落 C++(避 BP 大 switch 保守性,OQ-Event-7④ unreal Issue-6)"
+    domain: Authority/BP-Cpp-Boundary
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: build  (Building Upgrade — 建房升级)  GDD: design/gdd/building-upgrade.md
+  # ===========================================================================
+
+  - id: TR-build-001
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "house_count 运行时可变状态层以 TileIndex 为键、单一 owner、受控写,挂对局期 UObject 宿主"
+    domain: State/Lifecycle
+    adr: "0001"
+    status: Covered
+    persists: true
+
+  - id: TR-build-002
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "house_count 容器形态(TArray<int32>/TMap per-tile [0,5])与受控写强度(OQ-Build-5,共享 OQ-Prop-1 生命周期)"
+    domain: State/Container
+    adr: "0001"
+    status: Partial
+    persists: true
+
+  - id: TR-build-003
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "权威建造/卖房规则与公式(CanBuild/Build/Sell/F-1..F-7)落 C++、可 headless 测、禁 BP 旁路写 house_count"
+    domain: Scripting/C++Boundary
+    adr: "0007"
+    status: Covered
+    persists: true
+
+  - id: TR-build-004
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "读棋盘静态数据 BuildingCost/ColorGroup/GetTilesInGroup(group)→升序成员 作造价与均衡判定"
+    domain: BoardData
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-build-005
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "OnBuildingChanged(tile, newCount) 多播事件(2字段,owner=8;actingPlayer 由回合2 上下文取)供下游订阅"
+    domain: EventBus
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-build-006
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "通告 beat OnBuildingAnnounced 由回合2 广播、HUD 订阅(支柱②社交感,OQ-Build-6)"
+    domain: EventBus/UI
+    adr: "0003,0008"
+    status: Covered
+    persists: false
+
+  - id: TR-build-007
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "per-tile house_count [0,5] 序列化(HouseCountByTile:TMap,非全盘总数)+ 读档重建(拓扑序:DA→建房 house_count)"
+    domain: Persistence
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-build-008
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "AI(10) 经只读 FGameStateSnapshot 读 HouseCount/CanBuildHouse 输入/BuildingCost(per-tile 明细装配),不直取建房单例"
+    domain: AI/Snapshot
+    adr: "0006"
+    status: Covered
+    persists: true
+
+  - id: TR-build-009
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "建/卖输入意图 IA_BuildHouse(Hold Trigger 防误触)→ Handle_BuildHouse 转发至建房8 BuildHouse 受控接口"
+    domain: Input
+    adr: "0011"
+    status: Covered
+    persists: false
+
+  - id: TR-build-010
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "建/卖控件 + 门控原因 + 房屋数显示经地产卡 UI(17) modal/HUD 呈现(CommonUI 激活栈、禁 hover-only)"
+    domain: UI/Routing
+    adr: "0012"
+    status: Covered
+    persists: false
+
+  - id: TR-build-011
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "建筑模型/房屋图标(MI_bld_house_*)+ 建房/酒店升级 juice 走卡通 Unlit 材质管线"
+    domain: Rendering
+    adr: "0009"
+    status: Covered
+    persists: false
+
+  - id: TR-build-012
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "OnBuildingChanged 驱动 audio(22) 建房咔哒/酒店轰音(本地 delta + house_count_cache 派生,呈现纯叶子)"
+    domain: Audio
+    adr: "0010"
+    status: Covered
+    persists: true
+
+  - id: TR-build-013
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "无环纪律:8→5(现金腿)/8→6(门控读)单向,6 不读 house_count,economy 算租/NLV 经回合2 聚合传入(防 5→8/6↔8 环)"
+    domain: CrossSystem/Topology
+    adr: "0001,0003"
+    status: Partial
+    persists: false
+
+  - id: TR-build-014
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "CR-8 时机:仅自己回合 ResolvePhase 写,单线程串行杜绝跨帧/跨回合并发写;OnBuildingChanged 同步多播的重入防御(监听者只读/bIsExecuting guard,OQ-Build-5)"
+    domain: Threading/Reentrancy
+    adr: "0001,0007"
+    status: Partial
+    persists: false
+
+  - id: TR-build-015
+    system: build
+    gdd: design/gdd/building-upgrade.md
+    requirement: "强制清算迭代器 ForcedSellNextBuilding(F-4 确定性 argmax + 有界终止)+ 银行破产 LiquidateAllBuildings(无偿、不调 Credit),执行驱动归回合2"
+    domain: State/Liquidation
+    adr: "0001,0007"
+    status: Partial
+    persists: true
+
+  # ===========================================================================
+  # SYSTEM: bank  (Bankruptcy — 破产)  GDD: design/gdd/bankruptcy.md
+  # ===========================================================================
+
+  - id: TR-bank-001
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "ResolveBankruptcy(debtor,creditor,activePlayersSnapshot)→{debtorEliminated,winnerId|NONE,rankingEntry} 同步接口签名 + return-only 无回调2(防 2↔9 环)"
+    domain: API/Communication
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  - id: TR-bank-002
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "破产9 编排逻辑落 C++ 权威层(headless 可测、可 spy 无环纪律 AC-2/AC-3)"
+    domain: EngineCapability/Testability
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-bank-003
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "破产9 服务挂 per-match UWorldSubsystem(对局态随局生灭、PIE 隔离)"
+    domain: DataStructure/Host
+    adr: "0001"
+    status: Covered
+    persists: false
+
+  - id: TR-bank-004
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "清算编排 4 步全或全无原子性 + 重入锁 bIsMidBankruptcyTransfer(AC-12/13/33c)"
+    domain: Timing/Atomicity
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-bank-005
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "编排向下调 5(F-11)/6(Transfer/ReturnTileToBank)/8(LiquidateAllBuildings) 跨系统接口"
+    domain: CrossSystemComms
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  - id: TR-bank-006
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "bIsBankrupt/APC 字段归回合2 PlayerState,9 经返回值驱动写不直写(防环)"
+    domain: DataStructure/Ownership
+    adr: "0001"
+    status: Partial
+    persists: false
+
+  - id: TR-bank-007
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "OnPlayerBankrupt(debtor,creditor,reason) 多播 delegate(3字段,清算编排末广播,AC-39)"
+    domain: Event/Communication
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-bank-008
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "OnGameWon(winnerId) 由回合2 触发广播(9 仅 return winnerId,单一事件源)"
+    domain: Event/Communication
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-bank-009
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "OnPlayerRanked(player,rank) 多播 delegate(供 rankingEntry,AC-41)"
+    domain: Event/Communication
+    adr: "0003"
+    status: Partial
+    persists: false
+
+  - id: TR-bank-010
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "破产主反馈下游订经济5 OnBankruptcyDeclared、OnPlayerBankrupt 仅增量(禁双播)"
+    domain: Event/Communication
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-bank-011
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "移交期 OnOwnershipChanged 监听器受控写拦截(property 重入锁,AC-13)"
+    domain: Timing/Concurrency
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-bank-012
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "FRankingEntry struct schema(playerIndex/elimination_sequence/net_worth_snapshot)——AC-30/33/41 依赖"
+    domain: DataStructure
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-bank-013
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "EBankruptcyReason 枚举(Rent/Tax/Fee/RepairFee)payload(AC-39,枚举 append-only)"
+    domain: DataStructure
+    adr: "0003"
+    status: Partial
+    persists: false
+
+  - id: TR-bank-014
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "ResolveBankruptcy 执行期禁存档(瞬态不中途序列化)——存档21 接缝"
+    domain: Persistence/Timing
+    adr: "0005"
+    status: Gap
+    persists: true
+
+  - id: TR-bank-015
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "出局态 PlayerState 不销毁、保留供排名读取(GetOwner/GetCash 历史快照,AC-24)"
+    domain: DataStructure/Lifecycle
+    adr: "0001"
+    status: Partial
+    persists: false
+
+  - id: TR-bank-016
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "net_worth 排名为运行态瞬态、禁入存档(派生量读档后重算)"
+    domain: Persistence
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-bank-017
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "ResolveBankruptcy 主线程纯同步不 yield/defer、8人22格最重路径 <16.6ms(AC-42)"
+    domain: Performance
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-bank-018
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "临时 TileIndex 枚举列表无残留引用、锁不挂起(内存生命周期,AC-43)"
+    domain: Memory/Lifecycle
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-bank-019
+    system: bank
+    gdd: design/gdd/bankruptcy.md
+    requirement: "链式破产 APC 须排除调用链内全部已判出局 debtor 集合(返回破产者洞,F-2 ⚠)"
+    domain: DataStructure/Algorithm
+    adr: ""
+    status: Gap
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: ai  (AI Opponent — AI 对手)  GDD: design/gdd/ai-opponent.md
+  # ===========================================================================
+
+  - id: TR-ai-001
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "AI 三 hook 只读 FGameStateSnapshot 聚合视图(值语义/决策期冻结/const& 传参/无活指针);覆盖 CR-6 per-hook 全字段含全盘暴露视图 Rent_top1/top2 + owner map"
+    domain: DataStructure/CrossSystemComm
+    adr: "0006"
+    status: Covered
+    persists: false
+
+  - id: TR-ai-002
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "snapshot 由回合2 编排在 AI 决策阶段开头一次性装配(单一可审装配点、可 headless 注入 mock),AI 不直取 5/6/8 单例(纯叶子/DI)"
+    domain: CrossSystemComm/Lifecycle
+    adr: "0006"
+    status: Covered
+    persists: false
+
+  - id: TR-ai-003
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "派生量 Rent_top1/top2/preaggregated_nlv 装配期预聚合(统一口径),AI 不可自算 nlv(防 5→8 反向环)"
+    domain: DataStructure/CrossSystemComm
+    adr: "0006"
+    status: Covered
+    persists: false
+
+  - id: TR-ai-004
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "只读强制靠类型系统(无系统指针/可写引用成员)→ AI 物理上无法写状态(CR-1/AC-1)"
+    domain: EngineCapability/CrossSystemComm
+    adr: "0006"
+    status: Covered
+    persists: false
+
+  - id: TR-ai-005
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "决策期冻结 → CR-5② 纯函数性 (snapshot,RNG 流状态)→决策 + AC-42 重放有结构保障;贪心循环用 hook 内局部影子值不回写 snapshot"
+    domain: Timing/Determinism
+    adr: "0006"
+    status: Covered
+    persists: false
+
+  - id: TR-ai-006
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "AI 决策扰动/tiebreak 唯一随机源 = 骰子3 权威可种子化 FRandomStream(RandomRange/RandomFloat01),禁引擎全局随机,确定性可重放"
+    domain: EngineCapability/Determinism
+    adr: "0004"
+    status: Covered
+    persists: false
+
+  - id: TR-ai-007
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "权威 RNG 流隔离:AI 扰动走权威流(须重放)、呈现层 juice 走独立非权威流(划线表 + AC-61b spy 硬门)"
+    domain: Determinism/CrossSystemComm
+    adr: "0004"
+    status: Covered
+    persists: false
+
+  - id: TR-ai-008
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "AI 决策核心强制落 C++ → 加禁全局 RNG 静态符号扫描真硬门(BP 软约束 AC-44 不足,确定性义务②可执行性前置 OQ-AI-3b)"
+    domain: EngineCapability/Threading-Determinism
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-ai-009
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "snapshot 注入面依赖宿主 DI 锚点;装配方运行宿主 = 回合2 World Subsystem(与 player-turn 同生命周期层)"
+    domain: Lifecycle/CrossSystemComm
+    adr: "0001"
+    status: Covered
+    persists: false
+
+  - id: TR-ai-010
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "snapshot 装配+传入端到端 + 三 hook 决策耗时在单帧预算内(≤16ms/装配<0.1ms);可数硬底线 AC-63b + 性能 AC-S6/S7"
+    domain: Performance
+    adr: "0006"
+    status: Partial
+    persists: false
+
+  - id: TR-ai-011
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "AI 同步 return-only(单帧≤N 帧移交,N=1)、不回调 2、不被 5/6/8 反调(纯叶子无环;hook 签名/调用协议归 player-turn CR-8)"
+    domain: Timing/CrossSystemComm
+    adr: "0001"
+    status: Partial
+    persists: false
+
+  - id: TR-ai-012
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "OnAIActionExecuted(ActionIndex) 由回合2 执行 AI 动作时广播(AI 不 emit 事件;enable-not-own 呈现驱动)"
+    domain: CrossSystemComm/Event
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-ai-013
+    system: ai
+    gdd: design/gdd/ai-opponent.md
+    requirement: "snapshot 是瞬态运行态 struct,禁入存档(存档契约 ADR-0005)"
+    domain: Persistence
+    adr: "0005"
+    status: Covered
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: hud  (HUD — 抬头显示)  GDD: design/gdd/hud.md
+  # ===========================================================================
+
+  - id: TR-hud-001
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "HUD 状态机抽独立 UObject(非 UUserWidget),使 AC-12/24a/30/57 在 -nullrhi headless 可测(OQ-HUD-2)"
+    domain: EngineCapability/Testability
+    adr: "0008,0007,0001"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-002
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "counter 动画(F-1/F-2)运行时逐帧动态求值;排除 UWidgetAnimation/PlaybackSpeed,须 NativeTick 每帧 SetText"
+    domain: EngineCapability/Threading
+    adr: "0008"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-003
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "游戏时间源 DI 化 IGameClock(unpaused_elapsed 暂停不计、读档重置),供 AC-30 mock 注入"
+    domain: Threading/Testability
+    adr: "0008,0001"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-004
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "订阅回合2 事件契约:OnTurnStarted/OnPhaseChanged/OnTurnEnded/OnTurnOrderResolved/OnAIActionExecuted/OnBuildingAnnounced/OnGameWon(纯叶子消费,无写回)"
+    domain: CrossSystem
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-005
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "订阅经济5 事件:OnCashChanged/OnRentPaid/OnBankruptcyDeclared + 查询 GetCash(方向由消费方派生)"
+    domain: CrossSystem
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-006
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "FAIActionDetails 须含 EActionType 枚举(OQ-HUD-12)供 V-Own-07 文案/图标 + F-4 critical 判定;payload 为 USTRUCT"
+    domain: DataStructure/CrossSystem
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-007
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "读 FDiceRollResult.Total(USTRUCT)显数值;禁从 Total 拆 Die1/Die2(骰面呈现归 VFX19)"
+    domain: CrossSystem/DataStructure
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-008
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "读棋盘1 tile 数据(GetTileData: DisplayName/ColorGroup/PurchasePrice/RentTable/SalaryAmount)供资产摘要"
+    domain: CrossSystem
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-009
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "局末排名若显示用破产9 net_worth(=Cash+net_liquidation_value)只读口径;HUD 不判胜负"
+    domain: CrossSystem
+    adr: "0006"
+    status: Partial
+    persists: false
+
+  - id: TR-hud-010
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "HUD 不被序列化(纯呈现);读档后从 GameStateSnapshot/快照重读全部显示值重建(EC-11)"
+    domain: Persistence/CrossSystem
+    adr: "0005,0006"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-011
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "读档重建须先显式解绑后重绑全部 delegate(BP Bind Event 非 AddUnique,防双注册→重复触发);OnGameLoaded 触发重绑序列"
+    domain: Persistence/Lifecycle
+    adr: "0005,0008"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-012
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "HUD 本地 turn_epoch(E_cur) 单调计数器(每 OnTurnStarted +1)作 AI 行动过期主判据;不依赖框架广播 state_gen"
+    domain: DataStructure/Threading
+    adr: "0008"
+    status: Partial
+    persists: false
+
+  - id: TR-hud-013
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "HUD juice RNG 走独立非权威 FRandomStream,严禁复用骰子3 权威流(防重放污染,AC-47/OQ-HUD-3)"
+    domain: EngineCapability/Determinism
+    adr: "0004,0007,0010"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-014
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "输入意图路由:交互控件点击经 owner 公开接口转发意图,HUD 不写状态/不裁决;BlueprintCallable 可 spy 边界(AC-26/29/40/43 负向断言)"
+    domain: CrossSystem/Testability
+    adr: "0007,0012"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-015
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "HUD widget 树用 CommonUI:WBP_HUD : UCommonActivatableWidget(根激活栈);操作栏按钮 UCommonButtonBase;禁 hover-only,手柄可聚焦导航"
+    domain: UI/EngineCapability
+    adr: "0012"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-016
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "C++/BP 边界:HUD 逻辑(状态机/求值/RNG 封装)落 C++ UObject,Widget 树/布局落 WBP_ Blueprint;AC-36c 固定常量经 C++ constexpr+static_assert 可升 [Logic]"
+    domain: EngineCapability/Testability
+    adr: "0007,0008"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-017
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "reduce_motion 配置从 DA_HudConfig 读回,Init 时注入状态机;On 时旁路 F-1 T_min 下界(AC-57 headless 配置参数可读回)"
+    domain: DataStructure/Persistence
+    adr: "0008"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-018
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "等宽数字(Tabular Figures):UE 不暴露 OpenType tnum feature API,须选数字字形本身等宽的字体资产(art-bible §7.2 propagate);5.7 FSlateFontInfo/HarfBuzz 暴露情况须 ue-umg 核验"
+    domain: EngineCapability
+    adr: "0008"
+    status: Partial
+    persists: false
+
+  - id: TR-hud-019
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "HUD widget/状态机生命周期随局生灭,宿主层与回合2/IGameClock 同生命周期(OQ-HUD-2 宿主)"
+    domain: Lifecycle
+    adr: "0001,0008"
+    status: Covered
+    persists: false
+
+  - id: TR-hud-020
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "60FPS/16.6ms 预算下 UMG widget 层级 + Invalidation Box 性能 + CommonUI input-aware 适配可行性(OQ-HUD-7)"
+    domain: Performance
+    adr: "0012"
+    status: Partial
+    persists: false
+
+  - id: TR-hud-021
+    system: hud
+    gdd: design/gdd/hud.md
+    requirement: "音频/VFX juice 由 VFX19/音频22 直接订阅 owner 事件源,HUD 不转发/不持 Sound Cue 或 VFX 引用(enable-not-own)"
+    domain: CrossSystem
+    adr: "0003,0010"
+    status: Covered
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: card  (Property Card UI — 地产卡 UI)  GDD: design/gdd/property-card-ui.md
+  # ===========================================================================
+
+  - id: TR-card-001
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "卡片/叠加状态机与事件 handler 抽独立 UObject(非 UMG widget)、IGameClock DI、headless 可实例化 + spy getter(门控 AC-21/22/23/25/26/30)"
+    domain: UObjectHost/Lifecycle/Testability
+    adr: "0001,0008"
+    status: Covered
+    persists: false
+
+  - id: TR-card-002
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "棋盘 tile 常驻状态叠加 widget 的所有者/生命周期(world-space WidgetComponent vs screen-space overlay,覆盖整局、独立于卡片开关)——OQ-PC-4(iv)"
+    domain: UObjectHost/WidgetLifecycle
+    adr: "0001,0008"
+    status: Partial
+    persists: false
+
+  - id: TR-card-003
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "呈现层纯叶子不变式:#17 只读/订阅/转发意图,不持任何 owner 写引用、不写游戏状态(AC-16b/AC-5 负向)"
+    domain: ArchitectureBoundary
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-card-004
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "从 #1 只读拉取 FBoardTileData(DisplayName/ColorGroup/PurchasePrice/RentTable/DiceMultiplierTable/BuildingCost/MortgageValue/TileType),O(1) GetTileData(index)"
+    domain: DataStructure/BoardRead
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-card-005
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "RentTable 变长 TArray<int32>(Property 6 / Railroad 4 / Utility 用 DiceMultiplierTable 2),按 TileType 路由有效下标契约(AC-7/11)"
+    domain: DataStructure/Contract
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-card-006
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "垄断环圈枚举同组 tile → #1 GetTilesInGroup(group) 只读查询(CR-10/V-Own-07)"
+    domain: BoardRead/Query
+    adr: "0002"
+    status: Covered
+    persists: false
+
+  - id: TR-card-007
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "订阅 #6 OnOwnershipChanged/OnMortgageChanged + #8 OnBuildingChanged(dynamic multicast、payload USTRUCT、单一事件源、方向消费方派生)"
+    domain: CrossSystemComm/Event
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-card-008
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "house_count 一律取自 #8 GetHouseCount,绝不取自 #6(防 6↔8 环,CR-6/AC-6)"
+    domain: CrossSystemComm/Coupling
+    adr: "0003"
+    status: Partial
+    persists: false
+
+  - id: TR-card-009
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "经回合2 ResolvePhase 公开 C++ 接口转发玩家意图(买/建/卖/抵押/赎回)、单向非写状态、可 spy 调用次数(CR-7/AC-16)"
+    domain: CrossSystemComm/IntentForward
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-card-010
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "HUD↔#17 handoff:OpenCard(int32 TileIndex) 经 C++ 接口直调(非 BP 直连)、TileIndex 显式参数、可 spy(OQ-PC-2)"
+    domain: CrossSystemComm/BP-Cpp-Boundary
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-card-011
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "绑定逻辑/状态机落 C++ 可 spy(BP Render* 方法名/Bind Event graph 层 -nullrhi 不可观测 → headless 可覆盖性边界,OQ-PC-4/AC-3/AC-34b)"
+    domain: BP-Cpp-Boundary/Testability
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-card-012
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "读档(#21)后卡片瞬态不序列化:从快照重读三源呈现最终态 + 先解绑后重绑订阅(OnGameLoaded 驱动,EC-9/AC-34a)"
+    domain: Persistence/ReloadRebind
+    adr: "0005,0003,0006"
+    status: Covered
+    persists: false
+
+  - id: TR-card-013
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "BP Bind Event 双绑 footgun:重绑前显式 Unbind(FMulticastScriptDelegate.Add 非 AddUnique),delegate 触发计数去重(AC-34a/34b)"
+    domain: Persistence/EventRebind
+    adr: "0003,0008"
+    status: Covered
+    persists: false
+
+  - id: TR-card-014
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "CommonUI 框架 + Modal 输入路由:弹窗确认/取消(IMC_Modal P=20、SwitchToModal 高优先级截获、IA_Confirm/IA_Cancel 专属 Modal 层)"
+    domain: EngineCapability/UIInput
+    adr: "0012"
+    status: Covered
+    persists: false
+
+  - id: TR-card-015
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "鼠标点击为主、禁 hover-only、手柄可聚焦导航预留(Enhanced Input 映射,CR-11/AC-40)"
+    domain: EngineCapability/Input
+    adr: "0011,0012"
+    status: Covered
+    persists: false
+
+  - id: TR-card-016
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "UMG widget=BP(纯呈现叶子)、widget 数据绑定形式(BindWidget vs MVVM)选型 + spy 输出接口(OQ-PC-4 i/ii/iii/v)"
+    domain: EngineCapability/UIBinding
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  - id: TR-card-017
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "juice 本地随机走独立非权威 FRandomStream,严禁复用骰子3 权威流(CR-12/AC-35,防重放污染)"
+    domain: Thread/RNG-Isolation
+    adr: "0004"
+    status: Partial
+    persists: false
+
+  - id: TR-card-018
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "赎回价显示读接口 GetUnmortgageCost/GetUnmortgageCostForDisplay(owner 暴露纯函数,#17 不自算 ceil,OQ-PC-8/AC-42)"
+    domain: CrossSystemComm/DisplayReadInterface
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-card-019
+    system: card
+    gdd: design/gdd/property-card-ui.md
+    requirement: "reduce_motion 与 HUD 共享同一 a11y 布尔、卡片动画降幅参数(OQ-PC-7/Tuning)"
+    domain: EngineCapability/A11yConfig
+    adr: ""
+    status: Gap
+    persists: true
+
+  # ===========================================================================
+  # SYSTEM: vfx  (VFX Feedback — 视觉反馈)  GDD: design/gdd/vfx-feedback.md
+  # ===========================================================================
+
+  - id: TR-vfx-001
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "纯叶子订阅 owner multicast delegate(CR-1/CR-11),enable-not-own 跨系统通信,呈现层只订不回写"
+    domain: CrossSystem/Event
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-vfx-002
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "juice RNG 走 #19 自建独立非权威 FRandomStream,严禁复用骰子3 权威流(CR-9/EC-13)"
+    domain: RNG/Determinism
+    adr: "0004"
+    status: Covered
+    persists: false
+
+  - id: TR-vfx-003
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "EndPlay 主动 RemoveDynamic/Unbind 全部 12 个 owner delegate,不依赖 GC 顺序,禁 BeginDestroy 解绑(EC-5b/AC-43b)"
+    domain: Lifecycle/Threading
+    adr: "0001,0003"
+    status: Covered
+    persists: false
+
+  - id: TR-vfx-004
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "读档后重绑全部 owner delegate(先解绑后绑)+ 从快照重建最终态、不回放 juice(EC-5/States)"
+    domain: Persistence/ReloadRebind
+    adr: "0005,0003"
+    status: Partial
+    persists: false
+
+  - id: TR-vfx-005
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "破产双事件源收口:破产主反馈唯一订经济5 OnBankruptcyDeclared,OnPlayerBankrupt 仅增量(OQ-VFX-13/V-Own-11)"
+    domain: CrossSystem/Event
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-vfx-006
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "掷骰意图事件来源(起振锚),MVP fallback OnPhaseChanged(RollPhase)(OQ-VFX-16/V-Own-01)"
+    domain: CrossSystem/Event
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-vfx-007
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "胜利暖金全屏 Post Process Material(bUnbound=true)+ Substrate PP 接口盲区(CR-7/V-Own-16/OQ-VFX-6)"
+    domain: EngineCapability/Rendering
+    adr: "0009"
+    status: Covered
+    persists: false
+
+  - id: TR-vfx-008
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "破产去饱和=逐 pawn UMaterialInstanceDynamic 材质参数(非全屏 PP)(V-Own-11/States G)"
+    domain: EngineCapability/Rendering
+    adr: "0009"
+    status: Covered
+    persists: false
+
+  - id: TR-vfx-009
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "VFX 编排/Niagara 触发/PP 为 BP(BP_*);呈现随机仍经 C++ 封装走独立流(技术栈边界)"
+    domain: EngineCapability/BP-Cpp-Boundary
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-vfx-010
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "数字 counter 时长引 HUD F-1 T_counter 同口径,经共享时钟防视觉撕裂(V-Own-10/Tuning)"
+    domain: CrossSystem/Timing
+    adr: "0008"
+    status: Partial
+    persists: false
+
+  - id: TR-vfx-011
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "格事件锚点 tile-center:经棋盘1 GetTileWorldTransform(TileIndex)+ 环序总格数 N 只读查询(CR-2/F-1)"
+    domain: DataStructure/EngineCapability
+    adr: "0002"
+    status: Partial
+    persists: false
+
+  - id: TR-vfx-012
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "house_count_cache 呈现层 memo(非游戏状态)+ OnOwnershipChanged re-seed GetHouseCount;依赖 #8 readiness 顺序(CR-6/OQ-VFX-2)"
+    domain: DataStructure/Threading
+    adr: "0005"
+    status: Partial
+    persists: false
+
+  - id: TR-vfx-013
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "pawn registry PlayerId→pawn GetActorLocation() 查询接口(收租 Payee 终点,owner 未定)(OQ-VFX-15/V-Own-09/AC-51b)"
+    domain: DataStructure/CrossSystem
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-vfx-014
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "Niagara 双池 + UMG 计数门预算(N_max_vfx/N_hop_max/N_max_umg/N_confetti_max),60fps/P99≤33ms 标定(F-4/CR-10/OQ-VFX-3)"
+    domain: Performance
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-vfx-015
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "reduce_motion 与 HUD/#17 共享同一全局 a11y 布尔(CR-10/Tuning),随 HUD /ux-design 统一"
+    domain: CrossSystem/A11y
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-vfx-016
+    system: vfx
+    gdd: design/gdd/vfx-feedback.md
+    requirement: "SnapDone 分类型实现:Niagara DeactivateImmediate(非裸 Deactivate)/UMG Timeline 跳末帧/材质参数直设(States/RB unreal)"
+    domain: EngineCapability/Rendering
+    adr: "0009"
+    status: Partial
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: menu  (Main Menu / Lobby — 主菜单/大厅)  GDD: design/gdd/main-menu-lobby.md
+  # ===========================================================================
+
+  - id: TR-menu-001
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "StartNewGame(const FGameSetupConfig&) 开局入口宿主(跨局存活的 GameInstance 层)"
+    domain: CrossSystem/Lifecycle
+    adr: "0001"
+    status: Covered
+    persists: false
+
+  - id: TR-menu-002
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "FGameSetupConfig/FPlayerSetupEntry 标 USTRUCT(BlueprintType),TArray 包于 USTRUCT 内,取 const& 跨 BP/C++ 边界"
+    domain: DataStructure/EngineCapability
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-menu-003
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "FGameSetupConfig/FPlayerSetupEntry USTRUCT 具体字段/归属冻结(归回合2 与 PlayerState 同处)"
+    domain: DataStructure/Ownership
+    adr: "0001"
+    status: Partial
+    persists: false
+
+  - id: TR-menu-004
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "ConfigIsValid(F-1)/BuildSetupConfig(F-2) 为可 headless -nullrhi 单测的纯谓词/打包逻辑须落 C++(非 UMG/BP 图)"
+    domain: Threading/TestabilityBoundary
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-menu-005
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "菜单/大厅交互独立输入上下文 IMC_Menu(P=10),进出对局时 Activate/Deactivate 与 IMC_Gameplay 互不干扰"
+    domain: EngineCapability/Input
+    adr: "0011"
+    status: Covered
+    persists: false
+
+  - id: TR-menu-006
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "主菜单/大厅屏 UI 框架:WBP_MainMenu/WBP_Lobby : UCommonActivatableWidget,激活栈 + 手柄默认焦点 GetDesiredFocusTarget + 禁 hover-only"
+    domain: EngineCapability/UIFramework
+    adr: "0012"
+    status: Covered
+    persists: false
+
+  - id: TR-menu-007
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "按钮 bIsEnabled 绑定 ConfigIsValid(AC-21)的呈现层绑定路径"
+    domain: UIPresentation
+    adr: "0012"
+    status: Covered
+    persists: false
+
+  - id: TR-menu-008
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "#20→#2 单向无环移交:移交后本系统退场、回合2 不反调本系统(CR-1/AC-17)"
+    domain: CrossSystem/DependencyTopology
+    adr: "0007"
+    status: Partial
+    persists: false
+
+  - id: TR-menu-009
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "续局(Continue)入口拟读 #21 存档恢复对局;接口未定,MVP 入口禁用/隐藏"
+    domain: Persistence/LoadInterface
+    adr: "0005"
+    status: Partial
+    persists: true
+
+  - id: TR-menu-010
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "大厅配置态(SeatSlots/编辑中草稿)生命周期:MVP 不持久化草稿,返回主菜单丢弃(EC-7)"
+    domain: Persistence
+    adr: ""
+    status: Gap
+    persists: false
+
+  - id: TR-menu-011
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "大厅不写任何对局运行态(PlayerState/owner map/turn order),仅产出配置数据(CR-1)"
+    domain: DataStructure/AuthorityBoundary
+    adr: "0007"
+    status: Covered
+    persists: false
+
+  - id: TR-menu-012
+    system: menu
+    gdd: design/gdd/main-menu-lobby.md
+    requirement: "art-bible 状态 A idle 动画(棋盘呼吸/落座入场)体验呈现——渲染层,headless 测不了"
+    domain: UIPresentation/Animation
+    adr: ""
+    status: Gap
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: audio  (Audio — 音频)  GDD: design/gdd/audio.md
+  # ===========================================================================
+
+  - id: TR-audio-001
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "程序化音效引擎选型(MetaSound vs Sound Cue)+ UMetaSoundSource 参数化(bIsDouble/金币递增)"
+    domain: EngineCapability
+    adr: "0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-002
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "基础 2D 播放走稳定 API(PlaySound2D/UAudioComponent),避 5.4-5.7 post-cutoff 风险"
+    domain: EngineCapability
+    adr: "0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-003
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "三路混音总线(Master/SFX/BGM)Sound Class/Submix 结构 + SetBusVolume 设置屏读写(CR-12/F-1)"
+    domain: DataStructure
+    adr: "0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-004
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "Voice 并发上限 N_voice_max(USoundConcurrency) + C++ 优先级抢占/节流(CR-6/F-2/F-3)"
+    domain: Performance
+    adr: "0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-005
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "Critical 不被抢占不变式(破产/胜利绝不丢,双 Critical 临时超上限)(CR-8/EC-7/F-2)"
+    domain: DataStructure
+    adr: "0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-006
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "事件驱动纯订阅:订各 owner multicast delegate,单向消费不回写(CR-1/CR-2)"
+    domain: CrossSystemComm
+    adr: "0003,0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-007
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "owner 事件签名/payload 契约对齐(FDiceRollResult/FPhaseChangedInfo/EChangeReason 等,方向消费方派生)(CR-3/CR-4/Deps)"
+    domain: CrossSystemComm
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-008
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "破产事件接缝:#22 主反馈订经济5 OnBankruptcyDeclared(非直订破产9),与 VFX19/HUD16 一致(OQ-Audio-2④/Deps④)"
+    domain: CrossSystemComm
+    adr: "0003"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-009
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "事件订阅层归 C++(headless 可测+生命周期纪律),禁 BP widget 直订 gameplay delegate(CR-1)"
+    domain: Threading/Timing
+    adr: "0007,0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-010
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "读档重建先解绑再重绑全部 owner delegate,防双订阅双播(EC-8/AC-21)"
+    domain: Persistence
+    adr: "0005,0003,0010"
+    status: Covered
+    persists: true
+
+  - id: TR-audio-011
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "音频随机走 #22 自建独立非权威 FRandomStream,禁复用骰子3 权威流(CR-7/AC-22)"
+    domain: Threading/Timing
+    adr: "0004,0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-012
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "RNG 隔离机器硬门(权威 C++ grep 禁 FMath::Rand*/静态扫描 checklist)(AC-22/G-5)"
+    domain: EngineCapability
+    adr: "0007,0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-013
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "PlayUISound(EUISoundId) 对 UI 层唯一被调流出接口(BlueprintCallable)(CR-11)"
+    domain: CrossSystemComm
+    adr: "0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-014
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "本地 house_count_cache per-tile memo(呈现层非游戏状态)+ OnOwnershipChanged re-seed via GetHouseCount(CR-5/Finding A)"
+    domain: DataStructure
+    adr: "0010"
+    status: Partial
+    persists: false
+
+  - id: TR-audio-015
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "本地 ConsecutiveDoubles 缓存(OnTurnStarted 重置,从 OnPhaseChanged payload 取非属性轮询)(CR-3)"
+    domain: DataStructure
+    adr: "0010"
+    status: Partial
+    persists: false
+
+  - id: TR-audio-016
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "非阻塞+追赶/跳过:落后回合丢过期声音不回灌框架,关键 beat 至少触发一次(CR-9)"
+    domain: Threading/Timing
+    adr: "0010"
+    status: Partial
+    persists: false
+
+  - id: TR-audio-017
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "增益合成 effective_gain 确定性逻辑可 headless spy(可注入 IAudioPlaybackInterface,AC-12/13)(F-1)"
+    domain: DataStructure
+    adr: "0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-018
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "BGM 持久 UAudioComponent:无缝 loop + crossfade + 阶跃 duck(PushSoundMixModifier)(CR-12/CR-13/F-4)"
+    domain: EngineCapability
+    adr: "0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-019
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "BGM 流式加载(Streaming=true)避免启动内存峰值;SFX 全载零运行时 I/O(性能预算)"
+    domain: Performance
+    adr: "0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-020
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "中间件取舍:MVP 纯原生 UE 工具链(Wwise/FMOD 降 Full Vision)(OQ-Audio-4)"
+    domain: EngineCapability
+    adr: "0010"
+    status: Covered
+    persists: false
+
+  - id: TR-audio-021
+    system: audio
+    gdd: design/gdd/audio.md
+    requirement: "headless 可测前提:[Logic] AC-1~22 经 mock 播放接口 spy 断言,不依赖实际音频设备(AC 类型纪律)"
+    domain: EngineCapability
+    adr: "0010,0007"
+    status: Covered
+    persists: false
+
+  # ===========================================================================
+  # SYSTEM: save  (Save/Load — 存档/读档)  GDD: design/gdd/save-load.md
+  # ===========================================================================
+
+  - id: TR-save-001
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "序列化容器载体:USaveGame 子类 + UPROPERTY(SaveGame) 反射 + SaveGameToSlot/LoadGameFromSlot 承载全部 CR-3 字段(BP/C++ 双可见)"
+    domain: Persistence/Serialization
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-save-002
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "逐状态系统可序列化字段清单(CR-3):字段名逐字对齐各 owner GDD,无遗漏搬运(经济Cash/owner map/bIsMortgaged/per-tile house_count/全PlayerState/FDiceRollResult)"
+    domain: Persistence/Serialization
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-save-003
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "存 DA 引用不存静态布局(CR-2):仅存 BoardIdentifier(FName),读档按 ID 重载 DA_Board_* 资产;EC-3 DA 缺失拒绝读档"
+    domain: Persistence/DataAsset
+    adr: "0005,0002"
+    status: Covered
+    persists: true
+
+  - id: TR-save-004
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "完整 FDiceRollResult(Die1/Die2/Total/bIsDouble 四字段)序列化,不可只存(Total,bIsDouble);读档不重掷"
+    domain: Persistence/Serialization
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-save-005
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "精确回合阶段序列化:CurrentPhase(ETurnPhase 枚举字段)可序列化 + 读档 switch(CurrentPhase) 重入;禁 FTimerHandle/Latent Action 实现阶段等待"
+    domain: Persistence/StateMachine
+    adr: "0005,0001"
+    status: Covered
+    persists: true
+
+  - id: TR-save-006
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "读档依赖拓扑序重建(CR-5):DA→(经济/地产/建房/牌堆互不依赖)→回合2→骰子SetSeed→重绑→switch(CurrentPhase),防依赖倒置"
+    domain: Persistence/Rebuild
+    adr: "0005"
+    status: Covered
+    persists: false
+
+  - id: TR-save-007
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "读档后 delegate 重绑(CR-6):反序列化不恢复订阅关系,须广播 OnGameLoaded 信号驱动呈现层先全量解绑后重绑(防 EC-8 双订阅);含还原阶段须重绑该阶段 delegate"
+    domain: Persistence/EventBus
+    adr: "0005,0003"
+    status: Covered
+    persists: false
+
+  - id: TR-save-008
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "读档完成信号 OnGameLoaded 恰广播一次(成功路径),失败路径(EC-1/2/3/4)不广播;BlueprintAssignable delegate"
+    domain: Persistence/EventBus
+    adr: "0005,0003"
+    status: Covered
+    persists: false
+
+  - id: TR-save-009
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "Cash 写回经容器不经 Credit/Debit 事件:读档为状态写回非业务路径,OnCashChanged 触发次数 == 0(避免误播金钱 juice/重复触发下游)"
+    domain: Persistence/EventBus
+    adr: "0005,0003"
+    status: Covered
+    persists: false
+
+  - id: TR-save-010
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "四重读档完整性门(F-1):magic_ok ∧ version_compatible ∧ checksum_ok ∧ field_manifest_complete,短路求值,任一假即拒绝读档且不破坏当前对局"
+    domain: Persistence/Integrity
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-save-011
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "版本兼容严格相等(F-2):save_version == CURRENT_SAVE_VERSION,MVP 不向后迁移;改字段集即递增版本号"
+    domain: Persistence/Versioning
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-save-012
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "校验和防字节级损坏(F-3):stored_checksum == FCrc::MemCrc32(payload_bytes),检测写盘崩溃/磁盘损坏/篡改,不防语义错误"
+    domain: Persistence/Integrity
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-save-013
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "字段清单完整性运行时门(F-4):FieldManifest 列 CR-3 必需字段,读档逐项确认已读出,暴露序列化遗漏而非静默填默认值"
+    domain: Persistence/Integrity
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-save-014
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "写盘原子性(EC-4/EC-9):先写临时文件→校验通过后 IFileManager::Move 原子替换 SLOT_DEFAULT,写盘崩溃只损坏临时文件不破坏既有存档"
+    domain: Persistence/DiskIO
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-save-015
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "枚举 append-only 纪律:ETurnPhase/EPlayerColor/EAIDifficulty/ESaveResult 等枚举整数索引不可重排,旧存档兼容前提"
+    domain: Persistence/Versioning
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-save-016
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "MVP 不序列化骰子当前 Seed,读档 SetSeed(新非确定值)不重设回开局种子(防序列重复 EC-8);Seed 存取经显式 GetCurrentSeed/SetSeed 禁 struct 反射"
+    domain: Persistence/RNG
+    adr: "0005,0004"
+    status: Covered
+    persists: false
+
+  - id: TR-save-017
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "事件格牌堆序列化腿:ChanceDeckOrder/ChestDeckOrder(TArray<FCardData>,model B 无指针)+ 出狱卡持有标记 + 开局洗牌种子(经 RNG 服务存取)"
+    domain: Persistence/Serialization
+    adr: "0005,0004"
+    status: Covered
+    persists: true
+
+  - id: TR-save-018
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "存档服务宿主:SaveLoadSubsystem 挂 UGameInstanceSubsystem(跨局/跨关卡存档槽访问),与读档重建时序生命周期统一裁定"
+    domain: Persistence/Lifecycle
+    adr: "0001,0005"
+    status: Covered
+    persists: false
+
+  - id: TR-save-019
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "存档逻辑落 C++ 边界:USaveGame 序列化契约/round-trip/完整性门为 C++ 权威实现,DA 引用挂接为 BP 数据驱动装配"
+    domain: Persistence/CodeBoundary
+    adr: "0007,0005"
+    status: Covered
+    persists: false
+
+  - id: TR-save-020
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "round-trip identity 金标准:存档前快照 == 读档后快照逐字段 identity-check,任一字段漏存/错存往返必 FAIL,无调参逃逸条款"
+    domain: Persistence/Testing
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-save-021
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "派生量不持久化读档后重算(CR-5/property L97):is_monopoly/station_count/utility_count 不存,读档后由各 owner 按需重算"
+    domain: Persistence/Rebuild
+    adr: "0005"
+    status: Covered
+    persists: false
+
+  - id: TR-save-022
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "合法可存档点查询接口(CR-4/OQ-Save-2):本系统查询回合2 是否在可存档点(瞬态期拒保存返 SaveRejected_TransientState);具体接口名(bIsSafeToSave/CanSaveNow)未由回合2 提供"
+    domain: Persistence/StateMachine
+    adr: "0005,0001"
+    status: Partial
+    persists: false
+
+  - id: TR-save-023
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "存档槽存在性查询(EC-6):DoesSaveGameExist(SLOT_DEFAULT) 驱动主菜单'继续游戏'可用性,读空槽不崩不创建空对局"
+    domain: Persistence/DiskIO
+    adr: "0005"
+    status: Covered
+    persists: true
+
+  - id: TR-save-024
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "存档体积/读档耗时性能预算:单局 USaveGame 实例数百 KB(无全量布局),读档反序列化+重建 < 1s 可感知续局,写盘非 gameplay 帧不卡可感知卡顿"
+    domain: Persistence/Performance
+    adr: "0005"
+    status: Covered
+    persists: false
+
+  - id: TR-save-025
+    system: save
+    gdd: design/gdd/save-load.md
+    requirement: "瞬态期下游呈现层反向引用一致性(OQ-Save-5):主菜单20 触发存读 + HUD16/VFX19/property card17 监听 OnGameLoaded 重绑的反向依赖须在各下游档登记(propagate 债,producer)"
+    domain: Persistence/Integration
+    adr: ""
+    status: Gap
+    persists: false

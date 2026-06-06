@@ -43,7 +43,7 @@ Accepted
 
 | 字段 | 值 |
 |------|----|
-| **Depends On** | ADR-0001（UObject 宿主）已 Accepted；ADR-0007（BP-vs-C++ 边界）Proposed（材质框架选定后，Post Process Material C++ 控制路径需对齐 ADR-0007 BP/C++ 边界） |
+| **Depends On** | ADR-0001（UObject 宿主）已 Accepted；ADR-0007（BP-vs-C++ 边界）已 Accepted（材质框架选定后，Post Process Material C++ 控制路径需对齐 ADR-0007 BP/C++ 边界） |
 | **Enables** | 美术资产制作开工（棋子/建筑/棋盘材质、描边、VFX 材质）；ADR-0007 关联的 VFX #19 资产制作（胜利暖金 Post Process Material） |
 | **Blocks** | 美术资产 Sprint（材质框架未定则所有 Material/MaterialInstance 资产无法开始，棋子描边/色阶材质/Post Process Volume 胜利暖金均阻） |
 | **Ordering Note** | 本 ADR 可与 ADR-0010（音频架构）并行起草，不依赖彼此。须在美术资产 Sprint 开工前 Accepted。 |
@@ -419,7 +419,7 @@ struct FToonMaterialConfig {
 ## Related
 
 - `docs/architecture/ADR-0001-uobject-host-lifecycle.md`（宿主框架，已 Accepted）
-- `docs/architecture/ADR-0007-bp-vs-cpp-boundary.md`（BP/C++ 边界，Proposed；Post Process C++ 控制路径须对齐）
+- `docs/architecture/ADR-0007-bp-cpp-boundary.md`（BP/C++ 边界，已 Accepted；Post Process C++ 控制路径须对齐）
 - `docs/engine-reference/unreal/modules/rendering.md`（Substrate Slab 节点参考；PP Volume API）
 - `docs/engine-reference/unreal/deprecated-apis.md`（Legacy material → Substrate 迁移建议）
 - `design/art/art-bible.md`（视觉风格权威源，§3/4/5.1/6.4/8.5）

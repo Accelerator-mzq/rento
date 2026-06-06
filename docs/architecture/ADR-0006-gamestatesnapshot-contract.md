@@ -37,7 +37,7 @@ AI(10) 三 hook 须读取一份跨系统聚合的只读视图 `FGameStateSnapsho
 
 | Field | Value |
 |-------|-------|
-| **Depends On** | ADR-0001（UObject 宿主与生命周期边界——回合2 的 `UWorldSubsystem`/状态机宿主是 snapshot 装配方的运行宿主）、ADR-0002（棋盘数据容器——snapshot 的静态底数 PurchasePrice/ColorGroup/MortgageValue 经 Board DA Holder 读取） |
+| **Depends On** | ADR-0001（UObject 宿主与生命周期边界——回合2 的 `UWorldSubsystem`/状态机宿主是 snapshot 装配方的运行宿主）、ADR-0002（棋盘数据容器——snapshot 的静态底数 PurchasePrice/ColorGroup/MortgageValue 经 Board DA Holder 读取）、ADR-0007（BP-vs-C++ 边界——0007 是本 ADR 的设计前提，`const FGameStateSnapshot&` 签名已由 player-turn CR-8 冻结；非硬阻塞但拓扑序 0007 先于 0006，与 ADR-0007 的 Enables 0006 声明一致） |
 | **Enables** | AI(10) 全部实现（CR-6 字段齐备是 AI 开工硬前提）；解锁 ai-opponent AC-5/6/7/48 从 CI-stub 转真实 `[Logic]` |
 | **Blocks** | Epic「AI 对手」——AI 任一 hook 实现不能在本 ADR Accepted 前开工（字段缺失=AI 开工硬阻塞，ai-opponent CR-6） |
 | **Ordering Note** | 须在 ADR-0001/0002 Accepted 之后；与 ADR-0007（BP-vs-C++ 边界）协同——ADR-0007 裁定 AI 决策核心落 C++，本 ADR 的 `const FGameStateSnapshot&` 签名即按 C++ 权威逻辑设计（架构 §8 依赖链 `ADR-0007 → ADR-0006`） |
