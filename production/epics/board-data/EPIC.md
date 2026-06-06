@@ -4,7 +4,7 @@
 > **GDD**: design/gdd/board-data.md
 > **Architecture Module**: #1 棋盘数据 Board Data + §2.1 ④ Board DA Holder
 > **Status**: Ready
-> **Stories**: Not yet created — run `/create-stories board-data`
+> **Stories**: 8 created (2026-06-06) — see ## Stories below
 > **Manifest Version**: 2026-06-06
 
 ## Overview
@@ -58,6 +58,23 @@ This epic is complete when:
 - [Config] 资产校验 harness（commandlet/编辑器，非 -nullrhi）就位
 - **Sprint0 引擎验证 ADR-0002 #6**：`UAssetManager` 同步/异步加载 Primary DA 的 5.7 API 签名 + DataTable CSV `TArray` 列报错二次确认 + Blueprint `Floor(float)→int32` 重载类型推导
 
+## Stories
+
+| # | Story | Type | Status | ADR | Covers TR |
+|---|-------|------|--------|-----|-----------|
+| 001 | FBoardTileData 结构 + UBoardDataAsset 载体定义 | Integration | Ready | ADR-0002 (primary), ADR-0001 | TR-board-001/002/003/005/016/017, +007 |
+| 002 | Board DA 持有者宿主：加载/生命周期/热切换边界 | Integration | Ready | ADR-0001 (primary), ADR-0002 | TR-board-007/008 |
+| 003 | UBoardMathLibrary：F-1/F-2/F-3 拓扑 + AdvanceIndex 原子返回 | Logic | Ready | ADR-0002 (primary), ADR-0001 | TR-board-011/012 |
+| 004 | 只读查询接口集：GetTileCount/GetTileData/GetTilesInGroup/GetBoardId | Logic | Ready | ADR-0002 (primary), ADR-0001 | TR-board-005/009/010/017 |
+| 005 | 加载期完整性校验（拒绝类）+ 结构化错误码 | Logic | Ready | ADR-0002 (primary), ADR-0001 | TR-board-013 |
+| 006 | 加载期完整性校验（警告类）：加载成功 + 结构化警告 | Logic | Ready | ADR-0002 (primary), ADR-0001 | TR-board-013 |
+| 007 | DA_Board_Classic40 temp-fill + [Config] 资产校验 harness + cook 门控 | Config-Data | Ready | ADR-0002 (primary), ADR-0001/0005 | TR-board-004/014/015 |
+| 008 | 棋盘 DA 存档引用契约（BoardIdentifier）：存引用不存布局 | Integration | Ready | ADR-0005 (primary), ADR-0002/0001 | TR-board-006 |
+
+**TR 覆盖**：17/17 全覆盖（每 TR 至少被一个 story Covers）。Sprint0 引擎验证 ADR-0002 #6（`UAssetManager` 加载签名 + DataTable CSV `TArray` 列报错二次确认 + Blueprint `Floor(float)→int32` 重载）分布于 story-002（加载签名）、story-003（Floor 重载）、story-007（CSV `TArray` 二次确认）。
+
+**推荐实现顺序**：001 → (002 ∥ 003 ∥ 005 ∥ 006) → 004 → 007 → 008。基础结构先，拓扑/校验可并行，UI/资产/存档引用后。
+
 ## Next Step
 
-Run `/create-stories board-data` to break this epic into implementable stories.
+Run `/dev-story production/epics/board-data/story-001-board-data-asset-schema.md` to begin implementation (after `/story-readiness`).

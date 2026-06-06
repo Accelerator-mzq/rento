@@ -4,7 +4,7 @@
 > **GDD**: design/gdd/dice.md
 > **Architecture Module**: #3 骰子 Dice + 权威 RNG 流
 > **Status**: Ready
-> **Stories**: Not yet created — run `/create-stories dice-rng`
+> **Stories**: 8 created (2026-06-06) — see ## Stories below
 > **Manifest Version**: 2026-06-06
 
 ## Overview
@@ -49,6 +49,22 @@
 | TR-dice-017 | F-5 确定性种子序列 fixture（≥20 抽取逐字段精确相等）PR-gate headless | ADR-0004/0007 ⚠ Partial |
 
 **Untraced Requirements**: None（17/17 有 ADR 覆盖；Partial = 跨 ADR 协同或测试前提，非 Gap）
+
+## Stories
+
+| # | Story | Type | Status | Covers TR | ADR (primary first) |
+|---|-------|------|--------|-----------|---------------------|
+| 001 | RNG 服务宿主 + 种子注入 + 通用原语封装 | Integration | Ready | TR-dice-001/002/008/010/015 | ADR-0004, ADR-0001, ADR-0007 |
+| 002 | RollDice 核心契约 + 执行序铁律 | Logic | Ready | TR-dice-001/006 | ADR-0004, ADR-0003, ADR-0007 |
+| 003 | RandomRange 退化与边界契约 | Logic | Ready | TR-dice-003 | ADR-0004, ADR-0007 |
+| 004 | lazy-init 兜底种子安全（禁默构 0） | Logic | Ready | TR-dice-014 | ADR-0004, ADR-0001 |
+| 005 | OnDiceRolled 事件契约 + 单线程重入禁止 | Integration | Ready | TR-dice-005/007/009 | ADR-0003, ADR-0004, ADR-0007 |
+| 006 | F-5 确定性种子序列 fixture（PR-gate headless） | Logic | Ready | TR-dice-017/002/004 | ADR-0004, ADR-0007 |
+| 007 | 流隔离 + CI 禁全局 RNG 静态扫描硬门 + Sprint0 引擎验证 | Integration | Ready | TR-dice-011/016/015/004 | ADR-0007, ADR-0004 |
+| 008 | 当前骰序列化契约（完整 FDiceRollResult，MVP 不存 Seed） | Integration | Ready | TR-dice-012/013 | ADR-0005, ADR-0004 |
+
+> **TR 覆盖**：TR-dice-001~017 全 17 个 TR 各被 ≥1 story Covers（001/002/004/015 跨多 story 协同覆盖）。
+> **建议实现序**：007 Sprint0 引擎验证 ①–④ 开工首步 → 001 宿主+原语 → 002 RollDice → 003 退化 / 004 lazy-init（并行）→ 005 事件 → 006 fixture（核心 PR gate）→ 007 CI 硬门 → 008 序列化。
 
 ## Definition of Done
 

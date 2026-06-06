@@ -4,7 +4,7 @@
 > **GDD**: 无（TD-owned 引擎集成模块，源 `docs/architecture/architecture.md` §2.1 ①②）
 > **Architecture Module**: ① Subsystem 宿主 + ② Event Bus
 > **Status**: Ready
-> **Stories**: Not yet created — run `/create-stories foundation-framework`
+> **Stories**: 7 created (see ## Stories below)
 > **Manifest Version**: 2026-06-06
 
 ## Overview
@@ -50,6 +50,24 @@ This epic is complete when:
 - 所有 Logic 故事有 headless 通过的测试文件于 `tests/`
 - All acceptance criteria from architecture.md §2.1 ①② module boundaries verified
 
+## Stories
+
+> 拆分自架构 §2.1 模块① Subsystem 宿主 + ② Event Bus + 治理 ADR-0001/0003 实现锚点。
+> 排序：宿主基础底座（001–004）→ Event Bus 纪律层（005–006）→ Sprint0 引擎验证（007）。
+
+| # | Story | Type | Status | ADR |
+|---|-------|------|--------|-----|
+| 001 | UMatchSubsystemBase per-match 宿主基类与生命周期 | Integration | Ready | ADR-0001 |
+| 002 | IGameClock DI 注入骨架（生产/测试时钟） | Integration | Ready | ADR-0001 |
+| 003 | 异步加载纪律 + Deinitialize CancelHandle（防 PIE 空棋盘） | Integration | Ready | ADR-0001 / ADR-0002 |
+| 004 | 跨局 UGameInstanceSubsystem 宿主框架（Save/Audio/Setup 入口） | Integration | Ready | ADR-0001 |
+| 005 | Event Bus 纪律层：统一 delegate 规范 + USTRUCT payload 契约 | Integration | Ready | ADR-0003 / ADR-0001 |
+| 006 | Event Bus 读档集中解绑/重绑工具函数（防 EC-8 双订阅） | Integration | Ready | ADR-0003 / ADR-0005 |
+| 007 | Sprint0 引擎验证：PIE 隔离 + OnWorldBeginPlay 重触发 + CancelHandle | Integration | Ready | ADR-0001 / ADR-0004 |
+
+**TR 覆盖**（每 TR 至少被一个 story Covers）：TR-turn-001/002（001 宿主框架 + 007 验证）· TR-turn-004/005（005 delegate 规范）· TR-turn-013（006 重绑）· TR-dice-005（005 OnDiceRolled 契约）· TR-dice-008（001 宿主 + 007 Seed 注入验证）· TR-board-007（003 DA 持有者宿主 + 防 GC）· TR-board-008（003 热切换边界 + CancelHandle，007 验证）。
+
 ## Next Step
 
-Run `/create-stories foundation-framework` to break this epic into implementable stories.
+Stories ready. Run `/story-readiness production/epics/foundation-framework/story-001-match-subsystem-base.md`
+to validate before `/dev-story`. story-007 是 **Sprint0 开工首步**（引擎验证门控全部下游）。

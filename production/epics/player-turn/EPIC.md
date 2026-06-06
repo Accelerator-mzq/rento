@@ -4,8 +4,24 @@
 > **GDD**: design/gdd/player-turn.md
 > **Architecture Module**: #2 玩家与回合 Player & Turn + GameStateSnapshot 装配
 > **Status**: Ready
-> **Stories**: Not yet created — run `/create-stories player-turn`
+> **Stories**: 9 stories created (覆盖 TR-turn-001~017 全部 17 TR) — 见下方 ## Stories
 > **Manifest Version**: 2026-06-06
+
+## Stories
+
+| # | Story | Type | Status | Covers TR | ADR (primary 首位) |
+|---|-------|------|--------|-----------|--------------------|
+| 001 | PlayerState 容器 + StartNewGame 开局入口 + 开局定序 | Logic | Ready | TR-turn-001, TR-turn-015 | ADR-0001, ADR-0004 |
+| 002 | ETurnPhase 回合阶段状态机（delegate 推进、禁 Latent、双点链 F-3） | Logic | Ready | TR-turn-002 | ADR-0001, ADR-0007 |
+| 003 | F-1 回合推进 + 破产移出 + OnGameWon 单一事件源（return-only） | Logic | Ready | TR-turn-006 | ADR-0003, ADR-0007, ADR-0001 |
+| 004 | 6 回合事件契约 + USTRUCT payload + AI 行动可观察 hook | Logic | Ready | TR-turn-004, TR-turn-005 | ADR-0003, ADR-0007 |
+| 005 | 受控写接口面（SetPosition/SetCash/SetJailState/SetBankrupt）C++ 强封装 | Logic | Ready | TR-turn-003 | ADR-0007, ADR-0001 |
+| 006 | RollPhase 消费 FDiceRollResult + 当前程 holder + AI 决策 RNG 走骰子流 | Logic | Ready | TR-turn-010, TR-turn-011 | ADR-0004, ADR-0001, ADR-0003 |
+| 007 | GameStateSnapshot 装配/冻结 + AI 决策 hook + ResolvePhase 聚合编排 | Integration | Ready | TR-turn-007, TR-turn-008, TR-turn-009 | ADR-0006, ADR-0001, ADR-0007 |
+| 008 | 中途读档序列化 + delegate 重绑拓扑序 + 枚举 append-only + 可存档点查询 | Integration | Ready | TR-turn-012, TR-turn-013, TR-turn-014, TR-turn-017 | ADR-0005, ADR-0001, ADR-0003 |
+| 009 | 回合状态机/编排落 C++ 权威模块 + CI 目录无 BP 派生类断言 | Config-Data | Ready | TR-turn-016 | ADR-0007, ADR-0001 |
+
+**TR 覆盖核对**：TR-turn-001~017 全 17 个 TR 各至少被一个 story Covers（001→s1 / 002→s2 / 003→s5 / 004→s4 / 005→s4 / 006→s3 / 007→s7 / 008→s7 / 009→s7 / 010→s6 / 011→s6 / 012→s8 / 013→s8 / 014→s8 / 015→s1 / 016→s9 / 017→s8）。
 
 ## Overview
 

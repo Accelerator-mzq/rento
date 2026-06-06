@@ -11,10 +11,12 @@ Manifest Version: 2026-06-06
 
 | Epic | System | GDD | Governing ADRs | Engine Risk | TR 覆盖 | Stories | Status |
 |------|--------|-----|----------------|-------------|---------|---------|--------|
-| [foundation-framework](foundation-framework/EPIC.md) | ①宿主+②Event Bus（TD-owned）| 无（architecture §2.1）| ADR-0001/0003 | LOW | 横切（支撑下游）| Not yet created | Ready |
-| [board-data](board-data/EPIC.md) | #1 棋盘数据 + ④Board DA Holder | board-data.md | ADR-0002/0001/0005 | **MEDIUM** | 17/17 | Not yet created | Ready |
-| [dice-rng](dice-rng/EPIC.md) | #3 骰子 + RNG 流 | dice.md | ADR-0004/0003/0007/0001/0005 | **MEDIUM** | 17/17 | Not yet created | Ready |
-| [player-turn](player-turn/EPIC.md) | #2 玩家与回合 + GameStateSnapshot | player-turn.md | ADR-0001/0006/0007/0003/0004/0005 | LOW | 17/17 | Not yet created | Ready |
+| [foundation-framework](foundation-framework/EPIC.md) | ①宿主+②Event Bus（TD-owned）| 无（architecture §2.1）| ADR-0001/0003 | LOW | 横切（支撑下游）| **7 stories** | Ready |
+| [board-data](board-data/EPIC.md) | #1 棋盘数据 + ④Board DA Holder | board-data.md | ADR-0002/0001/0005 | **MEDIUM** | 17/17 | **8 stories** | Ready |
+| [dice-rng](dice-rng/EPIC.md) | #3 骰子 + RNG 流 | dice.md | ADR-0004/0003/0007/0001/0005 | **MEDIUM** | 17/17 | **8 stories** | Ready |
+| [player-turn](player-turn/EPIC.md) | #2 玩家与回合 + GameStateSnapshot | player-turn.md | ADR-0001/0006/0007/0003/0004/0005 | LOW | 17/17 | **9 stories** | Ready |
+
+> **Foundation 共 32 stories**（7+8+8+9）。建议 Sprint0 开工首步：foundation-framework/story-007（PIE 隔离验证）+ dice-rng/story-007（RandRange/默认种子验证）+ board-data/story-002/007（UAssetManager/CSV 验证）—— 门控全部下游 headless 可测性。
 
 ## Core Layer
 
