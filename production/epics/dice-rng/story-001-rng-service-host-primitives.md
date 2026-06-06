@@ -1,6 +1,6 @@
 ---
 Epic: dice-rng
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: M
@@ -108,3 +108,14 @@ Last Updated: 2026-06-06
 
 - **Depends on**: 无（Foundation 零依赖根；ADR-0001/0004 已 Accepted）。**Sprint0 引擎验证（story-007）建议先行或并行**——宿主与 RNG 行为均待 5.7 核验。
 - **Unlocks**: story-002（RollDice 依赖本流 + 封装）/ story-003（退化契约扩展本封装）/ story-004（lazy-init 兜底本宿主路径）/ story-005（事件）/ story-006（fixture）/ story-008（序列化）。
+
+## Completion Notes
+**Completed**: 2026-06-06
+**Criteria**: 5/5 AC + [Host] COVERED（AC-23/18+Edge/13/12c + 继承链/ShouldCreate Game+PIE→true·Editor×2→false/值语义/注入点）；1 DEFERRED（[Host] PIE Stop→Start 重触发 → ff-007，headless 不可靠驱动）。100% BLOCKING AC 有非 vacuous 自动化测试。
+**Files**: `Source/rento/DiceRngService.h` + `.cpp`（UDiceRngService:UMatchSubsystemBase + 权威 FRandomStream 私有值成员 + 4 BP-callable 原语 + OnWorldBeginPlay 唯一注入点）、`Source/rentoTests/Private/RngServiceHostPrimitivesTest.cpp`（5 [Logic]）+ `RngServiceHostLifecycleTest.cpp`（7 [Host]，含 TC_LC2d PIE）
+**Deviations**:
+- logged decision (W-1)：bUseFixedSeed/FixedSeed 用 `EditDefaultsOnly`（UWorldSubsystem 实例不可 Details 选中，UE 子系统惯例；语义精度，零运行时影响）。
+- DEFERRED → tech-debt：[Host] PIE Stop→Start 重触发 OnWorldBeginPlay + Seed 重注入的完整运行时验证 → ff-007（headless `-nullrhi` 不自动触发 BeginPlay，同 ff-001/ff-003 惯例）。
+**Test Evidence**: 自动化测试 12 函数（Rento.Dice.RngServicePrimitives 5 + RngServiceLifecycle 7）；主会话独立重跑全量 Rento. **51/51 Success, 0 Fail, EXIT 0**（`Saved/Logs/rento.log` 14.43.08–10）。
+**Code Review**: Complete（/code-review 本会话双专家 = APPROVED WITH SUGGESTIONS；折叠 5 项硬化〔W-1 + TC_LC3 正面值语义断言 + TC_LC2d PIE + TC_LC4 false-path pin + I-2 去魔法数字〕，0 BLOCKING，生产逻辑除 W-1 specifier 外零改动）。
+**Engine Verification（ADR-0004）**: ①③④ 已由 Sprint0 spike CONFIRMED（RandRange 浮点中介/默构种子0/无新 RNG 子系统）；② Seed 序列化属 story-008。
