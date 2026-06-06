@@ -1,6 +1,24 @@
 # Collaborative Design Principle
 
-**Last Updated:** 2026-02-13
+**Last Updated:** 2026-06-06
+
+---
+
+## 🧭 Two Operating Modes
+
+This project runs in **one of two modes**. The user selects the mode; absent an
+explicit choice, **Collaborative Mode is the default**.
+
+| Mode | When | Authority Model |
+|------|------|-----------------|
+| **🤝 Collaborative Mode** (default) | Creative/strategic work, ambiguous scope, first-time decisions | Question → Options → Decision → Draft → Approval. Human gates every section & file write. The rest of this document specifies this mode. |
+| **🤖 Automated Mode** (opt-in) | Convergent, standards-bound execution phases (e.g. finishing a GDD batch, propagate verification) where the *rules* are already settled | Exception-based autonomy via the `Workflow` tool. Runs to completion, auto-selects the recommended option at every fork, and **only halts on a circuit-breaker**. See **§ Automated Development Mode** below. |
+
+> Automated Mode does **not** weaken the quality bar — it relocates the human gate
+> from "every step" to "post-hoc review + circuit-breaker escalation." The
+> judgment work (cross-doc seam rulings, deflating over-claims, severity triage)
+> still happens; it is performed by a dedicated lead agent and **logged for
+> reversal**, not skipped.
 
 ---
 
@@ -673,6 +691,86 @@ WHEN implementing:
 2. Flag any deviations from design docs
 3. Ask about ambiguities rather than assuming
 ```
+
+---
+
+## 🤖 Automated Development Mode (Workflow-Eligible Phases)
+
+Automated Mode is an **opt-in** execution model for phases where the design *rules*
+are already settled and the remaining work is **convergent and standards-bound**
+(e.g. finishing a batch of GDDs, running multi-expert reviews to convergence,
+propagate fresh-grep verification). It is driven by the `Workflow` tool, whose
+subagents each run in an **isolated context window**.
+
+> **Why isolation matters (the key enabler):** the agent that *authors* a GDD and
+> the agents that *review* it are physically separate contexts. The reviewers
+> never saw the authoring conversation. This **structurally satisfies** the
+> fresh-session anti-self-taint discipline — it is cleaner than same-session
+> subagent review, not weaker.
+
+### Three-Tier Autonomy Model
+
+Work is classified by **verifiability**, and that determines who decides:
+
+| Tier | Work type | Autonomy | Examples |
+|------|-----------|----------|----------|
+| 🟢 **Autonomous** | Mechanical, objectively verifiable | Workflow runs it, never pauses | fresh-grep cross-doc verification, consistency scans, stage detection, multi-expert review fan-out, adversarial claim verification, landing folded fixes |
+| 🟡 **Logged-decision** | Requires judgment but has a clear prescription | Workflow executes + **logs prominently**; reversible at the post-hoc review | cross-doc seam rulings, blocker severity triage, deflating expert over-claims, opening propagate tickets |
+| 🔴 **Circuit-breaker** | Workflow cannot determine correctness | **Halts and escalates to the user** | convergence failure, unresolvable blocker, genuine vision-level fork |
+
+The 🟡 tier is the safety hinge: the judgment work that quality depends on (the
+"lead auditor verifies each expert claim against the doc, deflates over-claims,
+catches long-dormant contradictions" pattern) is **not removed** — a dedicated
+**lead/synthesis agent** performs it with continuity of judgment, and every 🟡
+ruling is written into the run report for the user to reverse.
+
+### Exception-Based Autonomy (the run contract)
+
+When Automated Mode is engaged for a phase, the Workflow:
+
+1. Runs the **entire** remaining phase end-to-end with no per-step approval.
+2. At every fork, **auto-selects the recommended option** and logs it.
+3. Lands convergent outputs autonomously (e.g. `APPROVED-with-followups` →
+   update status, open propagate tickets, fresh-grep verify the other side).
+4. On reaching a milestone, **notifies and continues** — it does not stop for
+   approval.
+5. Produces **one consolidated report** at the end: per-document verdicts, every
+   🟡 logged ruling, every propagate ticket, gate-check result. The user reviews
+   **post-hoc** and may reverse any ruling.
+
+### The Circuit-Breaker (the one irreducible halt)
+
+The Workflow is **not** allowed to run literally forever or to silently ship a
+contradiction. It **must halt and escalate** when it detects a non-convergence
+signature drawn from this project's hard-won lessons:
+
+- **Seam keeps peeling** — blocker count is *not* monotonically decreasing across
+  re-review rounds, or each round surfaces a *new orthogonal dimension*
+  (`gating-seam-keeps-peeling`).
+- **Finishing-vs-identity fork** — a round demands *re-adjudicating what the
+  system is* rather than *finishing an already-settled ruling*
+  (`converge-test-finishing-vs-identity`).
+- **Unresolvable blocker** — a fix requires information no agent can supply
+  (external dependency, missing upstream owner, genuine creative-vision choice).
+
+A circuit-breaker halt is **not** an approval gate — it is the Workflow reporting
+"I cannot determine correctness here; this needs a human ruling on direction."
+This is exactly the situation in which the user *wants* to be pulled in. A bounded
+re-review round limit (default **3** rounds per document before escalation)
+backstops oscillation.
+
+### Cross-Mode Invariants (hold in BOTH modes)
+
+Automated Mode relaxes *who approves each step* — it never relaxes these:
+
+- **8 required GDD sections** (`design/CLAUDE.md`).
+- **Cross-doc seam edits require a same-PR propagate ticket + fresh-grep
+  verification of the other side** — never "register an OQ and call it closed."
+- **No commits without explicit user instruction.**
+- **Acceptance criteria must be falsifiable** — no "tune until it passes" escape
+  clauses, no self-consistent tautologies.
+- **Verdicts are evidence-based** — a lead agent verifies each expert claim
+  against the document before accepting it as a blocker.
 
 ---
 

@@ -221,6 +221,8 @@
 | AI 对手(10, Not Started) | 硬 | 读 `GetHouseCount`/`CanBuildHouse` 估值建房决策 | 10→8 |
 | HUD(16)/地产卡 UI(17) | 软 | `GetHouseCount` + `OnBuildingChanged` 呈现房屋图标/档位 | 16,17→8 |
 | 游戏反馈 VFX(19) | 软 | `OnBuildingChanged` 驱动建房 juice | 19→8 |
+| 音频(22) | 软 | `OnBuildingChanged(tile,newCount)` + `GetHouseCount` 种子化,本地 delta 派生建房"咔哒"/酒店合并"轰"音(呈现侧纯叶子,镜像 VFX19;audio L219 已对齐) | 22→8 |
+| 存档(21) | 软(横切) | 供 per-tile house_count([0,5])序列化读;读档写回 | 21→8 |
 
 **双向一致性核查(已核实):** systems-index `8 depends-on 1,5,6` ✓;board:163 / economy:105 / property:108 均已反向列出建房(8)为 dependent ✓;下游 2(CR-3.2 引 house_count)/ economy F-2:152(house_count 归8供)/ index(AI10、VFX19 depends-on 含 8)✓。**新增 7→8(RepairFee 读 F-7 聚合,本轮 consistency-check 揪出 tile-events:155 重载)** → tile-events 侧 OQ-Event-3 本轮已 RESOLVED 并回链;**systems-index 系统 7 depends-on 须补 8(soft,本轮一并改)**。
 

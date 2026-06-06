@@ -227,6 +227,8 @@ return count{ t in all_tiles | GetTileData(t).TileType == Utility AND owner_map[
 | 地产卡 UI(17) | 硬 | 读 `owner`/`is_mortgaged`/`is_monopoly` 呈现归属/抵押/垄断 |
 | 存档(21) | 硬 | 序列化 owner map + `bIsMortgaged` |
 | HUD(16) | 软 | 读各玩家持有地产/垄断概览(资产面板) |
+| 游戏反馈 VFX(19) | 软(呈现层叶子) | 监听 `OnOwnershipChanged`(买地脉冲 `None→PlayerId` V-Own-14 + 破产移交清算 `P→P`/`P→None` V-Own-14b/14c + 触发 cache re-seed)/`OnMortgageChanged`(抵押提交反馈)播视觉 juice(呈现侧纯叶子，与音频22 声画分离各订各播；不写本系统；vfx-feedback CR-5/OQ-VFX-7) |
+| 音频(22) | 软 | 监听 `OnOwnershipChanged`(买地"啪"/移交翻页音)/`OnMortgageChanged`(抵押"沙"音)播音(呈现侧纯叶子;收租音订经济5 `OnRentPaid` 非本系统;audio L218 已对齐) |
 | 交易(11)/拍卖(12) | 软(Alpha) | 经受控写转移 owner(换手/中标) |
 | 教程(24) | 软(Alpha) | 引导买地/集组示例 |
 

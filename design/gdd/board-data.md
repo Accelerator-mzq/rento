@@ -303,6 +303,7 @@
 | 建房(8) | 硬 | `BuildingCost`、`RentTable`、`ColorGroup`、`GetTilesInGroup` |
 | HUD(16) | 硬 | `DisplayName`、`ColorGroup` 颜色、`PurchasePrice` |
 | 地产卡 UI(17) | 硬 | `DisplayName`、`RentTable`、`ColorGroup`、`MortgageValue` |
+| 游戏反馈 VFX(19) | 软(呈现层叶子) | 只读查询 `GetTileWorldTransform(TileIndex)`(格事件/juice 锚点 tile-center)+ 环序总格数 N(自建 hop path 插值);juice 视觉腿,不写本系统(vfx-feedback RB-4/OQ-VFX-7,R-1 揪出) |
 | 存档(21) | 硬 | `GetBoardId()`(棋盘标识,非全量布局) |
 | 设置 & House Rules(23) | 软 | 可选覆盖棋盘相关 House Rule(如 FreeParking 奖池) |
 | 地图编辑器(26) | 硬(读写) | 完整 `FBoardTileData` schema;产出新 `DA_` 实例 |

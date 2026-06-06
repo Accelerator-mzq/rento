@@ -154,7 +154,7 @@
 |---|---|---|---|
 | `house_count` | int32 | [0,32] 经典 | **全盘累计普通房数**=建房8 `GetTotalHouseCount`(档1-4,酒店折档5不计;≠economy F-2 单地产 [0,5] 口径,接口已区分,OQ-Event-3 ✅ RESOLVED → registry `total_house_count`) |
 | `hotel_count` | int32 | [0,8] 经典 | 全盘酒店数=建房8 `GetTotalHotelCount`(档5;registry `total_hotel_count`) |
-| `per_house_fee`/`per_hotel_fee` | int32 | ≥0(牌面数据) | 典型 25/100 |
+| `per_house_fee`/`per_hotel_fee` | int32 | ≥0(牌面数据) | 典型 25/100(⚠prov,owner 待 producer 裁定 → 棋盘1/事件牌 CardData DA,*非*建房8;见 OQ-Event-3 注 / Tuning) |
 
 **Output Range**: [0, 经典上界 32×25+8×100=1600],int32 安全。无房无酒店→0(合法退化)。⚠ **上界 1600 > 起始现金 1500(快速档 750)**——RepairFee 作 sink 的量级/触发频率(全盘建房密度高时对建房激进者惩罚重、形成隐性翻盘)须经经济平衡 pass 评估翻盘效果是否符合意图(economy finding-5,并入 OQ-Event-3)。
 **Example**: 3房1酒店,25/100 → 3×25+1×100=175 → `Debit(self,175)`。
@@ -180,7 +180,7 @@
 
 **不变式**: `JailTurnsServed∈[0,2]`(用 `≥` 守门防越级到3);任何出狱路径(卡/保释/双点/强制)后 `bIsInJail=false`。
 
-> **新常量(Phase 5 注册 registry)**: `JAIL_BAIL_AMOUNT=50`(**source=事件格7**,非经济5——监狱规则参数;经济只执行 Debit,平衡合理性是经济 Advisory)、`MAX_JAIL_TURNS=3`、`CHANCE_DECK_SIZE`/`CHEST_DECK_SIZE=16`、`per_house_fee`/`per_hotel_fee`(provisional,待8)。
+> **新常量(Phase 5 注册 registry)**: `JAIL_BAIL_AMOUNT=50`(**source=事件格7**,非经济5——监狱规则参数;经济只执行 Debit,平衡合理性是经济 Advisory)、`MAX_JAIL_TURNS=3`、`CHANCE_DECK_SIZE`/`CHEST_DECK_SIZE=16`、`per_house_fee`/`per_hotel_fee`(provisional,**owner 待 producer 裁定**)。⚠ **owner 真空(logged_decision propagate 债,非 BLOCKING)**:RepairFee *单价* 25/100 现仅作散文典型值,**无任一档声明为权威真值**——建房(8) F-7 仅供聚合接口、明确不拥有数值真值(building-upgrade「本系统不拥有数值真值」);故非"待8"可闭。建议归**棋盘1 / 事件牌 CardData DA**(费率属牌面数据,非建筑成本),producer 裁定 owner 后 registry 去 provisional。数值不冲突,仅 owner 悬置。
 
 ## Edge Cases
 
@@ -242,8 +242,8 @@
 > **⚠ 须 producer propagate 核实的接缝(本 GDD 新引入,登记 Open Questions)**:
 > - **监狱态所有权 vs player-turn(OQ-Event-1 ✅ RESOLVED 2026-06-03)**:已核实 player-turn(已 Approved L84/L85/L200)**持监狱态字段 `bIsInJail`/`JailTurnsServed` + 据7裁决机械计数**;本档已对齐为"字段存 player-turn、7 拥规则 + 经受控写改 `bIsInJail`"(CR-7)。**残留低成本 propagate(producer)**:player-turn 须为监狱态显式命名受控写接口(现 L89 仅举 `SetPosition` 例)。
 > - **多债权人破产(OQ-Event-4 ✅ 收口,非 propagate 债)**:逐笔执行使每笔触发破产时债权人单一(economy F-11 路径清晰);不对称清算是经典忠实、非零和违反(见 F-1 / Edge Cases)。无须 economy/破产9 propagate。
-> - **新 registry 常量(OQ-Event-5 ✅ 已注册)**:`JAIL_BAIL_AMOUNT=50`(source=7)/`MAX_JAIL_TURNS=3`/牌堆 size/收付公式 已于 authoring Phase 5b 注册;`per_house_fee`/`per_hotel_fee` 待建房8(prov)。
-> - **残留 propagate(唯一)**:OQ-Event-1 的 player-turn 受控写接口命名(低成本,producer)。
+> - **新 registry 常量(OQ-Event-5 ✅ 已注册)**:`JAIL_BAIL_AMOUNT=50`(source=7)/`MAX_JAIL_TURNS=3`/牌堆 size/收付公式 已于 authoring Phase 5b 注册;`per_house_fee`/`per_hotel_fee` owner **待 producer 裁定(prov)**——非"待8":建房(8) F-7 不拥有数值真值,建议归棋盘1/事件牌 CardData DA(见下 propagate)。
+> - **残留 propagate**:① OQ-Event-1 的 player-turn 受控写接口命名(低成本,producer)。② **RepairFee 单价 `per_house_fee`/`per_hotel_fee` owner 真空(logged_decision,非 BLOCKING)**:25/100 仅散文典型值,无 owner 档声明权威真值(建房8 F-7 不拥有数值真值);producer 裁定归棋盘1/事件牌 CardData DA 后 registry 去 provisional。数值不冲突、仅 owner 悬置。
 
 ## Tuning Knobs
 
@@ -253,7 +253,7 @@
 | `MAX_JAIL_TURNS` | 最长服刑回合 | 默认 **3**;[1,5] | 过高→困狱拖沓(伤支柱④);=1→监狱几无威慑 | **事件格(7)** |
 | `CHANCE_DECK_SIZE` / `CHEST_DECK_SIZE` | 各牌堆张数 | 默认 **16**;[8,24] | 过小→同张牌频繁复现、惊喜衰减;过大→牌效果稀释、记忆点弱 | **事件格(7)**(牌内容归棋盘1 CardData) |
 | 牌组 faucet:sink 构成 | `BankCredit` vs `BankDebit` 张数/金额比 | 经典约 **2~2.5:1**(起草期建议,**待经济平衡 pass 校验**) | faucet 过多→通胀冲刺、绕圈碰牌优于投资;过少→现金枯竭加速淘汰(伤支柱②/④) | **数据/平衡 pass**(CardData,非本 GDD 焊死) |
-| `per_house_fee` / `per_hotel_fee` ⚠prov | RepairFee 牌单价 | 典型 **25 / 100** | 过高→建房惩罚劝退建设;过低→无意义 | **数据/平衡 pass**(待建房8) |
+| `per_house_fee` / `per_hotel_fee` ⚠prov | RepairFee 牌单价 | 典型 **25 / 100** | 过高→建房惩罚劝退建设;过低→无意义 | **棋盘1 / 事件牌 CardData DA(owner 待 producer 裁定)** —— *非*建房8(F-7 不拥有数值真值);25/100 仅典型值,logged_decision propagate 债 |
 
 > **不在本系统的旋钮(指向真值源,不重复定义)**:
 > - 税额 `TaxAmount`(所得税 200 / 奢侈税 100)→ 棋盘(1)字段 / 经济(5) F-7 平衡。

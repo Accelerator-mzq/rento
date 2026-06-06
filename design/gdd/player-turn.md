@@ -160,7 +160,7 @@
 - **接口签名约定:** 经济 `is_insolvent(player, amount_due, preaggregated_nlv)` 接受**外部预聚合 NLV**,经济**不**反向调 8 枚举建筑(消 economy→8 环);预聚合 NLV 由本系统计算传入。
 - **与 CR-3.2 的区分:** CR-3.2 聚合对象 = 单格(`BuildOwnershipSnapshot` per-tile + `GetHouseCount(tile)`)供收租;CR-3.4 聚合对象 = 全组合(`GetPlayerBuildings(player)` 全枚举)供 NLV 计算。两条路径**并存不融合**,由不同业务触发(落地收租 vs 破产判定)。
 
-**CR-3.5 建房通告 beat(OQ-Build-6 RESOLVED):** `ResolvePhase` 监听建房(8) 广播 `OnBuildingChanged(tile, newCount, actingPlayerId)`,当收到此事件时(建/拆任一方向),本系统在当前回合 `ResolvePhase` 内广播**全玩家可见建房通告 beat**——至少携带:触发格 tile 名称、新 `house_count`、建筑归属玩家 id。通告内容是**信息层事件**,不修改任何游戏状态。
+**CR-3.5 建房通告 beat(OQ-Build-6 RESOLVED):** `ResolvePhase` 监听建房(8) 广播 `OnBuildingChanged(tile, newCount)`(**owner 建房8 为 2 字段权威契约,本系统只读 owner 实际产出的字段**),当收到此事件时(建/拆任一方向),本系统在当前回合 `ResolvePhase` 内广播**全玩家可见建房通告 beat**——至少携带:触发格 tile 名称、新 `house_count`、建筑归属玩家 id。**建筑归属玩家 id 由本系统从当前回合上下文取**(= 当前回合持有者 `CurrentPlayerId`,本系统作为回合 owner 本就权威持有;建房只在持有者自己回合的 `ResolvePhase`/`PostRollAction` 发生〔见触发时机〕,故归属玩家**恒等于**当前回合持有者——**不从 `OnBuildingChanged` 事件读 actingPlayerId 第3字段**,2026-06-06 用户裁定方案②,reconcile building8↔player-turn2 OnBuildingChanged 字段漂移,building 全档 2 字段不变)。通告内容是**信息层事件**,不修改任何游戏状态。
 
 - **触发时机:** `OnBuildingChanged` 在 `ResolvePhase`(含强制清算子相)或 `PostRollAction`(自愿建/拆)期间收到时,本系统 emit 通告;`TurnStart`/`TurnEnd` 不 emit(建房只在这两个阶段发生)。
 - **呈现职责归 HUD(16):** 通告 beat 的视觉/音效表现(如浮动文字、建房动画提示、全局 ticker)由 HUD(16) GDD 设计——本系统只 emit 事件并保证 payload 字段存在。**HUD(16) GDD 开工前须在 HUD 继承义务表登记此通告 beat 消费 AC**(producer propagation 债,尚无 HUD GDD 故暂登记于 systems-index 继承义务表)。
@@ -248,10 +248,19 @@
 | 破产胜负(9) | 本系统 `ResolvePhase` 在 `is_insolvent` 时调 `9.ResolveBankruptcy(debtor,creditor,snapshot)`→`{debtorEliminated,winnerId\|NONE,rankingEntry}`(**9 return-only,不回调本系统**);本系统据返回值置 `bIsBankrupt` + 移出轮转 + 触发 `OnGameWon(winnerId)` | 9 拥破产判定+胜负裁决+APC 计算;本系统拥 `bIsBankrupt` 字段写 + 流程/轮转 |
 | AI(10) | AI 玩家回合本系统发 `OnTurnStarted(bIsAI=true)`,AI 接管 `PostRollAction` 决策,完成回调结束回合 | AI 拥有决策 |
 | HUD(16) | 读 `PlayerState` 全字段 + 当前回合玩家 + 当前阶段 | HUD 拥有呈现 |
-| 主菜单大厅(20) | 开局传入玩家数/名/色/AI 档 → 本系统初始化 `PlayerState` 列表并定序 | 大厅配置,本系统建实体 |
+| 主菜单大厅(20) | 大厅经具名入口 `StartNewGame(const FGameSetupConfig&)` 传入玩家数/名/色/AI 档 → 本系统初始化 `PlayerState` 列表并定序(入口签名 + `FGameSetupConfig`/`FPlayerSetupEntry` 两 USTRUCT 归本系统,见下「开局入口契约」;OQ-Lobby-1 闭合 / propagate 2026-06-06) | 大厅配置,本系统建实体 |
 | 存档(21) | 序列化全部 `PlayerState` + 定序 + 当前回合玩家 + 当前阶段 + `ConsecutiveDoubles` | 存档拥有序列化 |
 
 **接口稳定承诺**:`PlayerState` 字段一旦发布只增不改语义;回合阶段枚举 `ETurnPhase` 通过扩展新增、不破坏既有转换。这是给 8 个尚未成形下游的稳定保证。
+
+> **开局入口契约(OQ-Lobby-1 闭合,producer /propagate-design-change 落定 2026-06-06):** 大厅(20)与本系统的开局握手由本系统具名入口承接,owner=本系统(与其他 `PlayerState` 构造逻辑同处):
+> - **入口签名:** `void StartNewGame(const FGameSetupConfig& Setup)` —— 大厅装配 `FGameSetupConfig` 后单次调用本系统;本系统据此初始化 `PlayerState` 列表(分配 `PlayerId` / `TokenColor` 唯一)、定序、置初始阶段。返回 void;开局拒绝路径(P<2 / P>4 / 越界)按 **AC-27** 防守(可返回错误码或拒绝,实现层定,见 L514)。
+> - **`FGameSetupConfig`**(`USTRUCT(BlueprintType)`,owner=回合2):整局开局配置载体。
+>   - `TArray<FPlayerSetupEntry> Players;` —— 玩家配置条目,尺寸即 `P`(动态,无硬编码 4,见 AC-13)。**`TArray` 字段须包进 USTRUCT**(`FPlayerSetupEntry` 已是 USTRUCT,合规;与 L257 dynamic delegate USTRUCT 约束同源——裸 `TArray` 不可作 BP 边界传参,此处经字段包裹满足)。
+>   - 旋钮覆盖(可选,与设置&House Rules(23) 对齐):`int32 DoublesJailThreshold;` / `int32 MaxTiebreakRounds;`(开局锁定,局中不可改,见 L421;缺省取本系统默认)。
+> - **`FPlayerSetupEntry`**(`USTRUCT(BlueprintType)`,owner=回合2):单玩家开局配置。
+>   - `FText DisplayName;`(玩家名,**字段名/类型与 L79 `PlayerState.DisplayName:FText` 一致**) / `EPlayerColor TokenColor;`(唯一分配) / `bool bIsAI;` / `EAIDifficulty AIDifficulty;`(非 AI 为 None)。
+> - **双向回链:** 大厅(20)GDD 须在其「开局/Interactions」节标明:经 `StartNewGame(const FGameSetupConfig&)` 调用本系统、`FGameSetupConfig`/`FPlayerSetupEntry` 归回合2(owner),大厅仅装配并传入(不定义 struct)。AC-13 接口名据此冻结。
 
 > **事件广播形态(R1 新增,推 OQ-1 ADR 钉死默认):** 8 个下游需挂接同一回合事件 = 1-对-多广播。事件(`OnTurnStarted`/`OnPhaseChanged`/`OnTurnEnded`/`OnGameWon`/`OnTurnOrderResolved`/`OnAIActionExecuted`(R2))应为 `DECLARE_DYNAMIC_MULTICAST_DELEGATE_*` + `UPROPERTY(BlueprintAssignable)`——UE 中 1-对-多、BP 与 C++ 均可绑定的标准模式。**不可**用 `BlueprintImplementableEvent`(1-对-1,多消费方无法同时挂接)。OQ-1 ADR 把此作为推荐默认。
 > ⚠ **delegate 参数类型约束(R2 新增,unreal;R3 补具体 payload 清单):** dynamic multicast delegate 的参数 struct **必须标 `USTRUCT(BlueprintType)`**(否则 BP `BlueprintAssignable` 绑定时编译报错);`TArray`/`TMap` **不能直接作** dynamic delegate 参数(须包进 USTRUCT)。具体 payload 清单(列为 OQ-1 ADR 决策因子 C-5/⑪,ADR 须显式列出):
@@ -416,7 +425,8 @@
 | AI(10) | 硬 | 消费 `OnTurnStarted(bIsAI)`,驱动 `PostRollAction` 决策;消费 `GameStateSnapshot`(OQ-1⑦,开工硬前提);**继承测试义务:AC-37b(同步决策+顺畅移交,N=1 ✅ 已由 AI(10) AC-46 回填 2026-06-04)+ RNG checklist + snapshot 字段齐备**;**须钉"三档 `AIDifficulty` 产生玩家可感知行为差异"契约(R3 OQ-6)** |
 | 俄罗斯轮盘(14) | 软(Alpha) | 读 `PlayerState`、挂接回合(索引已标 14 depends 2,9) |
 | HUD(16) | 硬 | 读 `PlayerState` 全字段 + 当前回合玩家 + 当前阶段;**消费 `OnAIActionExecuted(ActionIndex)`(非阻塞逐步播放 AI 买地/建房,按 ActionIndex 排序)+ `OnTurnOrderResolved`(席位裁定可见)+ `OnTurnEnded`(回合切换过场;payload `bGrantsExtraTurn` 区分"同玩家继续"vs"移交新玩家",两分支须各有动画 AC)**;**(R6 RETREAT:删除原 `OnAIActionPlaybackSegmentComplete` 回放完成回调义务——框架不再 gating,HUD 自主非阻塞呈现 AI 行动,见 Visual/Audio + OQ-8/OQ-9)**;**继承测试义务:AC-36(OnPhaseChanged 驱动 UI)+ AC-41 呈现侧 + AC-44 呈现侧(非阻塞展示 AI 行动)** |
-| 主菜单大厅(20) | 硬 | 开局配置玩家数/名/色/AI 档 → 初始化 `PlayerState` |
+| 游戏反馈 VFX(19) | 软(呈现层叶子) | 订阅 `OnPhaseChanged`(读 `ConsecutiveDoubles` 做双点庆祝/入狱警告差异化 + 定序语境抑制,payload 取值非属性轮询)+ `OnTurnStarted`(F-3 过期 epoch 主判据)+ `OnGameWon(WinnerId)`(胜利彩带/烟花 juice);视觉腿,不写本系统、不被回调(vfx-feedback CR-3/CR-7/OQ-VFX-7,R-1 揪出。**注:`OnBuildingAnnounced` 归 HUD banner,#19 不订阅**) |
+| 主菜单大厅(20) | 硬 | 开局配置玩家数/名/色/AI 档 → 经具名入口 `StartNewGame(const FGameSetupConfig&)` 初始化 `PlayerState`(入口 + `FGameSetupConfig`/`FPlayerSetupEntry` USTRUCT 归本系统,见「开局入口契约」;OQ-Lobby-1 闭合) |
 | 存档(21) | 硬 | 序列化全部 `PlayerState` + 定序 + 当前玩家 + 阶段 + `ConsecutiveDoubles` + 锁定阈值 + 完整 `FDiceRollResult`(含 Die1/Die2/Total/bIsDouble);**继承测试义务:AC-34(中途还原+重绑监听器)** |
 | 设置&House Rules(23) | 软(Alpha) | 可覆盖 `doubles_jail_threshold`/`max_tiebreak_rounds` 等旋钮(**开局锁定,局中不可改**) |
 
@@ -488,7 +498,7 @@
 - **AC-11** [Logic](GAP-3)下一玩家在狱(非破产)→仍获回合(路由 JailTurn),不跳过。
 - **AC-11b** [Logic](R1 新增,JailTurnsServed 计数时机)在狱玩家 JailTurn 进入时 JailTurnsServed 尚未变;事件格(7) mock 返回"留狱"后 +1;返回"出狱"时**不**增加(出狱无需计入)。明确计数发生在"确认留狱"后,非进入即 +1。
 - **AC-12** [Logic](**R-2to9 propagate 重写;R-2to9 RR 收紧——测本系统 `OnGameWon` 边沿幂等,非系统9 胜负逻辑**)fixture 注入可**连续返回**的 mock 破产9 `ResolveBankruptcy` + `OnGameWon` 监听计数器(初值 0)。WHEN ① 第一次返回 `{debtorEliminated=true, winnerId==B.PlayerId}`(末局 APC→1)→ 本系统据此触发;② **立即再次**以同 fixture 调 `ResolveBankruptcy` 返回**相同** `{debtorEliminated=true, winnerId==B.PlayerId}`(模拟意外重入 / 重试 / 终态后再查询)。THEN 监听计数**精确等于 1**——第一次触发,第二次因本系统已进 `Winner` 终态被边沿守卫拦截、**不重发**(CR-6 已规格化「终态不重发」,本 AC 是该规格的可测载体,非测未定义实现细节)。同时断言 F-1 守卫返回 INDEX_NONE。**时序前提(R-2to9 RR,REC-6):** 本系统须**先**完成 `bIsBankrupt` 写入(AC-40a③ 语义)→**再**触发 `OnGameWon`→**再**更新 F-1 输出;F-1 守卫返回 INDEX_NONE 隐含依赖此顺序,若实现乱序则 F-1 断言失败提示**时序 bug**(非 F-1 公式错误)。(注:胜负**判定**幂等归破产9 AC;本系统只测事件广播次数。)
-- **AC-13** [Logic] P=2 与 P=4 结构按 P 动态尺寸(无硬编码 4)。
+- **AC-13** [Logic] P=2 与 P=4 结构按 P 动态尺寸(无硬编码 4)。**(OQ-Lobby-1 闭合后接口名冻结,2026-06-06)** 经具名入口 `StartNewGame(const FGameSetupConfig&)` 注入 `Players.Num()∈{2,4}` 的 `FGameSetupConfig`,断言生成的 `PlayerState` 列表尺寸 == `Players.Num()`、`TurnOrderIndex` 覆盖 `0..P-1` 唯一(无硬编码 4,见 AC-28)。
 
 ### B. 公式(F-1~4)
 - **AC-14** [Logic] F-1 NextActivePlayer(2,4,{0,2,3})→3。
@@ -556,7 +566,7 @@
 
 - **AC-52** [Logic](building R4 propagate,CR-3.4 破产 NLV 全组合聚合 — 兑现 OQ-Build-2:economy 不调 8)GIVEN 玩家持有 2 格建筑(`GetPlayerBuildings` mock 返回 `[(tileA, 2), (tileB, 1)]`)及若干未抵押地,WHEN `ResolvePhase` Raising Funds 子相进入 `is_insolvent` 判断前,THEN 断言:① 调 `8.GetPlayerBuildings(player)` **恰 1 次**(全组合枚举);② `preaggregated_nlv` 计算正确(按 `house_count × floor(BuildingCost/2) + Σ MortgageValue(未抵押地)` 累加);③ 调 `economy.is_insolvent(player, amount_due, preaggregated_nlv)` **恰 1 次**,传入的 `preaggregated_nlv` 与上方计算值一致;④ **economy 模块内部未直接调用 `8.GetPlayerBuildings` 或 `8.GetHouseCount`**(zero economy→8 calls,spy 确认)。验证破产判据 NLV 聚合归本系统(CR-3.4)、非经济5 反向拉取、无 5→8 环。**纯 fixture、headless 可跑;mock 经济5 `is_insolvent` 接口可 spy。**
 
-- **AC-53** [Logic](building R4 propagate,CR-3.5 建房通告 beat — 兑现 OQ-Build-6)GIVEN 建房(8)在当前玩家 `ResolvePhase` 或 `PostRollAction` 期间广播 `OnBuildingChanged(tile=tileA, newCount=2, actingPlayerId=1)`,WHEN `ResolvePhase`/`PostRollAction` 阶段正在进行,THEN 断言:① 本系统向所有玩家可见的通告事件(暂命名 `OnBuildingAnnounced`)被广播 **==1 次**;② payload 至少含 `TileIndex`(或 tile 名称)、`NewHouseCount==2`、`ActingPlayerId==1`;③ 广播不修改任何 PlayerState 字段或地产/建筑状态(纯信息事件)。**对照组:** `OnBuildingChanged` 在 `TurnStart`/`TurnEnd` 期间触发(异常情形)→ 断言 `OnBuildingAnnounced` **不广播**(建房只在 ResolvePhase/PostRollAction 发生,此 guard 验证时机约束)。**呈现侧 AC(HUD 继承义务):HUD(16) GDD 须登记消费 `OnBuildingAnnounced` 的 AC,回链本 AC-53(producer propagation 债,待 HUD GDD 开工时履行)。纯 fixture、headless 可跑;mock OnBuildingChanged 注入可控触发时机。**
+- **AC-53** [Logic](building R4 propagate,CR-3.5 建房通告 beat — 兑现 OQ-Build-6)GIVEN 当前回合持有者 `CurrentPlayerId==1` ∧ 建房(8)在其 `ResolvePhase` 或 `PostRollAction` 期间广播 `OnBuildingChanged(tile=tileA, newCount=2)`(**2 字段 owner 契约,无 actingPlayerId**),WHEN `ResolvePhase`/`PostRollAction` 阶段正在进行,THEN 断言:① 本系统向所有玩家可见的通告事件(暂命名 `OnBuildingAnnounced`)被广播 **==1 次**;② payload 至少含 `TileIndex`(或 tile 名称)、`NewHouseCount==2`、`ActingPlayerId==1`(**`ActingPlayerId` 取自当前回合上下文 `CurrentPlayerId`,非 `OnBuildingChanged` 事件字段——方案②**);③ 广播不修改任何 PlayerState 字段或地产/建筑状态(纯信息事件)。**对照组:** `OnBuildingChanged` 在 `TurnStart`/`TurnEnd` 期间触发(异常情形)→ 断言 `OnBuildingAnnounced` **不广播**(建房只在 ResolvePhase/PostRollAction 发生,此 guard 验证时机约束)。**呈现侧 AC(HUD 继承义务):HUD(16) GDD 须登记消费 `OnBuildingAnnounced` 的 AC,回链本 AC-53(producer propagation 债,待 HUD GDD 开工时履行)。纯 fixture、headless 可跑;mock OnBuildingChanged 注入可控触发时机。**
 
 > **跨系统责任追踪(qa-lead,防责任真空):** AC-31 完整出狱流程、AC-34/36/37 的 BLOCKING 测试归下游(事件格7/存档21/HUD16/AI10),由 **OQ-T-1~4** 追踪回链(见 Open Questions),下游 GDD 审查时 qa-lead 核对回链承诺——避免重蹈 board-data 责任真空。
 

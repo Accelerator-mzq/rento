@@ -206,9 +206,10 @@
 | 拍卖(12)/命运之轮/俄罗斯轮盘(14) | 软(Alpha) | 经通用原语抽取(可种子化、可重放) |
 | VFX(19) | 硬 | 监听 `OnDiceRolled(FDiceRollResult)` 读 `Die1`/`Die2`/`Total` 呈现两骰翻滚 + juice |
 | HUD(16) | 软 | 可显示骰子结果数值(主要 juice 归 VFX19) |
+| 音频(22) | 软 | 监听 `OnDiceRolled(FDiceRollResult)` 读 `bIsDouble` 播掷骰翻滚音 + 双点强化/第3连警告音(呈现侧纯叶子,各订各播,声画分离;audio L214 已对齐) |
 | 存档(21) | 软 | MVP 不序列化当前 Seed(当前骰结果由回合2序列化完整 `FDiceRollResult` 含 Die1/Die2,见 B1);Full Vision 重放序列化当前 Seed `GetCurrentSeed()`(OQ-2) |
 
-> **双向一致性待同步(Phase 5):** systems-index 当前骰子(#3)被依赖方向标注不全——player-turn(2,已确认 depends-on 3)与移动(4,depends 1,2,3)已列;但事件格(7)/AI(10) 经"掷双点出狱"与"决策随机走此 RNG"也实质依赖本系统,索引未标。Phase 5 复核 systems-index 下游依赖标注(7/10 应补对 3 的依赖)。
+> **双向一致性待同步(Phase 5):** systems-index 当前骰子(#3)被依赖方向标注不全——player-turn(2,已确认 depends-on 3)与移动(4,depends 1,2,3)已列;但事件格(7)/AI(10) 经"掷双点出狱"与"决策随机走此 RNG"也实质依赖本系统,索引未标。Phase 5 复核 systems-index 下游依赖标注(7/10 应补对 3 的依赖)。**另:音频(22,Approved)经 `OnDiceRolled` 订阅本系统播掷骰音(audio L214),已于本表补列为下游消费方;index 继承义务表 / depended-on-by 侧的音频(22)回标由 producer 经 OQ-Audio-2 ① 闭合(脚注♫)。**
 
 ## Tuning Knobs
 

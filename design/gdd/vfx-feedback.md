@@ -1,6 +1,6 @@
 # 游戏反馈 VFX（Game Feedback VFX）
 
-> **Status**: In Design
+> **Status**: Approved（R-8 fresh `/design-review` 2026-06-06 = APPROVED_WITH_FOLLOWUPS；遗留 OQ-VFX-11/13/15/16 上游/架构债不阻开工，标定 hard gate 见 AC-21/OQ-VFX-3）
 > **Author**: msc + design-system agents
 > **Last Updated**: 2026-06-06
 > **Implements Pillar**: MDA Sensation（priority-4，juice 获得感）+ ① 桌游忠实（物理感反馈）+ ② 社交博弈（收租/破产/建房的可见戏剧性）

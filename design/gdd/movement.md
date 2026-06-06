@@ -168,6 +168,7 @@
 | AI(10) | 硬 | 读棋子位置 + `steps_between` 估值落点(经棋盘);AI 决策不改移动逻辑 |
 | HUD(16) | 硬 | 监听 `OnPawnMoveStarted`/`OnPawnLanded` 显示移动进度/落点提示 |
 | 游戏反馈 VFX(19) | 硬 | 监听 `OnPawnMoveStarted` 回放逐格 hop + 过 GO 高亮;`OnPawnLanded` 落地 juice |
+| 音频(22) | 软 | 监听 `OnPawnMoveStarted`/`OnPawnLanded` 播 hop 步进"哒哒"+ 落地"咚"音(呈现侧纯叶子,hop 节流;audio L216 已对齐) |
 | 存档(21) | 硬 | 序列化 `PlayerState.CurrentTileIndex`(经回合容器) |
 
 ### 移动(4)↔ 骰子/经济关系(orchestrated,非严格上下游)

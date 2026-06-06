@@ -114,12 +114,14 @@
 | 存档(21) | 序列化每玩家 `Cash` | 存档拥有序列化 |
 
 **事件(本系统广播,`DYNAMIC_MULTICAST_DELEGATE` + `BlueprintAssignable`,payload `USTRUCT(BlueprintType)`):**
-- `OnCashChanged(Player, OldCash, NewCash, EChangeReason)` — 任何现金变动(reason ∈ {Salary, Rent, Purchase, Mortgage, Unmortgage, Tax, Build, Trade, Bankruptcy})。HUD/VFX 挂接。
-- `OnRentPaid(Payer, Payee, Amount, TileIndex)` — 收租完成(供 VFX 金币飞溅 + 互坑反馈)。
+- `OnCashChanged(Player, OldCash, NewCash, EChangeReason)` — 任何现金变动(reason ∈ {Salary, Rent, Purchase, Mortgage, Unmortgage, Tax, Build, Trade, Bankruptcy})。HUD(16)/VFX(19)/音频(22) 挂接。
+- `OnRentPaid(Payer, Payee, Amount, TileIndex)` — 收租完成(供 VFX(19) 金币飞溅 + 音频(22) 收租音效 + 互坑反馈)。
 - `OnInsufficientFunds(Player, AmountDue, AmountShort)` — 进入 Raising Funds 瞬态(供 UI 弹"需筹资"、回合阻塞)。
 - `OnBankruptcyDeclared(Debtor, Creditor)` — 破产结算转移完成时广播(裁决归 9,本系统在执行完**现金侧**转移后广播金钱侧完成;地产归属转移由 9 经 6 执行)。
 
 **接口稳定承诺:** `Credit`/`Debit`/`GetCash`/`GetUnmortgageCostForDisplay`(纯函数只读,R-2 新增)签名稳定;事件 payload 字段只增不改语义;`EChangeReason` 枚举只扩不改既有项(给下游 6/7/8/9/16/17/19/21 的稳定保证)。
+>
+> **方向 reconcile 裁定(#22 propagate,VFX19 CR-5 / audio CR-4 三档同步)**:本系统**不为收/付方向扩枚举**——`EChangeReason` 维持九值无方向位(`Rent` 收/付共用一值)。下游收/付方向**一律从 payload 派生**:`OnCashChanged` 的 `NewCash−OldCash` delta 符号定数字正负向(AC-33)+ `OnRentPaid` 的 `Payer/Payee` 视角定金币飞溅方向(AC-34)。下游 VFX19 CR-5 / audio22 CR-4 的 reason 分类表须以本枚举**真实九值**为键(`Salary`/`Rent`/`Purchase`/`Mortgage`/`Unmortgage`/`Tax`/`Build`/`Trade`/`Bankruptcy`),不得用 `RentReceived`/`RentPaid`/`PassGo`/`JailFine`/`BuildCost` 等本枚举未定义的方向子值/别名;方向另从上述 delta/视角派生。详见 Visual/Audio Requirements「好/坏语境」节。
 
 **禁双重发薪/双重收租(防御契约):** 发薪唯一由 `passed_go>0` 授权(CR-2);收租唯一由"他人拥有且未抵押的落地"授权(CR-3)。任何系统不得绕过本系统接口直接改 `Cash`(受控写,沿用 player-turn AC-35 软/硬约束)。
 
@@ -329,6 +331,7 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行**现金侧**结
 | HUD(16) | 硬 | 监听 `OnCashChanged` 显示现金、应付额提示 |
 | 地产卡 UI(17) | 软(R-2 新增) | 调纯函数 `GetUnmortgageCostForDisplay(MV)` 显示赎回价(OQ-PC-8);**F-1 同构维护债(OQ-PC-11)**:本系统改租金 piecewise 须触发 #17 重核 F-1/AC-11 |
 | 游戏反馈 VFX(19) | 硬 | 监听 `OnRentPaid`/`OnCashChanged`/`OnBankruptcyDeclared` 呈现金币 juice |
+| 音频(22) | 软 | 监听 `OnRentPaid`(金币哗啦)/`OnCashChanged`(据 `EChangeReason` 正负音色)/`OnBankruptcyDeclared`(破产音+BGM duck)播音(呈现侧纯叶子,各订各播;audio L217 已对齐) |
 | 存档(21) | 硬 | 序列化每玩家 `Cash` |
 | 交易(11)/拍卖(12)/命运之轮(13)/策略卡(15) | 软(Alpha) | 玩家间转移/中标扣款/奖惩现金经本系统结算 |
 | 教程(24) | 软(Alpha) | 引导买地/收租示例经本系统 |
@@ -370,7 +373,7 @@ M-3,经典忠实简化;裁决/出局归破产(9),本系统执行**现金侧**结
 
 - **端到端 owner = VFX(19)/HUD(16)**:收租金币飞溅、发薪入账、抵押放款、破产清算的 juice 与音效。具体动画/数值/时长归 VFX19/audio22。
 - **本系统义务边界**:提供权威结算 + 事件(`OnCashChanged`/`OnRentPaid`/`OnInsufficientFunds`/`OnBankruptcyDeclared`)+ 结果在动画开始前已产出(同步结算)。呈现层只回放既定结果,不影响金额逻辑。
-- **好/坏语境**:`OnCashChanged.EChangeReason` 已携带语境(Salary 入账=正面 / Rent 付出=肉痛 / Bankruptcy=清算),VFX 据 reason 区分庆祝 vs 肉痛反馈,不需额外接口。
+- **好/坏语境(方向派生契约,#22/#19 reconcile,源 VFX19 CR-5 / audio CR-4)**:`OnCashChanged.EChangeReason` 携带**类型**语境但**不携带收/付方向位**——`Rent` 是单一无方向枚举值(一次收租广播 2 次 `OnCashChanged`:Payer 与 Payee 各一,AC-37,reason 均 `Rent`)。下游(VFX19/audio22)**一律靠 payload 自行派生方向,不依赖 reason 区分正负向**:① 现金数字色/音色正负 = **`OnCashChanged` 的 `NewCash−OldCash` delta 符号**(>0=正向金色/上扬,<0=负向红色/下沉,AC-33 已保证 delta 与实际变化等值);② 收租金币飞溅方向 = **`OnRentPaid` 的 `Payer→Payee` 视角**(Payer=肉痛、Payee=入账,AC-34 四字段权威)。`EChangeReason` 仅供下游做**类型分类**(Salary/Rent/Purchase/Mortgage/Unmortgage/Tax/Build/Trade/Bankruptcy 九值,映射 art-bible 状态),方向不入枚举——故无需 `RentReceived`/`RentPaid` 之类方向子值,亦不需额外接口。
 - **回链**:登记 systems-index 继承义务表(VFX19/HUD16 行),类比 dice OQ-T-Dice-4 模式——"收租金币飞溅"priority-4 Sensation 须有 GDD 端到端负责(VFX19),避免"标记事实却无载体=不可测真空"。
 
 > 📌 **Asset Spec**:art bible 批准后,可运行 `/asset-spec system:economy-cash` 产出金币/现金 UI 的视觉规格(若需要)。

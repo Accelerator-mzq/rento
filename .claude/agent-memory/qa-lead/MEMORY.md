@@ -1,3 +1,4 @@
 - [Board Data GDD 审查结果](project_board_data_gdd.md) — 4个BLOCKING AC问题(P-1~P-4)，含标签错误/缺口/不可测，数学验算全通过
 - [Player Turn GDD AC 校验](project_player_turn_gdd.md) — 10个BLOCKING缺口+2个标签错误，草案25条→建议35条(30 Logic+5 Advisory)
 - [Dice GDD 审查史 R1→R3](project_dice_gdd.md) — R3 散文收敛/design-approvable;唯一 BLOCKING 落 systems-index(5 OQ-T-Dice 未登记);propagate 未执行=实现阻塞
+- [AI对手 R-4 fresh-eyes复审](project_ai_opponent_r4_review.md) — 5+1修订全落权威层，2 BLOCKING残渣(AC-9 stale Buffer_max=1400 / AC-23缺IsCompletionTile=false前提)+1 Advisory(AC-60b散文断言)

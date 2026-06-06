@@ -1,8 +1,8 @@
 # AI 对手 (AI Opponent)
 
-> **Status**: In Design
+> **Status**: Approved (R-6 fresh 五专家隔离 `/design-review` 2026-06-06 = 收敛,verified_blockers=0,F-4 接缝闭合)。**过批纠正闭环:** R-3 过批(APPROVED_WITH_FOLLOWUPS 误标)→ R-4 揪 F-4 unlock 守卫接缝(AC-64 不可达)→ R-5 F-4 二次 peel(unlock×F-5b 双发 Unmortgage)→ 用户裁定 **RETREAT/方案B**(F-4 unlock-then-build 多步协调 MVP 砍掉)→ R-6 fresh 复审验证 unlock-then-build 已砍、接缝从根消除、F-5b 保留、unlock-then-build 降 Alpha OQ-AI-10,收敛归零。F-4 的「unmortgage→解锁→建房」多步跨动作协调连续两轮 peel(R-4/R-5 新接缝),为 **MVP 简化砍掉**(user 裁定)。**已就地退回:** ① F-4 贪心循环删除 unlock 候选分支(解锁候选谓词 `IsUnlockCand`、赎回后首栋 BuildScore 代入 argmax、`emit Unmortgage(A)` 赎回前置路径全删),退回**单门简单贪心**(只枚举 `CanBuildHouse` 候选、单一现金门 `Cash − BuildingCost ≥ Buffer`);② 删联合现金门 `Cash − unmortgage_cost(A) − BuildingCost(B) ≥ Buffer` 全部规格;③ 删 AC-64(unlock-then-build 正向)/AC-65(负向),AC 合计 71→69;④ F-4 变量表删仅服务 unlock 的 `unmortgage_cost(A)`(保留 `BuildingCost`,普通建房门仍用);⑤ 新增 OQ-AI-10 诚实标注「主动赎回-解锁-建房多步协调 deferred Alpha」。**RETREAT 后 F-4 不再 emit Unmortgage**,AI 主动赎回唯一路径=F-5b `ShouldUnmortgage`(还债/现金纪律),**同格双发 Unmortgage 的接缝已从根上消除**(R-5 BLOCKING 失效:无第二条赎回路径可双发)。F-5b 主动赎回 / F-3 IsCompletionTile 补全格买地豁免 / Buffer_max / AC-11b / AC-61a-b 全保留不动。详见 ai-opponent-review-log.md R-6 条目。
 > **Author**: msc + design-system agents
-> **Last Updated**: 2026-06-04
+> **Last Updated**: 2026-06-06
 > **Implements Pillar**: ③ 运气×策略交织(AI 提供策略对抗面)+ ④ 易上手(难度分级让休闲玩家也能赢)
 
 ## Overview
@@ -116,11 +116,11 @@ AI **无跨调用持久状态机**——每次 hook 调用是对当前 snapshot 
 | `Rent_top1`/`Rent_top2` | int32 | [0,2000] | 全盘对手未抵押地产单次租金前两高(piecewise 注册表口径) |
 | `MaxRentExposure` | int32 | [0,4000] | top-2 之和;开局/全抵押=0 |
 | `Buffer_min` | int32 | [50,400] | 绝对下限(≥保释金50) |
-| `Buffer_max` | int32 | [600,2200] | 防过度保守上限(抬高以免中后期 clamp 钉死、丧失 B_frac 档位语义) |
+| `Buffer_max` | int32 | [600,≥2700] | 防过度保守上限(抬高以免中后期 clamp 钉死、丧失 B_frac 档位语义;Sharp≥2700、Normal≥1800) |
 | `Buffer` | int32 | [Buffer_min,Buffer_max] | AI 目标最低持有现金 |
 
-**Output Range:** [Buffer_min, Buffer_max],永不负。**退化守卫:** 开局/全抵押 MaxRentExposure=0 → Buffer=Buffer_min;仅一块对手地产 → Rent_top2=0、MaxRentExposure=Rent_top1。**随局推进自然放大**(中后期酒店租高→Buffer 抬高)。**Buffer_max 上界抬至 [600,2200] 后,Sharp(B_frac=1.5)遇中后期酒店租不再被 clamp 钉死,三档 B_frac 语义在全程保持可分(economy R-review B-3 修复)。**
-**Example(Normal,B_frac=1.0,Buffer_max=1400):** 对手两高未抵押租金=橙组酒店租 1050 + 红组带房租 550 → MaxRentExposure=1600 → `Buffer = clamp(floor(1.0×1600),150,1400) = 1400`。
+**Output Range:** [Buffer_min, Buffer_max],永不负。**退化守卫:** 开局/全抵押 MaxRentExposure=0 → Buffer=Buffer_min;仅一块对手地产 → Rent_top2=0、MaxRentExposure=Rent_top1。**随局推进自然放大**(中后期酒店租高→Buffer 抬高)。**Buffer_max 上界抬至 Sharp=2700/Normal=1800 后:MaxRentExposure=1600(文档自有 Example 暴露水平)时 Sharp=floor(1.5×1600)=2400(未 clamp)、Normal=floor(1.0×1600)=1600(未 clamp),比例=2400:1600=1.5:1.0 精确;旧值 1800/1400 在该暴露量下双双触 clamp、差值塌为固定 400,50% 语义丢失——R2 BLOCKING #1 修复。Normal≥1800 保证 MaxRentExposure≤1800 时 Normal 侧不被 clamp 钉死;更高暴露量 Sharp 侧同理。**
+**Example(Normal,B_frac=1.0,Buffer_max=1800):** 对手两高未抵押租金=橙组酒店租 1050 + 红组带房租 550 → MaxRentExposure=1600 → `Buffer = clamp(floor(1.0×1600),150,1800) = 1600`(未 clamp)。
 
 ### F-2 Buy Score(买地效用,4 项)
 
@@ -151,17 +151,24 @@ AI **无跨调用持久状态机**——每次 hook 调用是对当前 snapshot 
 
 ### F-3 Buy Decision(买地决策)
 
-`FinalScore = BuyScore + RNG.RandRange(−Epsilon,+Epsilon)`(seedable,走骰子3)
+`IsCompletionTile = ((HeldInGroup + 1) == GroupSize)`(买下此格即补全垄断组谓词)
+```
+if IsCompletionTile then
+    FinalScore = BuyScore           -- 补全格:跳过 ε 扰动,确定性最优(路线 A,R2 BLOCKING #4a 修复)
+else
+    FinalScore = BuyScore + RNG.RandRange(−Epsilon, +Epsilon)   -- 非补全格:加受控随机扰动
+```
 `DecideBuy = (FinalScore ≥ BuyThreshold) ∧ (Cash − PurchasePrice ≥ Buffer)`
 
 | 变量 | 类型 | 范围 | 含义 |
 |---|---|---|---|
-| `Epsilon` | int32 | [0,20] | 扰动幅度(F-7);Sharp=0 最优、Casual=15 人性化漏买 |
+| `IsCompletionTile` | bool | {T,F} | 买下此格即补全垄断组谓词(`HeldInGroup+1==GroupSize`) |
+| `Epsilon` | int32 | [0,20] | 扰动幅度(F-7);Sharp=0 最优、Casual=15 人性化漏买;**仅作用于非补全格** |
 | `BuyThreshold` | int32 | [3,25] | 决策门槛(F-7) |
 | `DecideBuy` | bool | {T,F} | 最终决定 |
 
-**双门:** ① 效用门(受扰动)② 硬现金门(不受扰动)。两条同时满足才买。**Output Range:** bool。**退化守卫:** `Cash<PurchasePrice` → 现金门直接 false,不进评分。
-**Example(Normal:Epsilon=7/BuyThreshold=10;承 F-2 BuyScore=26,Buffer=600 早期态):** Perturbation=−3(示例种子)→ FinalScore=23 ≥ 10 ✓;Cash−Price=720 ≥ Buffer=600 ✓ → `DecideBuy=true`。
+**双门:** ① 效用门(补全格=确定 BuyScore,非补全格=受扰动)② 硬现金门(不受扰动)。两条同时满足才买。**补全格短路:** Casual 档 Epsilon=15 的"人性化失误"**不得漏买垄断补全格**(AC-60b 契约)——F-3 在公式层保证:IsCompletionTile 时跳过 ε,BuyScore 高垄断补全格天然超 BuyThreshold,AC-59 硬底线双保险。**Output Range:** bool。**退化守卫:** `Cash<PurchasePrice` → 现金门直接 false,不进评分;`GroupSize<1` → IsCompletionTile=false(对称 F-2 守卫)。
+**Example(Normal:Epsilon=7/BuyThreshold=10;承 F-2 BuyScore=26,Buffer=600 早期态,非补全格):** Perturbation=−3(示例种子)→ FinalScore=23 ≥ 10 ✓;Cash−Price=720 ≥ Buffer=600 ✓ → `DecideBuy=true`。
 
 ### F-4 Build Priority(`DecidePostRollActions` 建房)
 
@@ -178,10 +185,19 @@ AI **无跨调用持久状态机**——每次 hook 调用是对当前 snapshot 
 | `CompletionBonus` | int32 | {0,50} | 全组齐档奖励 |
 | `W_build_rent`/`W_build_mono` | int32 | 见 F-7 | 权重 |
 | `BuildScore` | int32 | [0,~2500] | 建房优先级 |
+| `BuildingCost` | int32 | 注册表口径(来源 building-8/economy-5,每档一单位、棋盘1供值) | 建一栋房费用(贪心循环现金门操作数) |
 
-**贪心循环:** `while ∃ CanBuildHouse 候选: best=argmax BuildScore; if Cash−BuildingCost(best)<Buffer: break; else BuildHouse(best)`。
-**解锁建房的前置赎回(ai-programmer R-review R-3,防整组瘫痪蠢招):** 若某垄断组有格被抵押致 `CanBuildHouse==false`、而赎回它即可解锁整组建房,贪心候选集**纳入"赎回该格"作为前置动作**(经 F-5b 现金门评估),排序保证"赎回→建房"同窗级联——防"垄断组单格抵押致整组瘫痪、现金充裕却不建房"(与 AC-58 协同;此为单 hook 内可达的跨动作协调,非 OQ-AI-9 的跨 hook 融资盲区)。
-**⚠ AI 内部模拟均衡约束(max−min≤1)生成合法建房序列**——不把均衡校验完全甩给执行层兜底(economy R-review Risk-2;呼应 CR-7,minimize 不可行返回;一致性回归守护见 AC-63)。**Output Range:** [0,~2500]。
+**贪心循环(单门简单贪心,R-6 RETREAT/方案B——MVP 砍掉 unlock 解锁分支):**
+```
+loop:
+    -- 候选集 = 仅 CanBuildHouse 候选(谓词归建房8、含均衡约束);不含 unlock 解锁候选(R-6 RETREAT 已删)
+    Cands := { c | CanBuildHouse(c, AI) }
+    if Cands == ∅: break
+    best := argmax_{c ∈ Cands} BuildScore(c)
+    if Cash − BuildingCost(best) < Buffer: break        -- 单一现金门(花完后须 ≥ Buffer)
+    else: emit BuildHouse(best); Cash −= BuildingCost(best); 重评 CanBuildHouse 集
+```
+> **单门简单贪心(R-6 RETREAT 后):** F-4 只评估 `CanBuildHouse` 候选(已解锁、可立即建房的格),用**单一现金门** `Cash − BuildingCost(best) ≥ Buffer` 决定是否建。**F-4 不再 emit Unmortgage、不再为建房而主动赎回**——抵押格的解锁靠 F-5b(`ShouldUnmortgage`,还债/现金纪律顺带赎回垄断组),不做"为建 B 而赎 A"的跨动作协调(MVP 范围诚实,见 OQ-AI-10)。**⚠ AI 内部模拟均衡约束(max−min≤1)生成合法建房序列**——不把均衡校验完全甩给执行层兜底(economy R-review Risk-2;呼应 CR-7,minimize 不可行返回;一致性回归守护见 AC-63)。**Output Range:** [0,~2500]。
 **Example(Normal:W_build_rent=2/W_build_mono=1;橙组 house=[1,1,1]、目标格 RentTable=[14,10,30,90,160,250]):** RentGain=RentTable[2]−RentTable[1]=30−10=20;建后[2,1,1] 非齐档→CompletionBonus=0。`BuildScore = 2×20+1×0 = 40`。
 
 ### F-5 Mortgage / Unmortgage(反 churn)
@@ -226,7 +242,7 @@ AI **无跨调用持久状态机**——每次 hook 调用是对当前 snapshot 
 |---|---|---|---|---|
 | `B_frac`(F-1) | 0.6 | 1.0 | 1.5 | 0.3–2.0 |
 | `Buffer_min`(F-1) | 50 | 150 | 250 | 50–400 |
-| `Buffer_max`(F-1) | 700 | 1400 | 1800 | 600–2200 |
+| `Buffer_max`(F-1) | 700 | 1800 | 2700 | 600–≥2700 |
 | `BuyThreshold`(F-3) | 5 | 10 | 15 | 3–25 |
 | `Epsilon`(F-3) | 15 | 7 | 0 | 0–20 |
 | `W_rent`(F-2) | 1 | 2 | 3 | 1–5 |
@@ -338,24 +354,25 @@ AI **无跨调用持久状态机**——每次 hook 调用是对当前 snapshot 
 
 ### B. 三 Hook 契约(CR-2,CR-6)
 
-- **AC-5** `[Logic·CI-stub]`(CR-2/CR-6,依赖 OQ-1 ADR)**GIVEN** 含 `DecideBuyProperty` 所需全字段(Cash/PurchasePrice/ColorGroup/HeldInGroup/GroupSize/各格归属)的完整 snapshot,**WHEN** 调用,**THEN** 返回 true/false(不 crash/不 null)、不写外部状态。
-- **AC-6** `[Logic·CI-stub]`(CR-2/CR-6,依赖 OQ-1 ADR)**GIVEN** 含 `DecidePostRollActions` 全字段(Cash/house_count/is_mortgaged/is_monopoly/BuildingCost/MortgageValue/unmortgage_cost/组内 house_count/preaggregated_nlv)的 snapshot,**WHEN** 调用,**THEN** 返回 `TArray<FTurnAction>`(动作类型∈{BuildHouse,Mortgage,Unmortgage})、不 crash、不写外部状态。
-- **AC-7** `[Logic·CI-stub]`(CR-2/CR-6,依赖 OQ-1 ADR)**GIVEN** 含 `DecideJailAction` 全字段(Cash/JAIL_BAIL_AMOUNT/bHasJailCard/JailTurnsServed/停租态势)的 snapshot,**WHEN** 调用,**THEN** 返回 `EJailAction`∈{PayBail,UseCard,RollDouble}、不 crash、不写外部状态。
+- **AC-5** `[Logic·CI-stub]`(CR-2/CR-6,依赖 OQ-1 ADR)**GIVEN** 含 `DecideBuyProperty` 所需全字段(Cash/PurchasePrice/ColorGroup/HeldInGroup/GroupSize/各格归属/**Rent_top1=500/Rent_top2=300**(算 F-1 Buffer)/**starting_cash=1500**(F-2 LiquidationDiscount 分母);CI-stub 阶段用固定 placeholder,OQ-1 ADR 关闭后换真实注入)的完整 snapshot,**WHEN** 调用,**THEN** 返回 true/false(不 crash/不 null)、不写外部状态。
+- **AC-6** `[Logic·CI-stub]`(CR-2/CR-6,依赖 OQ-1 ADR)**GIVEN** 含 `DecidePostRollActions` 全字段(Cash/house_count/is_mortgaged/is_monopoly/BuildingCost/MortgageValue/unmortgage_cost/组内 house_count/preaggregated_nlv/**Rent_top1=500/Rent_top2=300**(算 F-1 Buffer);CI-stub 用固定 placeholder,OQ-1 ADR 关闭后换真实注入)的 snapshot,**WHEN** 调用,**THEN** 返回 `TArray<FTurnAction>`(动作类型∈{BuildHouse,Mortgage,Unmortgage})、不 crash、不写外部状态。
+- **AC-7** `[Logic·CI-stub]`(CR-2/CR-6,依赖 OQ-1 ADR)**GIVEN** 含 `DecideJailAction` 全字段(Cash/JAIL_BAIL_AMOUNT/bHasJailCard/JailTurnsServed/停租态势/**owner_map**(全盘归属,算 F-6 BoardDensity)/**board_tile_count_classic=40**(经典棋盘总格数)/**Rent_top1=500/Rent_top2=300**(算 F-1 Buffer,F-6 步骤2 现金门所需);CI-stub 用固定 placeholder,OQ-1 ADR 关闭后换真实注入)的 snapshot,**WHEN** 调用,**THEN** 返回 `EJailAction`∈{PayBail,UseCard,RollDouble}、不 crash、不写外部状态。
 - **AC-8** `[Logic]`(CR-2,空数组 noop)**GIVEN** 无垄断组、Cash<Buffer 的 snapshot,**WHEN** 调 `DecidePostRollActions`,**THEN** 返回 `[]`,框架后续 EndTurn 被调、不挂起(验证 player-turn AC-37d 契约)。
 
 ### C. 公式边界值(F-1..F-6)
 
 - **AC-9** `[Logic]`(F-1 退化:空棋盘)**GIVEN** MaxRentExposure=0、B_frac=1.0、Buffer_min=150、Buffer_max=1400,**WHEN** 算 Buffer,**THEN** Buffer==150(下界守卫,永不负)。
-- **AC-10** `[Logic]`(F-1 正常,top-2)**GIVEN** Rent_top1=1050、Rent_top2=550(MaxRentExposure=1600)、B_frac=1.0、Buffer_max=1400,**WHEN** 算 Buffer,**THEN** Buffer==1400(GDD Example)。
+- **AC-10** `[Logic]`(F-1 正常,top-2,Normal 未 clamp)**GIVEN** Rent_top1=1050、Rent_top2=550(MaxRentExposure=1600)、B_frac=1.0、Buffer_min=150、Buffer_max=1800(Normal 新值),**WHEN** 算 Buffer,**THEN** Buffer==1600(GDD Example;floor(1.0×1600)=1600<1800,未 clamp——与 AC-11b 一致)。
 - **AC-10b** `[Logic]`(F-1 top-2 退化:仅一块对手地产)**GIVEN** Rent_top1=400、Rent_top2=0(仅一块对手未抵押地)、B_frac=1.0、Buffer_min=150,**WHEN** 算 Buffer,**THEN** Buffer==400(MaxRentExposure=Rent_top1)。
-- **AC-11** `[Logic]`(F-1 上界 clamp)**GIVEN** MaxRentExposure=800、B_frac=3.0、Buffer_max=1800,**WHEN** 算 Buffer,**THEN** Buffer==1800(floor(2400) 夹至上界)。
+- **AC-11** `[Logic]`(F-1 上界 clamp)**GIVEN** MaxRentExposure=800、B_frac=4.0、Buffer_max=2700(Sharp),**WHEN** 算 Buffer,**THEN** Buffer==2700(floor(3200) 夹至上界)。
+- **AC-11b** `[Logic]`(F-1 Sharp/Normal 1.5:1.0 比例守护,R2 BLOCKING #1 修复验证)**GIVEN** Rent_top1=1050、Rent_top2=550(MaxRentExposure=1600)、Sharp(B_frac=1.5,Buffer_max=2700)与 Normal(B_frac=1.0,Buffer_max=1800)各自算 Buffer,**WHEN** 分别求值,**THEN** Sharp_Buffer=2400 ∧ Normal_Buffer=1600 ∧ `Sharp_Buffer * 2 == Normal_Buffer * 3`(整数等价式:2400×2=4800==1600×3=4800,纯 int32 可证伪——Buffer 在 F-7/F-1 为 int32,直接断言 `Sharp/Normal==1.5` 会因整数除 2400/1600=1 恒 FAIL 或被实现者写成 `2400==2400` 绕过而 vacuous-green,故必须用乘法消除整数除;若须 float 验比例则显式 `abs(float(Sharp)/float(Normal) − 1.5f) < 0.001f`,比例精确非固定 400 差);两侧均未触 clamp(2400<2700 ✓、1600<1800 ✓)。
 - **AC-12** `[Logic]`(F-1 永不负)**GIVEN** B_frac=0.3、MaxRentExposure=0、Buffer_min=50,**WHEN** 算 Buffer,**THEN** Buffer>=0(floor(0)→clamp 50)。
 - **AC-13** `[Logic]`(F-2 RentPotential 退化)**GIVEN** PurchasePrice=0,**WHEN** 算 RentPotential,**THEN** ==0(不除零 crash)。
 - **AC-14** `[Logic]`(F-2 GroupSize<1 退化)**GIVEN** GroupSize=0,**WHEN** 算 MonopolyProgress,**THEN** ==1(空集守门)。
 - **AC-15** `[Logic]`(F-2 BlockingValue Normal/Sharp)**GIVEN** OppMaxInGroup=GroupSize−1=2、该格无主,**WHEN** Normal 算 BlockingValue,**THEN** ==10(抢最后一格满分)。
 - **AC-16** `[Logic]`(F-2 Casual W_block=0)**GIVEN** 同上 fixture,**WHEN** Casual(W_block=0),**THEN** BlockingValue 贡献==0(不卡位)。
 - **AC-17** `[Logic]`(F-2 LiquidationDiscount 上界)**GIVEN** Cash=9999、PurchasePrice=60、Buffer=150、starting_cash=1500,**WHEN** 算,**THEN** ==10(clamp 上界)。
-- **AC-18** `[Logic]`(F-2 下界)**GIVEN** Cash=200、PurchasePrice=300、Buffer=150,**WHEN** 算 LiquidationDiscount,**THEN** ==−10(clamp 下界)。
+- **AC-18** `[Logic]`(F-2 LiquidationDiscount 实算)**GIVEN** Cash=200、PurchasePrice=300、Buffer=150、starting_cash=1500,**WHEN** 算 LiquidationDiscount,**THEN** ==−2(floor((200−300−150)×10/1500)=floor(−250×10/1500)=floor(−1.667)=−2,clamp(−2,−10,10)=−2;未触下界——**AC-18 旧值 ==−10 为 fixture 算术错误,实算 −2 非 −10**)。若需验下界 −10 需令 Cash−Price−Buffer≤−1500,如 Cash=0/Price=1600/Buffer=0/starting_cash=1500:floor(−16000/1500)=floor(−10.67)=−11→clamp=−10 ✓。
 - **AC-19** `[Logic]`(F-2 GDD Example,归一后)**GIVEN** Normal(2/3/2/2)、橙组中间格(180,base14,Held=1,GroupSize=3,无对手,Cash=900,Buffer=600),**WHEN** 算 BuyScore,**THEN** ==26(RentPotential=7/Mono=4/Block=0/Liq=0;RentPotential 占 54%、Mono 占 46%,量纲可比)。
 - **AC-20** `[Logic]`(F-3 现金门硬排除)**GIVEN** Cash<PurchasePrice,**WHEN** 调 DecideBuyProperty,**THEN** false(不进评分,现金门短路)。
 - **AC-21** `[Logic]`(F-3 双门满足)**GIVEN** Sharp(Epsilon=0,Threshold=15)、BuyScore=20、现金门过,**WHEN** 决策,**THEN** true。
@@ -414,13 +431,15 @@ AI **无跨调用持久状态机**——每次 hook 调用是对当前 snapshot 
 - **AC-58** `[Logic]`(反幻想①:现金充裕集组必建房,qa R-review B-3——concept 头号风险可枚举硬底线)**GIVEN** Cash≥BuildingCost+Buffer ∧ 持至少一个垄断组(组内全未抵押)∧ 该组未达均衡上限,**WHEN** 调 `DecidePostRollActions`,**THEN** 返回序列含 ≥1 条 `BuildHouse`(不得"现金充裕集组却不建房")。
 - **AC-59** `[Logic]`(反幻想②:可补全垄断的最后一格必买,qa R-review B-3)**GIVEN** 候选无主地是某垄断组的最后一格(买下即垄断)∧ `Cash−PurchasePrice≥Buffer` ∧ **非 Casual 档**,**WHEN** 调 `DecideBuyProperty`,**THEN** true(不得"放着能集的垄断组不买")。
 - **AC-60** `[Logic]`(反幻想③:不为烂地抵押黄金地段,F-5a 守卫的反幻想独立回归断言,qa R-review B-3)**GIVEN** 同时存在可抵押的非垄断空房地与垄断组黄金地、AI 需筹现,**WHEN** 评估 `ShouldMortgage`,**THEN** 选非垄断地、**绝不选垄断组**。
-- **AC-60b** `[Logic]`(Casual 失误守卫:人性化≠犯蠢,game-designer R-review GD-B2)**GIVEN** Casual 档、候选无主地是某垄断组**补全格**(MonopolyProgress 满分)且现金门满足,**WHEN** ε 扰动求值,**THEN** AI **不得**因纯 ε 扰动漏买该补全格(扰动仅作用于非补全格的边际决策)——Casual"人性化失误"限定在边际,不触 concept 点名反幻想。
-- **AC-61** `[Integration]`(权威 RNG 流隔离 + 全回合重放,CR-5④,ai-programmer R-review B-3)**GIVEN** 不重置 seed 的完整多回合序列(掷骰→AI 决策→掷骰→…),**WHEN** 连跑两次,**THEN** ① 两次逐步全同(端到端重放,非仅孤立 hook);② spy 断言权威流消费方 ∈ {dice,AI},呈现层(VFX/HUD juice)未消费权威流。补 AC-42(重置 seed 的孤立 hook 重放)未覆盖的"流共享端到端"盲区。
+- **AC-60b** `[Logic]`(Casual 失误守卫:人性化≠犯蠢,game-designer R-review GD-B2,R2 BLOCKING #4a 修复)**GIVEN** Casual 档、候选无主地是某垄断组**补全格**(`IsCompletionTile==true`,F-3 谓词)且现金门满足,**WHEN** F-3 分支求值(因 IsCompletionTile=true 走短路,FinalScore=BuyScore,不加 ε),**THEN** AI **不得**因纯 ε 扰动漏买该补全格——F-3 公式层保证(短路分支不消耗 RNG/不加 ε),AC-59 双保险;Casual"人性化失误"限定在非补全格边际决策,不触 concept 点名反幻想。
+- **AC-61a** `[Logic]`(权威 RNG 流端到端重放——headless 隔离,CR-5④,R2 BLOCKING #3 修复)**GIVEN** 仅含骰子(3)RNG + AI 决策的隔离环境(无 VFX/HUD,headless `-nullrhi`),固定 seed,**WHEN** 连跑两次完整多回合序列(掷骰→AI 决策→掷骰→…),**THEN** 两次逐步全同(每步 hook 返回值逐元素相等,端到端重放);立即可测,不依赖 VFX(19)/HUD(16) 接入。
+- **AC-61b** `[Integration·门控 VFX(19)/HUD(16) 接入]`(权威流隔离 spy 断言,CR-5④,R2 BLOCKING #3 修复)**GIVEN** 注入 VFX/HUD stub 并挂权威流 spy 的完整多回合序列,**WHEN** 运行,**THEN** spy 断言权威流消费方 ∈ {dice,AI}、呈现层(VFX/HUD juice)未消费权威流(不为 vacuous-pass:VFX/HUD 接入后转非 trivial);补 AC-42(重置 seed 孤立 hook 重放)未覆盖的"流共享端到端"盲区。
 - **AC-62** `[Logic]`(纯函数无跨调用泄漏,CR-5②,systems R-review B-2/unreal R-2)**GIVEN** 同一 AI 实例**连续两次** `DecidePostRollActions`(第一次有抵押动作写入 `MortgagedThisTurn`),**WHEN** 第二次调用同一 snapshot+seed,**THEN** 第二次结果不受第一次历史影响(`MortgagedThisTurn` 为 hook 内局部、非成员;成员实现会使本 AC FAIL,守护跨调用泄漏)。
 - **AC-63** `[Logic]`(F-4 内部均衡模拟 ⇌ 建房8 谓词一致性回归守护,systems R-review B-3)**GIVEN** 同一 fixture,**WHEN** AI 内部均衡判定(F-4 序列 max−min≤1 校验)与建房8 `CanBuildHouse` 逐格比对,**THEN** 二者逐格一致(AI 内部副本未 stale;建房8 改均衡规则时本 AC FAIL,暴露副本漂移——补 AC-27 只验序列自洽、不验"是否仍等于建房8 真实规则"的盲区)。
 - **AC-63b** `[Logic]`(决策耗时可数硬底线,替代 AC-56 墙钟硬门,unreal R-review B-2)**GIVEN** 最复杂 snapshot,**WHEN** 调三 hook,**THEN** 决策管线算分/查表调用次数 ≤ 确定性上界(F-4 贪心 O(候选²),如 ≤2500 次);不依赖墙钟、CI 稳定、可作 PR gate。
 
-**合计 67 条(65 实测 + AC-49/AC-38b 2 个非计数锚点·移交)**:53 `[Logic]`(含 0 永久 stub)+ 4 `[Logic·CI-stub]`(AC-5/6/7/48,依赖 OQ-1 GameStateSnapshot ADR)+ 4 `[Integration]`(AC-38 难度差异 / AC-46 同步移交 / AC-47 RNG 验证腿 / AC-61 重放隔离)+ 4 `[Advisory]`(AC-4/39/44/56)= **61 BLOCKING + 4 Advisory**。覆盖 CR-1..7 全、F-1..7 全、Edge Cases 全、**反幻想头号风险可枚举硬底线(AC-58/59/60/60b)**、5 继承义务全(①AC-46 ②AC-44+47 ③AC-48 ④AC-46 N=1 ⑤AC-38 seed-lock 形态;绝对棋力移交 AC-38b/OQ-AI-1)。
+**合计 69 条(67 实测 + AC-49/AC-38b 2 个非计数锚点·移交)**:55 `[Logic]`(含 0 永久 stub;含 AC-11b/AC-61a 新增 2 条;**R-6 RETREAT 删 AC-64/AC-65 unlock-then-build 正/负向 2 条**)+ 4 `[Logic·CI-stub]`(AC-5/6/7/48,依赖 OQ-1 GameStateSnapshot ADR)+ 4 `[Integration]`(AC-38 难度差异 / AC-46 同步移交 / AC-47 RNG 验证腿 / AC-61b 重放隔离 spy)+ 4 `[Advisory]`(AC-4/39/44/56)= **63 BLOCKING + 4 Advisory**。覆盖 CR-1..7 全、F-1..7 全、Edge Cases 全、**反幻想头号风险可枚举硬底线(AC-58/59/60/60b)**、5 继承义务全(①AC-46 ②AC-44+47 ③AC-48 ④AC-46 N=1 ⑤AC-38 seed-lock 形态;绝对棋力移交 AC-38b/OQ-AI-1)。
+> **R-6 RETREAT 溯源(方案B,用户裁定):** F-4 unmortgage→解锁→建房多步协调连续两轮 peel(R-4/R-5),为 MVP 简化砍掉——删 AC-64(unlock-then-build 正向)/AC-65(负向)2 条,合计 71→69(BLOCKING 65→63)。F-4 退回单门简单贪心、不再 emit Unmortgage;同格双发 Unmortgage 接缝(R-5 BLOCKING)从根消除(唯一主动赎回路径=F-5b)。AI 主动赎回-解锁-建房协调 deferred Alpha(OQ-AI-10)。
 
 ## Open Questions
 
@@ -435,4 +454,5 @@ AI **无跨调用持久状态机**——每次 hook 调用是对当前 snapshot 
 | **OQ-AI-6** | Alpha hook 决策逻辑:`DecideAuctionBid`(拍卖12)/`DecideTradeResponse`(交易11)/命运之轮13·俄罗斯轮盘14·策略卡15 使用决策。MVP 不触发,契约开口已在 CR-2 标。 | 各 Alpha 机制 GDD | Alpha |
 | **OQ-AI-7** | lookahead 上限:MVP **heuristic-only**(user 裁定)。若 playtest 显示 Sharp 棋力不足以"值得赢",Alpha 评估是否加 1-ply 浅前瞻(非 MVP 返工,纯增强)。 | game-design | Alpha |
 | **OQ-AI-8(R-review 新增)** | F-1 MaxRentExposure 现用 **top-2 之和**近似一圈累计停租风险(MVP)。完整"整圈期望暴露"模型(按棋盘密度/步距分布加权所有可能停租)留 Alpha 评估——若 playtest 显示 top-2 仍不足以防多次停租破产则升级。 | game-design / playtest | Alpha |
-| **OQ-AI-9(R-review 新增,跨 hook 融资盲区)** | MVP 孤立 hook 无法"为补全垄断而在 buy hook 内融资"(抵押 A 买 B)——ai-programmer B-1 结构盲区,user 既定 heuristic-only 边界内**接受为 MVP 已知局限**(蠢招②整组瘫痪已由 AC-58 + F-4/F-5b 同窗赎回-解锁建房缓解,见 RECOMMENDED)。Alpha 随响应方 hook 评估是否补跨 hook 现金调度。 | game-design | Alpha |
+| **OQ-AI-9(R-review 新增,跨 hook 融资盲区)** | MVP 孤立 hook 无法"为补全垄断而在 buy hook 内融资"(抵押 A 买 B)——ai-programmer B-1 结构盲区,user 既定 heuristic-only 边界内**接受为 MVP 已知局限**(蠢招②整组瘫痪在 MVP 仅由 AC-58 现金充裕必建房守卫 + F-5b 还债顺带赎回缓解;**主动赎回-解锁-建房多步协调已 R-6 RETREAT 砍掉,deferred Alpha,见 OQ-AI-10**)。Alpha 随响应方 hook 评估是否补跨 hook 现金调度。 | game-design | Alpha |
+| **OQ-AI-10(R-6 RETREAT/方案B 新增)** | **AI 主动赎回-解锁-建房多步协调 deferred Alpha**:MVP 的 AI 不为建房而主动赎回——F-4 退回单门简单贪心(只建 `CanBuildHouse` 可立即建的格),抵押格解锁靠 F-5b(`ShouldUnmortgage`,还债/现金纪律)顺带,**不做"为建 B 而赎 A"的跨动作协调**。该多步协调(unmortgage→解锁→首栋建房的联合现金门 + 序列编排)连续两轮 peel(R-4/R-5 同格双发 Unmortgage 接缝),为 MVP 简化砍掉;Alpha 若 playtest 显示"垄断组单格抵押致整组长期瘫痪"明显戳破对手活着幻觉,再评估补回(带去重设计)。 | game-design / playtest | Alpha |
