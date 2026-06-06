@@ -1,7 +1,8 @@
 // BoardDataAssetHost.cpp
 // =============================================================================
-// UBoardDataAsset 专用持有者宿主实现（story-002）
-// 规范依据：ADR-0001 §3 异步加载纪律、ADR-0002 防 GC + 热切换边界
+// UBoardDataAsset 专用持有者宿主实现（story-002 + story-004）
+// 规范依据：ADR-0001 §3 异步加载纪律、ADR-0002 防 GC + 热切换边界 + 接口隔离
+// story-004：只读查询接口 GetTileCount/GetTileData/GetTilesInGroup/GetBoardId
 // =============================================================================
 #include "BoardDataAssetHost.h"
 #include "Engine/World.h"
@@ -149,4 +150,100 @@ void UBoardDataAssetHost::OnDataAssetLoaded(UPrimaryDataAsset* LoadedAsset)
 			     "状态机未推进至 Active。"),
 			static_cast<int32>(GetLoadState()));
 	}
+}
+
+// =============================================================================
+// story-004 只读查询接口实现（AC-1/26/27/28/30）
+//
+// 设计约定：
+//   - 所有函数通过 GetLoadedBoard() 读取 DA，不持有第二个强引用。
+//   - LoadedBoard==null 时各函数安全返回默认值，不崩溃（统一兜底策略）。
+//   - GetTileData 越界使用 UE_LOG(Error) 而非 ensure(false)：
+//     循 FF-003/bd-003 AC-34 既定 logged decision——headless Automation 中
+//     ensure 产生不稳定 callstack dump 致 AddExpectedError 计数不可靠。
+// =============================================================================
+
+// =============================================================================
+// GetTileCount — 返回棋盘格子总数（AC-1）
+// =============================================================================
+int32 UBoardDataAssetHost::GetTileCount() const
+{
+	// LoadedBoard 为空（未加载完成）→ 返回 0，安全兜底
+	const UBoardDataAsset* Board = GetLoadedBoard();
+	if (!Board)
+	{
+		return 0;
+	}
+
+	// O(1) TArray::Num()（ADR-0002 R5 性能约束）
+	return Board->Tiles.Num();
+}
+
+// =============================================================================
+// GetTileData — 按索引获取格子数据（O(1)，AC-27 越界保护）
+// =============================================================================
+FBoardTileData UBoardDataAssetHost::GetTileData(int32 Index) const
+{
+	const UBoardDataAsset* Board = GetLoadedBoard();
+	const int32 Count = Board ? Board->Tiles.Num() : 0;
+
+	// 越界检查（LoadedBoard==null 视为 Count==0，统一走越界分支）
+	if (!Board || Index < 0 || Index >= Count)
+	{
+		// AC-27 logged decision：UE_LOG(Error) 替代 ensure(false)
+		// 消息含 "越界" 子串供测试 AddExpectedError(Contains) 匹配
+		UE_LOG(LogTemp, Error,
+			TEXT("[UBoardDataAssetHost] GetTileData：Index=%d 越界（有效范围 [0, %d)），"
+			     "返回默认空 FBoardTileData。调用方须先调 GetTileCount() 约束范围。"),
+			Index, Count);
+
+		// 返回默认空 struct（不崩溃，不返回脏数据，AC-27）
+		return FBoardTileData{};
+	}
+
+	// O(1) 直接数组访问（ADR-0002 R5）
+	return Board->Tiles[Index];
+}
+
+// =============================================================================
+// GetTilesInGroup — 按色组返回成员 TileIndex 列表（升序，AC-26/AC-30）
+// =============================================================================
+TArray<int32> UBoardDataAssetHost::GetTilesInGroup(EColorGroup Group) const
+{
+	// AC-26：Group==None 直接返回空数组（非地产格无色组，不报错）
+	// LoadedBoard==null 同样返回空数组（安全兜底）
+	const UBoardDataAsset* Board = GetLoadedBoard();
+	if (!Board || Group == EColorGroup::None)
+	{
+		return TArray<int32>{};
+	}
+
+	// 遍历 Tiles，收集 ColorGroup==Group 的成员格子的 TileIndex 字段值
+	TArray<int32> Result;
+	for (const FBoardTileData& Tile : Board->Tiles)
+	{
+		if (Tile.ColorGroup == Group)
+		{
+			// 收集的是 FBoardTileData::TileIndex 字段值（棋盘位置），非数组下标
+			Result.Add(Tile.TileIndex);
+		}
+	}
+
+	// AC-30：显式 Sort 保证升序，不依赖 DA 录入顺序
+	// Sort 即使 Result 为空也安全（TArray::Sort 对空数组为空操作）
+	Result.Sort();
+
+	return Result;
+}
+
+// =============================================================================
+// GetBoardId — 获取棋盘逻辑标识符（AC-28）
+// =============================================================================
+FName UBoardDataAssetHost::GetBoardId() const
+{
+	const UBoardDataAsset* Board = GetLoadedBoard();
+
+	// LoadedBoard==null → NAME_None（安全兜底，AC-28）
+	// 取顶层 BoardIdentifier 字段（作者手填），禁止从路径/PrimaryAssetId 派生
+	return Board ? Board->BoardIdentifier : NAME_None;
 }

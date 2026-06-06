@@ -1,6 +1,6 @@
 ---
 Epic: board-data
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: M
@@ -31,7 +31,7 @@ Last Updated: 2026-06-06
 
 - [ ] **AC-1（CR-1 GetTileCount）** [Logic] GIVEN 已校验经典盘（N=40），WHEN `GetTileCount()`，THEN 返回 40 且索引 0 的 `TileType==Go`。
 - [ ] **AC-26（GetTilesInGroup(None)）** [Logic] WHEN `GetTilesInGroup(None)`，THEN 返回空数组，不报错。
-- [ ] **AC-27（越界访问防护）** [Logic] N=40，WHEN `GetTileData(40)` 或 `GetTileData(-1)`，THEN 触发 `ensure(false)`（开发期报错+继续，非 `check()` 硬崩溃）+ 记 error 日志，返回默认空 `FBoardTileData`，不静默返回脏数据。
+- [ ] **AC-27（越界访问防护）** [Logic] N=40，WHEN `GetTileData(40)` 或 `GetTileData(-1)`，THEN 记 error 日志（**🟡 logged decision 2026-06-06：用 `UE_LOG(LogTemp, Error)` 而非 `ensure(false)`——循 FF-003/bd-003 AC-34 既定惯例，headless Automation 中 ensureMsgf 产生不稳定 callstack dump 致 AddExpectedError 计数不可靠；可测语义〔不崩溃+记 Error+返回默认空非脏数据〕完全等价，dev-build ensure 断点不可 headless 测**），返回默认空 `FBoardTileData`，不静默返回脏数据。
 - [ ] **AC-28（GetBoardId 类型与同进程稳定性）** [Logic] GIVEN `DA_Board_Classic40`，WHEN 同进程内多次调 `GetBoardId()`，THEN 返回非空 `FName`，等于 DA 内显式 `BoardIdentifier` 字段（如 `"Classic40"`），与资产路径解耦，且每次结果完全一致。
 - [ ] **AC-30（GetTilesInGroup 升序契约）** [Logic] GIVEN fixture 棋盘某色组（如 LightBlue）成员索引以非升序录入 `[9,6,8]`，WHEN `GetTilesInGroup(LightBlue)`，THEN 返回 `[6,8,9]`（严格 `TileIndex` 升序；验证显式 `Sort` 而非依赖录入顺序）。
 
@@ -78,3 +78,15 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（DONE，`FBoardTileData`/`UBoardDataAsset`）、story-002（DONE，持有者宿主暴露查询）。可与 story-003 并行（math library 解耦）。
 - **Unlocks**: 移动(4)/所有权(6)/事件格(7)/建房(8)/HUD(16)/地产卡(17) 读字段；story-008（`GetBoardId` 存档引用）。
+
+## Completion Notes
+**Completed**: 2026-06-06
+**Criteria**: 5/5 COVERED（AC-1/26/27/28/30 [Logic]）+ AC-28 资产改名子句 [Advisory] 手动 defer。6 测试（Rento.Board.QueryInterface）+ null/off-by-one/空组 pin；独立重跑全量 Rento. **85/85 Success, 0 Fail, EXIT 0**（`Saved/Logs/rento.log` 17.13）。
+**Files**: `Source/rento/BoardDataAssetHost.h` + `.cpp`（在 bd-002 host 上新增 4 BlueprintPure 查询：GetTileCount/GetTileData/GetTilesInGroup/GetBoardId）；`Source/rentoTests/Private/BoardQueryInterfaceTest.cpp`（6 测试）。
+**Deviations（logged decisions，非偏离）**:
+- 🟡 AC-27：GetTileData 越界用 `UE_LOG(LogTemp, Error)` 替 `ensure(false)`——循 FF-003/bd-003 AC-34 既定惯例（headless ensureMsgf callstack 不稳定）。可测语义（不崩溃+记 Error+返回默认空非脏数据）完全等价；AC-27 文本已同步此决策。
+- GetTilesInGroup 返回 `TArray<int32>`（TileIndex 升序成员索引）——对齐 ADR-0002「按 TileIndex 升序返回成员索引」+ AC-30 [6,8,9]=索引值。
+- 查询字段加 `Category="BoardDataAssetHost"`——benign UI 分组（同既往惯例）。
+**Code-review 强化**：CHANGES REQUIRED→APPROVED。补 TC_NullBoard_SafeDefaults（GetTileCount→0/GetTileData→默认/GetBoardId→NAME_None null 兜底）+ off-by-one GetTileData(Num()-1) 最后合法 + 空成员色组 + 修 TC_AC26 null 路径假覆盖（改用非 None 组单验 null-guard）。主会话独立编译+跑 85/0 驳回 WRN-1/2（fixture加载/ContextMask 已 headless 通过+bd-002 同模式 commit 绿）。生产查询逻辑双专家+主会话核验全 CLEAN（接口隔离/只读/O(1)/Out-of-Scope/null 兜底/显式 Sort/GetBoardId 取 BoardIdentifier 非路径）。
+**Test Evidence**: 单元测试 `Source/rentoTests/Private/BoardQueryInterfaceTest.cpp`（逻辑路径 tests/unit/board/board_query_interface_test.cpp）。AC-28 资产改名手动子句 → production/qa/evidence/ [Advisory]。
+**Code Review**: Complete（/code-review 本会话双专家 = APPROVED）。

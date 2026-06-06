@@ -19,19 +19,22 @@
 //   4. 热切换边界（AC-L4）：
 //      完全继承基类约束——Active 态无 public DA setter，无 SetLoadedBoard 类接口，
 //      换盘须经 RequestReset → Empty → 重新 RequestAsyncLoadDataAsset。
+//   5. 只读查询接口（story-004，AC-1/26/27/28/30）：
+//      GetTileCount / GetTileData / GetTilesInGroup / GetBoardId
+//      全部读 GetLoadedBoard()，LoadedBoard==null 时各函数安全返回默认值。
 //
 // Out of Scope（严守边界）：
 //   - UBoardDataAsset / FBoardTileData 类型定义 → story-001（已实现）
 //   - 加载期校验规则 / 结构化错误码（BoardTooSmall / Index0NotGo / …）→ story-005/006
-//   - GetTileData / GetTilesInGroup / GetBoardId 查询接口 → story-004
 //   - RNG Seed 注入 → 骰子 epic（dr-001 已另做）
 //   - 基类 CancelHandle / 状态机 / 异步加载逻辑 → 完全继承，不重造
 //
 // 规范依据：
 //   - ADR-0001 §Implementation Guidelines — 异步加载纪律、ShouldCreateSubsystem
-//   - ADR-0002 §Decision/§Implementation Guidelines — 强引用防 GC、热切换边界
+//   - ADR-0002 §Decision/§Implementation Guidelines — 强引用防 GC、热切换边界、接口隔离
 //   - control-manifest Foundation 层 §宿主与生命周期 / §数据容器
 //   - story-002 AC-L1~L5
+//   - story-004 AC-1/26/27/28/30
 // =============================================================================
 #pragma once
 
@@ -77,6 +80,73 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "BoardDataAssetHost")
 	UBoardDataAsset* GetLoadedBoard() const;
+
+	// =========================================================================
+	// story-004 只读查询接口（ADR-0002 接口隔离，AC-1/26/27/28/30）
+	//
+	// 设计约束（逐字来自 ADR-0002 §Implementation Guidelines + control-manifest）：
+	//   - 所有下游经此持有者访问，禁止各自硬引用 UBoardDataAsset（接口隔离 R7）
+	//   - LoadedBoard==null 时各函数安全返回默认值，不崩溃
+	//   - GetTileData O(1) 数组访问（ADR-0002 R5，AC-1）
+	//   - GetTilesInGroup 显式 Sort，不依赖录入顺序（AC-30）
+	//   - GetBoardId 取 DA 顶层 BoardIdentifier 字段，禁止从路径/PrimaryAssetId 派生（AC-28）
+	// =========================================================================
+
+	/**
+	 * 获取棋盘格子总数（AC-1）。
+	 *
+	 * @return LoadedBoard 非空时返回 Tiles.Num()，否则返回 0。
+	 */
+	UFUNCTION(BlueprintPure, Category = "BoardDataAssetHost")
+	int32 GetTileCount() const;
+
+	/**
+	 * 按索引获取格子数据（O(1) 数组访问，AC-27）。
+	 *
+	 * 越界保护（logged decision，循 FF-003 / bd-003 AC-34 惯例）：
+	 *   Index < 0 或 Index >= GetTileCount() 或 LoadedBoard==null 时，
+	 *   打 UE_LOG(LogTemp, Error) 并返回默认空 FBoardTileData{}，
+	 *   不崩溃、不返回脏数据（用 ensure(false) 会在 headless Automation 产生
+	 *   不稳定 callstack dump 致 AddExpectedError 计数不可靠，故改 UE_LOG Error）。
+	 *
+	 * 调用方应先用 GetTileCount() 约束范围（AC-27）。
+	 *
+	 * @param Index 格子序号（0-based）
+	 * @return 对应的 FBoardTileData；越界时返回默认空 struct
+	 */
+	UFUNCTION(BlueprintPure, Category = "BoardDataAssetHost")
+	FBoardTileData GetTileData(int32 Index) const;
+
+	/**
+	 * 按色组返回成员格子的 TileIndex 列表，严格升序（AC-26/AC-30）。
+	 *
+	 * 返回 TArray<int32>（各成员格子的 FBoardTileData::TileIndex 字段值升序排列）。
+	 * 含义：棋盘上属于该色组的格子位置（0-based），供下游经 GetTileData(index) 二次查询。
+	 *
+	 * Group==None 返回空数组，不报错（非地产格无色组，AC-26）。
+	 * LoadedBoard==null 时返回空数组（安全兜底）。
+	 * 实现对收集结果显式 Sort，不依赖 DA 录入顺序（AC-30）。
+	 *
+	 * @param Group 色组枚举值
+	 * @return 该色组成员格子的 TileIndex 列表（升序）；无成员或 Group==None 时返回空数组
+	 */
+	UFUNCTION(BlueprintPure, Category = "BoardDataAssetHost")
+	TArray<int32> GetTilesInGroup(EColorGroup Group) const;
+
+	/**
+	 * 获取棋盘逻辑标识符（AC-28）。
+	 *
+	 * 取 UBoardDataAsset 顶层 BoardIdentifier 字段（作者手填），
+	 * 与资产路径 / PrimaryAssetId / 文件名完全解耦。
+	 * 禁止从资产路径或 PrimaryAssetId 派生（改名/移动后旧存档仍可关联）。
+	 *
+	 * FName 大小写不敏感陷阱（ADR-0002 R3 注）：
+	 *   存档读取时须用 FName::FastEqual 或显式约定大小写。
+	 *
+	 * @return DA 内显式 BoardIdentifier；LoadedBoard==null 时返回 NAME_None
+	 */
+	UFUNCTION(BlueprintPure, Category = "BoardDataAssetHost")
+	FName GetBoardId() const;
 
 	// =========================================================================
 	// 加载源 seam（AC-L2 / fork#3）
