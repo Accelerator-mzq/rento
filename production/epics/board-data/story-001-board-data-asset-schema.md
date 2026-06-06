@@ -1,6 +1,6 @@
 ---
 Epic: board-data
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: M
@@ -75,3 +75,13 @@ Last Updated: 2026-06-06
 
 - **Depends on**: 无（Foundation 根 story）。
 - **Unlocks**: story-002（持有者需 `UBoardDataAsset` 类型）、story-003（math library 与 struct 无耦合但同 epic）、story-004（查询接口读 `Tiles`/`BoardIdentifier`）、story-005/006（校验读字段）、story-007（实例化资产）、story-008（`BoardIdentifier` 存档引用）。
+
+## Completion Notes
+**Completed**: 2026-06-06
+**Criteria**: 5/6 COVERED + 1 DEFERRED（编辑器验证 [Advisory] 手动 → story-007 编辑器实测，坐实 ADR-0002 Verification ①）。100% BLOCKING [Logic] AC 有自动化测试覆盖。
+**Files**: `Source/rento/BoardDataAsset.h`（4 枚举 + `FBoardTileData` 13 字段 + `UBoardDataAsset:UPrimaryDataAsset`，header-only data-only）、`Source/rentoTests/Private/BoardDataAssetSchemaTest.cpp`（11 测试函数，类目 `Rento.Board.BoardDataAssetSchema`）
+**Deviations**:
+- ADVISORY (logged decision): 字段加 `BlueprintReadOnly`（超 ADR-0002 Key Interfaces 的 `EditDefaultsOnly`）— 可接受放宽，呈现层 BP 只读访问 DA，不破坏只读契约；用户采纳。
+- ADVISORY (propagation debt → producer): W-3 `control-manifest.md:98` 关于 CSV TArray 的措辞与 ADR-0002 spike REFUTED 结论矛盾（Never-DataTable 结论不变，仅纠措辞）。已记 tech-debt-register。
+**Test Evidence**: Integration（实质 Logic）— 自动化测试 `Source/rentoTests/Private/BoardDataAssetSchemaTest.cpp`，独立重跑全量 Rento. 39/39 Success, 0 Fail, EXIT 0（证据 `Saved/Logs/rento.log` 13.34.30–31）
+**Code Review**: Complete（/code-review 本会话 = APPROVED；首轮 CHANGES REQUIRED 的 2 must-fix 测试缺口已闭合 + advisory 折叠）
