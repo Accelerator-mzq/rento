@@ -15,7 +15,7 @@ source-gdd: design/gdd/main-menu-lobby.md
 
 **屏目标**：让玩家从启动游戏到坐进一局对战之间的每一步都是**明确、轻量、无挫败**的。本屏是游戏的入口，承担两个串联职责：
 
-1. **主菜单层**——提供顶层导航入口（新游戏、续局、设置、退出；MVP 续局/联机占位禁用）。
+1. **主菜单层**——提供顶层导航入口（新游戏、续局、设置、退出；续局按存档状态驱动、联机 Full Vision 占位禁用）。
 2. **房间大厅配置层**——收集本地热座（Pass'N Play）2–4 玩家的开局配置（席位数、每席玩家名/棋子色/人类或 AI/AI 难度），在"开始游戏"时把配置打包为 `FGameSetupConfig` 传给玩家与回合管理（系统 #2），移交后本屏退场。
 
 **玩家需求核心**：低摩擦、快速开局——"想玩了，三秒就能开一局"（GDD Player Fantasy，Pillar④）。配置过程不需要填表单、不需要读说明，全靠点击完成。
@@ -51,7 +51,7 @@ source-gdd: design/gdd/main-menu-lobby.md
 
 [ 主菜单 ] → 「设置」 → [ 设置屏 (TBD) ]
 [ 主菜单 ] → 「退出」 → 应用退出
-[ 主菜单 ] → 「续局」 → 禁用占位 (MVP，OQ-Lobby-2)
+[ 主菜单 ] → 「续局」 → 按 DoesSaveGameExist 驱动 (有存档→LoadGameFromSlot；无存档→禁用)
 [ 主菜单 ] → 「联机」 → 禁用占位 (MVP，OQ-Lobby-5)
 ```
 
@@ -68,12 +68,14 @@ source-gdd: design/gdd/main-menu-lobby.md
 | **应用启动（冷启动）** | 游戏二进制启动后，UMG 初始化完成 | 主菜单；手柄默认焦点=「新游戏」按钮（ADR-0012 FR-3） |
 | **对局结束 → 返回主菜单** | GameOver 覆盖层玩家选择「返回主菜单」（P-12 终局覆盖层） | 主菜单；大厅配置重置为默认值（不保留上局配置，EC-7 逻辑） |
 | **大厅配置中点「返回」** | 玩家在大厅配置屏点击「返回主菜单」 | 主菜单；大厅草稿丢弃（EC-7） |
+| **从主菜单续局** | `DoesSaveGameExist(SLOT_DEFAULT)==true` + 玩家点击「续局」 | 进入续局读档（MM-S4 loading）→ 读档成功进入对局（本屏退场）；失败留主菜单 + 错误提示（MM-S5）。save-load CR-1/L183 |
 
 ### 4.2 Exit Points
 
 | 出口 | 触发条件 | 目标屏 | 状态写入 |
 |---|---|---|---|
 | **开始游戏** | `ConfigIsValid=true` + 玩家点击「开始游戏」 | 游戏场景（对局，由回合 #2 接管） | `FGameSetupConfig` 传回合 #2（F-2 打包，见 Data Requirements §14）[architectural concern — 唯一写持久状态出口] |
+| **续局读档** | `DoesSaveGameExist==true` + 点击「续局」 + 读档成功 | 游戏场景（对局，由存档 #21 重建状态） | 无本屏写入（状态由 save-load #21 `LoadGameFromSlot` 重建，本屏仅触发）；失败留主菜单 + 错误提示（MM-S5） |
 | **进入大厅** | 主菜单「新游戏」点击 | 大厅配置层（屏内 push） | 无持久状态写入（大厅是纯配置草稿） |
 | **进入设置** | 主菜单「设置」点击 | 设置屏（TBD，MVP 占位） | — |
 | **退出** | 主菜单「退出」点击 → 二次确认 | 应用退出 | — |
@@ -133,7 +135,7 @@ Zone E: 背景/氛围区（全屏）     — 同主菜单背景，状态 A
 |---|---|---|---|---|
 | 游戏 Logo/标题 | `WBP_MainMenu_Logo` | Image/TextBlock | 常驻 | art-bible L1 字体 |
 | 「新游戏」主按钮 | `WBP_Btn_NewGame` | `UCommonButtonBase` | 恒启用 | Fortune Gold 主 CTA；默认焦点（ADR-0012 FR-3） |
-| 「续局」按钮 | `WBP_Btn_Continue` | `UCommonButtonBase` | MVP 禁用（OQ-Lobby-2） | 灰化 + 「即将推出」tooltip；provisional：若存档系统 #21 上线则按存档状态驱动 |
+| 「续局」按钮 | `WBP_Btn_Continue` | `UCommonButtonBase` | 按 `DoesSaveGameExist(SLOT_DEFAULT)` 驱动 | 有存档=启用（点击触发 `LoadGameFromSlot`）；无存档=禁用/灰显 + 「无存档」tooltip。save-load #21 Approved（EC-6/L183） |
 | 「设置」按钮 | `WBP_Btn_Settings` | `UCommonButtonBase` | 启用（占位） | 点击进设置屏（设置屏 spec TBD） |
 | 「联机」按钮 | `WBP_Btn_Online` | `UCommonButtonBase` | MVP 禁用（OQ-Lobby-5） | 灰化 + 「即将推出」tooltip |
 | 「退出」按钮 | `WBP_Btn_Quit` | `UCommonButtonBase` | 恒启用 | 点击→二次确认 modal（P-04） |
@@ -226,9 +228,11 @@ Zone E: 背景/氛围区（全屏）     — 同主菜单背景，状态 A
 
 | 状态 ID | 名称 | 触发条件 | 视觉变化 |
 |---|---|---|---|
-| MM-S1 | 默认态 | 屏激活 | 全按钮正常；「续局」「联机」灰化（MVP 禁用） |
+| MM-S1 | 默认态 | 屏激活 | 全按钮正常；「续局」按 `DoesSaveGameExist(SLOT_DEFAULT)` 驱动（有存档=启用、无存档=灰化）；「联机」灰化（Full Vision 占位） |
 | MM-S2 | 退出确认 | 点击「退出」 | 退出确认 modal push（P-04）；主菜单按钮暗化 |
 | MM-S3 | 设置屏激活 | 点击「设置」 | 设置屏 push（TBD；本屏待 spec） |
+| MM-S4 | 续局读档中 | 点击「续局」（有存档） | 「续局」按钮 loading 态；其他按钮禁用；调 save-load #21 `LoadGameFromSlot(SLOT_DEFAULT)`；成功则本屏退场进对局 |
+| MM-S5 | 读档失败 | `LoadGameFromSlot` 失败（save-load EC-1/EC-3/EC-4：损坏/版本不符/DA 缺失） | 返回 MM-S1 + 错误提示文案（如"存档损坏或不兼容，无法读取"）；旧存档不破坏 |
 
 ### 6.2 大厅配置屏状态
 
@@ -265,13 +269,14 @@ Zone E: 背景/氛围区（全屏）     — 同主菜单背景，状态 A
 | 触发元素 | 输入方式 | 事件/动作 | 响应 | 模式引用 |
 |---|---|---|---|---|
 | 「新游戏」按钮 | 鼠标左键点击 / 手柄确认键 | `OnClicked` → `Handle_NewGame` | Push `WBP_Lobby`（CommonUI 栈），大厅配置初始化默认值 | P-13 菜单导航 |
-| 「续局」按钮（禁用） | 鼠标左键点击 / 手柄确认键 | 按钮禁用，不响应点击；显"即将推出"tooltip | — | P-16 只读 Affordance；EC-8 |
+| 「续局」按钮（有存档·启用） | 鼠标左键点击 / 手柄确认键 | `OnClicked` → 调 save-load #21 `LoadGameFromSlot(SLOT_DEFAULT)`；进 MM-S4 loading；成功进对局、失败 MM-S5 | 进入续局读档（本屏退场） | P-13；save-load CR-1 |
+| 「续局」按钮（无存档·禁用） | 鼠标左键点击 / 手柄确认键 | 按钮禁用，不响应点击；显「无存档」tooltip（非 hover-only） | — | P-16 只读 Affordance；save-load EC-6 |
 | 「联机」按钮（禁用） | 同上 | 同上 | — | 同上 |
 | 「设置」按钮 | 鼠标左键点击 / 手柄确认键 | `OnClicked` → `Handle_Settings` | Push 设置屏（TBD） | P-13 |
 | 「退出」按钮 | 鼠标左键点击 / 手柄确认键 | `OnClicked` → Push 退出确认 modal | P-04 确认/取消 modal（见下） | P-04 确认/取消 |
 | 退出确认 modal「确认」 | 点击 / 手柄确认键（`IA_Confirm`） | `OnClicked` → `UKismetSystemLibrary::QuitGame` | 应用退出 | P-04 |
 | 退出确认 modal「取消」 | 点击 / Esc / 手柄取消键（`IA_Cancel`） | `OnClicked` → Pop modal | 返回主菜单 | P-04 |
-| 键盘 Tab / 手柄方向键 | 键盘/手柄 | 焦点切换（CommonUI 导航） | 焦点按纵向列表顺序循环：新游戏 → 续局（跳过禁用，见 §12 焦点序） → 设置 → 退出 | ADR-0012 |
+| 键盘 Tab / 手柄方向键 | 键盘/手柄 | 焦点切换（CommonUI 导航） | 焦点按纵向列表顺序循环：新游戏 → 续局（有存档时可达；无存档禁用跳过，见 §12 焦点序） → 设置 → 退出 | ADR-0012 |
 
 **平台变体**：
 - **Keyboard/Mouse（Primary）**：鼠标 hover 显 scale +2%/亮度 +10%（art-bible §4.5）；点击触发。禁用按钮鼠标 hover 显"即将推出"tooltip（非 hover-only——禁用态通过颜色+不透明度已传达不可用）。
@@ -306,6 +311,7 @@ Zone E: 背景/氛围区（全屏）     — 同主菜单背景，状态 A
 | 玩家动作 | 事件名 | 接收方 | 状态写入 | 备注 |
 |---|---|---|---|---|
 | 点击「开始游戏」（合法配置） | `StartNewGame(FGameSetupConfig)` 调用 | 玩家与回合管理（#2） | [Write · **architectural concern**] `PlayerState` 列表初始化（写入归回合 #2，本屏仅构造传参） | F-2 打包；纯叶子不拥有运行态（GDD CR-1） |
+| 点击「续局」（有存档） | `LoadGameFromSlot(SLOT_DEFAULT)` 调用 | 存档系统（#21, **Approved**） | [Write · **architectural concern**] 状态重建归 save-load #21（本屏仅触发，不自重建）；成功广播 `OnGameLoaded` | save-load CR-1/EC-6；纯叶子仅触发（GDD CR-1） |
 | 加减座位 | 本屏内部：`P` 变更，UI 状态更新 | 无外部事件；仅驱动 `ConfigIsValid` 重评估 | [Read only，无持久写入] | — |
 | 修改玩家名 | 本屏内部：`NameOf(s)` 变更 | 同上 | [Read only] | — |
 | 切换棋子色 | 本屏内部：`ColorOf(s)` 变更 | 同上 | [Read only] | — |
@@ -352,7 +358,7 @@ Zone E: 背景/氛围区（全屏）     — 同主菜单背景，状态 A
 
 | 显示项 | Source System | 数据字段 | Read/Write | 备注 |
 |---|---|---|---|---|
-| 「续局」按钮可用性 | 存档系统（#21） | 存档槽是否有效 | Read | MVP=禁用（#21 GDD 未撰写，OQ-Lobby-2）；[provisional] |
+| 「续局」按钮可用性 | 存档系统（#21, **Approved**） | `DoesSaveGameExist(SLOT_DEFAULT)` | Read | 按存档状态驱动：`==true` 启用（点击触发 `LoadGameFromSlot`）、`==false` 禁用/灰显。依据 save-load EC-6 / L183 硬依赖 / AC-20。**OQ-Save-5 propagate 债落地** |
 | 游戏版本号 | 构建系统 | `GAME_VERSION` 常量 | Read | 仅展示，不互动 |
 
 ### 10.2 大厅配置层（草稿态，全为本屏内存状态，不持久化）
@@ -392,7 +398,7 @@ Zone E: 背景/氛围区（全屏）     — 同主菜单背景，状态 A
 **焦点序（主菜单，Tab 顺序）**：
 ```
 [新游戏] → [设置] → [退出]
-（「续局」「联机」MVP 禁用；禁用元素手柄/Tab 默认跳过，不陷死）
+（续局按存档状态驱动：有存档可达、无存档禁用跳过；「联机」Full Vision 占位禁用；禁用元素手柄/Tab 默认跳过，不陷死）
 ```
 
 **焦点序（大厅配置，Tab 顺序）**：
@@ -408,10 +414,10 @@ Zone E: 背景/氛围区（全屏）     — 同主菜单背景，状态 A
 ### 11.2 手柄导航（Partial）
 
 - 冷启动默认焦点：「新游戏」（`GetDesiredFocusTarget`，ADR-0012 FR-3）— 这是首屏，明确要求（任务 brief "GetDesiredFocusTarget 手柄默认焦点=「开始游戏」" 即指此"开始游戏"在主菜单层为「新游戏」，在大厅层为「开始游戏」）。
-- 大厅配置屏默认焦点：第一个席位名字输入框（或「开始游戏」，待 OQ-IP-1 定）。
+- 大厅配置屏默认焦点：**第一个席位名字输入框**（`WBP_SeatCard_NameInput[0]`）——鼓励先编辑配置（低摩擦意图），且「开始游戏」初始禁用（`ConfigIsValid=false`）不宜作默认焦点（手柄首发确认无响应感差）。ux-review A-2 闭合；ue-umg-specialist 实现确认（OQ-IP-1）。
 - Face Button Bottom（Gamepad South）= 确认；Face Button Right（Gamepad East）/ Esc = 取消/返回。
 - 方向键/左摇杆在席位卡片列表内上下切换席位卡片行；在席位卡片内左右切换控件。
-- 禁用按钮（「续局」「联机」置灰，「−」在 P_min，「+」在 P_max，禁用色块）：手柄导航跳过禁用元素，不陷死。
+- 禁用按钮（无存档时「续局」置灰、「联机」Full Vision 置灰，「−」在 P_min，「+」在 P_max，禁用色块）：手柄导航跳过禁用元素，不陷死。
 
 ### 11.3 对比度
 
@@ -430,7 +436,7 @@ Zone E: 背景/氛围区（全屏）     — 同主菜单背景，状态 A
 - 置灰（已占用）的色块：去饱和+不透明度 50%+可选"已选"图标（CA-01）；色盲用户可通过饱和度明显降低+位置+编号辨识。
 - 当前席位已选中的色块：色块+勾选图标（✓）双重标识，非仅靠高亮色。
 
-**「续局」「联机」禁用态**：去饱和灰化+不透明度 50%+"即将推出"文字 tooltip（非 hover-only；见禁 hover-only）。
+**「续局」（无存档时）/「联机」禁用态**：去饱和灰化+不透明度 50%+文字 tooltip（续局="无存档"、联机="即将推出"；非 hover-only；见禁 hover-only）。
 
 **配置错误提示**：红色警告图标（⚠）+文字描述，非仅靠红色文字（CA-04②）。
 
@@ -493,7 +499,9 @@ Zone E: 背景/氛围区（全屏）     — 同主菜单背景，状态 A
 
 - [ ] **AC-Screen-5 [Logic·核心目的]** GIVEN 大厅配置屏有 2 个启用席位，席位 0 为人类"Alice"红色，席位 1 为 AI "Bot" 蓝色 Normal 难度（所有字段合法），WHEN 点击「开始游戏」，THEN `StartNewGame` 被调用，入参 `FGameSetupConfig.PlayerCount=2`、`Players[0].DisplayName=FText("Alice")` / `TokenColor=红` / `bIsAI=false` / `AIDifficulty=None`、`Players[1].DisplayName=FText("Bot")` / `TokenColor=蓝` / `bIsAI=true` / `AIDifficulty=Normal`；本屏退场（不再处于激活栈顶）。FAIL 条件：`StartNewGame` 入参字段任一不匹配，或本屏未退场（对齐 GDD AC-13 + CR-1 退场契约）。
 
-- [ ] **AC-Screen-6 [Logic·占位入口]** GIVEN 主菜单屏（MVP），WHEN 检查「续局」「联机」按钮状态，THEN 两者均处于禁用/灰化状态（不可激活）；WHEN 手柄或键盘 Tab 导航到这两个按钮位置，THEN 焦点**跳过**或在这两个按钮上激活无效（不进入任何未实现流程）。FAIL 条件：MVP 下这两个入口可激活进入任何游戏流程。
+- [ ] **AC-Screen-6 [Logic·续局状态驱动]** GIVEN 主菜单屏，WHEN `DoesSaveGameExist(SLOT_DEFAULT)==false`（无存档），THEN 「续局」禁用/灰化、显「无存档」tooltip、点击/手柄确认无响应；WHEN `==true`（有存档），THEN 「续局」启用、可经键盘/手柄聚焦激活、点击触发 `LoadGameFromSlot(SLOT_DEFAULT)` 进 MM-S4 loading。FAIL：续局可用性不随存档状态变化，或有存档时不可达/无存档时可激活。依据：save-load EC-6/AC-20/L183。
+- [ ] **AC-Screen-6b [Logic·读档失败降级]** GIVEN 有存档但损坏/版本不符（save-load EC-1/EC-3），WHEN 点击「续局」→ `LoadGameFromSlot` 失败，THEN 返回 MM-S1 + 显错误提示，旧存档不破坏，不进入空对局/不崩溃。依据：save-load EC-1/EC-3/EC-4。
+- [ ] **AC-Screen-6c [Logic·联机占位]** GIVEN 主菜单屏（MVP），WHEN 检查「联机」按钮，THEN 禁用/灰化（Full Vision 占位）；WHEN 手柄/Tab 导航至该位，THEN 焦点跳过，不陷死。FAIL：联机入口可激活进入任何流程。
 
 - [ ] **AC-Screen-7 [Advisory·code-review]** 大厅配置屏中，棋子色选择器的每个色块按钮**同时**呈现颜色色块 AND 非颜色标识（P 编号或色名标签）；置灰的已占用色块在非颜色通道（去饱和+位置+标签）与可选色块可区分。归 UX walkthrough + Coblis 模拟验证。
 
@@ -505,7 +513,7 @@ Zone E: 背景/氛围区（全屏）     — 同主菜单背景，状态 A
 |---|---|---|
 | **OQ-Screen-1（player journey）** | player journey map 未建立；本 spec §2 玩家情绪状态为 provisional 推断。模板待建：`.claude/docs/templates/player-journey.md`。player journey 建立后须回核 §2 并更新 provisional 标注。 | ux-designer / Pre-Production |
 | **OQ-Screen-2（GDD OQ-Lobby-1 闭合）** | `StartNewGame` 入口签名和 `FGameSetupConfig`/`FPlayerSetupEntry` USTRUCT 归属（owner=回合 #2）尚待 producer propagate 确认（GDD OQ-Lobby-1）。本 spec §8 Events Fired、§13 AC-Screen-5 中接口名/字段名（尤其 `DisplayName:FText`）依赖此 OQ 闭合后冻结。 | producer / 设计冻结前 |
-| **OQ-Screen-3（续局 UI 触点）** | 「续局」按钮在 MVP 禁用。存档系统（#21）GDD 撰写完成后，本屏须补充：① 存档检测逻辑（何时亮「续局」）；② 单槽覆盖确认 modal（「确续局会覆盖当前存档，确认？」）；③ 「继续游戏」读档流程 UX 触点。暂停菜单「保存并退出」flow spec 亦在此范围（Polish 阶段 pause/save flow spec 补完）。建议届时撰写独立子 spec 或扩展本 spec §4/§6/§8。 | #21 设计阶段 / Polish |
+| **OQ-Screen-3（续局剩余 UX）** | 续局**主流已落**（本 spec §4 entry/exit + §6.1 MM-S4/S5 + §7.1 + §8 + §13 AC-6/6b，接 save-load #21 Approved `DoesSaveGameExist`/`LoadGameFromSlot`，ux-review B-1/B-2 闭合 + OQ-Save-5 propagate 债落地）。**剩余**（非 MVP 阻塞）：① 退出写续局点时的单槽覆盖确认 modal（save-load `bAllowExitSave`/CR-4 合法存档点）；② 暂停菜单「保存并退出」flow spec（Polish 阶段 pause/save flow，含 `SaveGameToSlot` 触点）。 | ux-designer / Polish（pause flow）|
 | **OQ-Screen-4（焦点序精确定义）** | §12 焦点序为初始设计，大厅配置屏内色块组（8个颜色按钮）和多席位的精确 Tab/手柄方向键序须 ue-umg-specialist 验证 widget 树可行性。特别是：席位卡片内 8 个色块的手柄左右导航——是否需要色块组作为子 focus scope（CommonUI FocusGroup）？建议 Pre-Production 原型验证（OQ-IP-1 同源）。 | ux-designer + ue-umg-specialist / Pre-Production |
 | **OQ-Screen-5（文本缩放+布局）** | `text_scale=150%` 下大厅配置屏席位卡片布局可行性（席位名 16 CJK 字符 × 1.5x = 约 48 字节宽度）。可能触发卡片宽度溢出或需要卡片内容折行设计。须 Pre-Production `/ux-design` 二轮验证（accessibility-requirements OQ-A11Y-3 同源）。 | ux-designer / Pre-Production |
 | **OQ-Screen-6（颜色选择器 P 编号 vs 色名）** | §11.4 建议 MVP 色块用 P 编号（P1–P8）作为非颜色冗余；GDD OQ-Lobby-7 待确认 `EPlayerColor` 枚举与 art-bible §5.2 P1–P8 颜色的一一对应关系。两 OQ 共同门控颜色选择器最终 a11y 实现。 | producer / 设计冻结前（与 GDD OQ-Lobby-7 同批） |
