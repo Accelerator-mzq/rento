@@ -1,11 +1,11 @@
 ---
 Epic: foundation-framework
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: M
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 ---
 
 # Story 007 — Sprint0 引擎验证：PIE 隔离 + OnWorldBeginPlay 重触发 + CancelHandle（ADR-0001 #7）
@@ -83,3 +83,15 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（宿主基类）、story-002（IGameClock DI）、story-003（CancelHandle 异步加载纪律）。
 - **Unlocks**: 全部下游 epic 的 headless 可测性（验证通过 = ADR-0001/0004 宿主+RNG 封装真正可测）；dice 确定性 fixture 跑绿（ADR-0001 成功判据③）。
+
+## Completion Notes
+**Completed**: 2026-06-07
+**Criteria**: 7/7 COVERED（AC-1~7 全由真 PIE 集成测试覆盖，无 UNTESTED/DEFERRED）
+**实现要点**: 真 PIE headless 自动化（无 human-in-loop）——spike 先验引擎源码坐实 `FStartPIECommand`/full-editor-boot/-nullrhi 无阻断后实施。harness=`FAutomationEditorCommonUtils::CreateNewMap()`→`FStartPIECommand(false)`→自定义 `IAutomationLatentCommand` 轮询 `GetAnyGameWorld()->WorldType==PIE`（帧预算防卡死）→`FEndPlayMapCommand()`。插桩 `UPIEIsolationProbeSubsystem:UMatchSubsystemBase`（static 计数器+per-instance dirty marker，PIE 自动创建）。flag=`ApplicationContextMask|ProductFilter`。Build.cs 加 `if(bBuildEditor){UnrealEd,LevelEditor}`。
+- TC1=AC-1（Init/Deinit==1）/TC2=AC-2（3 局隔离 dirty marker）/TC3=AC-3（OnWorldBeginPlay 重触发计数）/TC4=AC-4（proxy 真发起 DA_Board_Classic40 异步 load+PIE Stop 无崩）/TC5=AC-5+AC-7（SetSeed 零方差+不同 Seed 产不同序列+seed 不在 Initialize 注入）/TC6=AC-6（FMockGameClock DI 推进）+ Edge×2
+**Deviations**: 无 BLOCKING。Advisory（已文档化）：① AC-4 真磁盘 33KB headless 同步完成，确定性 in-flight 取消委托 FF-003 headless 变异测试，本 TC 增量=真 PIE 真磁盘真拆解无悬挂回调崩溃 ② AC-5/AC-7「固定 seed 在引擎自动 OnWorldBeginPlay 当刻注入」依赖 pt-001 配置管道，由 AC-3+headless dr-001/dr-004 覆盖
+**关闭的 defer 债**（验证驱动闭合）：FF-003 AC-4 真磁盘 UAF（真 PIE 真拆解无崩）/DR-001 OnWorldBeginPlay 重触发（TC3）/FF-004 AC-2 跨局存活·AC-5 跨局缓存·AC-6 PIE 单例（真 PIE 宿主验证）/FF-002 AC-2 mock 时钟（TC6）
+**Test Evidence**: Integration — `Source/rentoTests/Private/Sprint0PIEIsolationTest.cpp`（逻辑 tests/integration/foundation/sprint0_pie_isolation_test.cpp）；主会话独立核实全量 Rento. 170/170 Success, 0 Fail, EXIT 0（Saved/TestReport_ff007_r4/index.json）
+**Code Review**: Complete（本会话 /code-review APPROVED——unreal-specialist+qa-tester 并行，主会话逐条独立裁定；4 must-fix〔TC1 消息字段名/TC4 假覆盖注释/TC5 零方差 vacuous→加不同 Seed 断言/AddExpectedError 收窄〕+2 cleanup 全闭合）
+**Tech debt logged**: 2 条（CommonUI ADR-0012 GameViewportClient 配置债→UI epic / probe 计数器线程安全·AC-7 Seed=0 盲区→次要），见 docs/tech-debt-register.md
+**Review mode**: lean（QL/QL-TEST-COVERAGE skip，LP=本会话 /code-review APPROVED）
