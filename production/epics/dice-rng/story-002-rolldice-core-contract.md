@@ -1,11 +1,11 @@
 ---
 Epic: dice-rng
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: M
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 ---
 
 # Story 002 — RollDice 核心契约 + 执行序铁律
@@ -100,4 +100,19 @@ Last Updated: 2026-06-06
 ## Dependencies
 
 - **Depends on**: story-001（RNG 服务宿主 + `RandRange` 原语 + `FRandomStream` 权威流）须 DONE。
-- **Unlocks**: story-005（事件触发次数/重入依赖 RollDice 主路径）/ story-006（fixture 含 RollDice 抽取）/ story-008（序列化 RollDice 产出的完整结果）。
+- **Unlocks**: story-005（事件触发次数/重入依赖 RollDice 主路径）/ story-006（fixture 含 RollDice 抽取）/ story-008（序列化 RollDice 产出的完整结果）。**dr-003（⚙️ RandomRange 退化，依赖 RollDice 作 AC-10 游标探针）/ dr-004（⚙️ lazy-init 种子，依赖 RollDice 主路径）现解锁。**
+
+## Completion Notes
+**Completed**: 2026-06-07
+**Criteria**: 5/5 passing（AC-1/2/6/7/16c 全 [Logic] COVERED；无 deferred）
+**Test Evidence**: Logic — `Source/rentoTests/Private/RollDiceCoreContractTest.cpp`（5 测试函数，类目 `Rento.Dice.RollDiceCoreContract`，逻辑路径对应 story Test Evidence 的 tests/unit/dice/）。主会话独立重编译（UBT Succeeded）+ 独立重跑全量 Rento. **137/137 Success（130+7 warn）, 0 Fail, EXIT 0**（证据 `Saved/TestReport_dr002/index.json`）。
+**Code Review**: Complete — APPROVED WITH SUGGESTIONS（unreal-specialist + qa-tester 并行，主会话逐条独立裁定 + 同序推演）。生产逻辑 CLEAN（执行序铁律四步保真、payload 不变式、禁旁路、跨 story 边界严守）；测试零假覆盖非 vacuous（AC-6 判别三 bug 场景 / AC-16c bReceived 防假绿）。
+**Deviations**: None（范围内文件无越界；diff 证 story-001 五原语函数体一字未改）。
+**Logged decisions（非债）**:
+- `OnDiceRolled` = 最小可广播 seam（本 story 用于执行序铁律③广播 + AC-16c 验同源）；事件机制完整语义（触发次数不变式 / 重入禁止 / 完整 BP 暴露纪律）→ story-005 在此既有 delegate 上加语义。注释已诚实标注跨 story 边界。
+- `FDiceRollResult` 4 字段 `BlueprintReadOnly`（循 BD-001 W-1：呈现层需 BP 只读访问，可接受放宽）。
+**Advisory suggestions（code-review，未折叠——纯文档/风格无正确性增益，不值重编译周期）**:
+- S-1：AC-2 双点 Edge 可在注释固化「种子 12345 第 N 次出双点」预计算值（维护辅助；确定性非 flaky）。
+- S-2：`OnRollReceived` 可改 `const FDiceRollResult&` 与 ADR-0003 惯例一致（按值亦合法）。
+- S-3：`RemoveDynamic` 仅成功路径执行（headless GC 下野绑定不存在，cosmetic）。
+**Tech debt logged**: None。

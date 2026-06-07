@@ -1,12 +1,16 @@
 // DiceRngService.cpp
 // =============================================================================
 // RNG 服务宿主实现（story-001：宿主 + 种子注入 + 通用原语封装）
+//                   （story-002：RollDice 执行序铁律 + OnDiceRolled 最小 seam）
 //
 // 规范依据：
-//   - ADR-0004（primary）— 确定性 RNG 服务
+//   - ADR-0004（primary）— 确定性 RNG 服务 + 执行序铁律
 //   - ADR-0001            — UObject 宿主与生命周期边界
+//   - ADR-0003            — 事件总线：OnDiceRolled payload 形态
+//   - ADR-0007            — BP/C++ 边界：含 gameplay 随机 → C++ UFUNCTION
 //   - control-manifest Foundation Layer §确定性 RNG (ADR-0004)
 //   - story-001（dice-rng epic）AC-23/18/13/12c + [Host] AC
+//   - story-002（dice-rng epic）AC-1/2/6/7/16c
 //
 // 引擎事实（Sprint0 spike 核验，docs/architecture/sprint0-engine-verification-2026-06-06.md）：
 //   ① RandRange 仍走 Min+TruncToInt(FRand()*Range) 浮点中介 —— CONFIRMED（同平台重放安全）
@@ -44,6 +48,41 @@ void UDiceRngService::OnWorldBeginPlay(UWorld& InWorld)
 		//
 		// 不添加此注释的读者可能误判为漏实现 bug——故保留此长注释。
 	}
+}
+
+// ----------------------------------------------------------------------------
+// RollDice — 掷出标准双骰，执行序铁律四步（story-002，ADR-0004 §Key Interfaces）
+// ----------------------------------------------------------------------------
+
+FDiceRollResult UDiceRngService::RollDice()
+{
+	// 执行序铁律（ADR-0004 §Key Interfaces，dice F-4 前提②，control-manifest Required）
+	// 顺序严格不可乱——每步语义见下注释。
+
+	// ① 流抽：两次独立顺序抽取（各推进权威流游标一次）
+	//    Die1 先抽，Die2 后抽，顺序固定（「两颗独立 d6」，非「先取 Total 再拆解」）
+	//    经 RandomRange 封装（禁旁路 AuthoritativeStream.RandRange 直调，
+	//    退化契约由 story-003 在 RandomRange 加守卫，本路径 [1,6] 无退化）
+	const int32 Die1 = RandomRange(1, 6);
+	const int32 Die2 = RandomRange(1, 6);
+
+	// ② 本地固化：一次性构造完整 payload，不再触碰权威流
+	//    Total == Die1 + Die2（构造时不变式）
+	//    bIsDouble == (Die1 == Die2)（构造时不变式）
+	FDiceRollResult Result;
+	Result.Die1      = Die1;
+	Result.Die2      = Die2;
+	Result.Total     = Die1 + Die2;
+	Result.bIsDouble = (Die1 == Die2);
+
+	// ③ 广播固化值（ADR-0003：owner 先同步算定权威结果，再广播事件）
+	//    订阅者回调内禁同步调任何抽取 API（重入会插入权威序列，story-005 加完整门控）
+	OnDiceRolled.Broadcast(Result);
+
+	// ④ 返回同一固化 Result（绝不广播后重读流）
+	//    若此处改为 "return FDiceRollResult{RandomRange(1,6), RandomRange(1,6), ...}"
+	//    则会额外消耗 Seed，导致返回值 != payload（AC-16c 必 FAIL），故禁之。
+	return Result;
 }
 
 // ----------------------------------------------------------------------------
