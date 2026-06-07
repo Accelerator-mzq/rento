@@ -1,11 +1,11 @@
 ---
 Epic: player-turn
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: L
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 ---
 
 # Story 002 — ETurnPhase 回合阶段状态机（delegate 推进、禁 Latent、双点链 F-3）
@@ -89,3 +89,21 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（PlayerState 容器 + 开局定序无平手分支）。
 - **Unlocks**: story-003（F-1 推进基于状态机 TurnEnd）、story-004（事件按状态机转换序列广播）、story-006（RollPhase 消费骰子）、story-008（读档 `switch(CurrentPhase)` 重入基于枚举字段）。
+
+## Completion Notes
+**Completed**: 2026-06-07
+**Criteria**: 11/11 passing（AC-1~11 全 COVERED；无 DEFERRED）
+- AC-1 → TC1_NormalTurnPhaseSequence（UTurnPhaseSpy 捕获 OnPhaseChanged 精确 6 阶段序列含 TurnEnd 瞬态广播）
+- AC-2 → TC2_IllegalTransitionRejected + Edge_IllegalSignalEveryPhase
+- AC-3~9 → TC3-9（在狱路由/双点额外回合/三连双点送监狱/归零时机/ShouldGoToJail 纯函数五情形/服刑计数/入狱无额外回合）
+- AC-10 → TC10_PBoundaryRejection（P<2/P>4 拒绝）
+- AC-11 → TC11_TiebreakSeatOrderTieGroup（F-4 子组裁定 [9,5,9,5]→{0,1,2,3} + 全平 [9,9,9,9]）
+**实现**：ETurnPhase 7 值（PlayerTurnTypes.h append-only）+ UPlayerTurnSubsystem 扩展（CurrentPhase + OnPhaseChanged 最小 seam + SetPhase/StartTurn/ProcessRollResult/AdvanceFrom*/EndTurn + ShouldGoToJail 静态纯函数 + ResolveInitialTurnOrderWithTiebreak F-4）
+**禁 Latent 硬门**：状态机纯 ETurnPhase 枚举字段 + delegate 同步推进，零 FTimerHandle/Delay/WaitForEvent（ADR-0001 §4，读档 switch 重入预留）
+**Deviations（advisory，已登记 tech-debt）**：
+- AC-10「P>4 拒绝」（正确实现）致 pt-001 Edge_TokenColor_8Colors 回归（原建 8 玩家）→ 同批修复为 P=4 测 4 色互异
+- code-review 修复：UPhaseSpy 原未真创建（agent 用轮询）→ 新建 TurnPhaseSpy.h 补 AC-1 广播序列正面验证；删死代码 PerformInitialTurnOrder
+- 覆盖缺口（低优先）：非法拒绝仅测 RollPhase 入口 / 留狱后移交未断言 / F-4 部分平手未测 → tech-debt
+**Test Evidence**：Logic — Source/rentoTests/Private/TurnPhaseStateMachineTest.cpp（12 测试）+ TurnPhaseSpy.h（spy）；主会话独立全量 191/191 Success, 0 Fail, EXIT 0（Saved/TestReport_pt002_r3/index.json，2026.06.07-13.50.17）
+**Code Review**：Complete — /code-review APPROVED（2 真修复闭合 + deflate 过度 claim，主会话逐条独立裁定）
+**Out of Scope 严守**：F-1 完整寻路/OnGameWon（→003）、payload USTRUCT（→004）、受控写（→005）、骰子消费（→006）、序列化（→008）均未实现

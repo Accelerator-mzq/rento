@@ -1,19 +1,35 @@
 // PlayerTurnSubsystem.cpp
 // =============================================================================
-// UPlayerTurnSubsystem — 回合系统 per-match 宿主实现（story pt-001）
+// UPlayerTurnSubsystem — 回合系统 per-match 宿主实现（story pt-001 / pt-002）
 //
-// 实现 scope（story pt-001）：
-//   - InitializeFromConfig：建队（分配 PlayerId/TokenColor，校验唯一性）+ 调生产定序
+// pt-001 scope（开局入口 + 建队 + 定序）：
+//   - InitializeFromConfig：建队（AC-10 P 边界 + TokenColor 唯一）+ 调定序
 //   - AssignTurnOrderByRollTotals：排名纯方法（降序，TC-3 测试 mock 注入点）
-//   - PerformInitialTurnOrder：生产定序（走 DiceRngService 权威流，ADR-0004）
+//   - ResolveInitialTurnOrderWithTiebreak：生产定序 + F-4 平手重掷（走 DiceRngService 权威流，ADR-0004）
+//   - ResolveInitialTurnOrderWithTiebreak：F-4 平手重掷完整裁定（AC-11）
 //   - ValidateTurnOrderUniqueness：AC-5 TurnOrderIndex 唯一性校验
 //   - GetPlayerStates / FindPlayerById：只读访问接口
 //
+// pt-002 scope（回合阶段状态机，禁 Latent，F-3/F-4/AC-10）：
+//   - SetPhase：状态机推进唯一入口（设置 CurrentPhase + 广播 OnPhaseChanged）
+//   - StartTurn：行动权移交，路由正常/在狱分支
+//   - ProcessRollResult：消费 bIsDouble，驱动 F-3 双点链计数
+//   - AdvanceFromMovePhase / AdvanceFromResolvePhase：阶段推进
+//   - EndTurn：PostRollAction → TurnEnd，判定额外回合 or 移交
+//   - AdvanceFromJailTurn：JailTurn → TurnEnd
+//   - ShouldGoToJail：F-3 纯函数（static，AC-7 可单测）
+//   - FindNextActivePlayerId：pt-002 简单递增（story-003 接管完整 F-1）
+//
+// 禁 Latent 强约束（ADR-0001 §4）：
+//   绝不使用 FTimerHandle / Blueprint Delay / WaitForEvent。
+//   状态机仅通过 ETurnPhase 枚举字段 + delegate 推进，保证读档 switch(CurrentPhase) 重入。
+//
 // 规范依据：
-//   - story pt-001 AC-1~5，TC-1~4，Implementation Notes 1~7
-//   - ADR-0001（per-match UWorldSubsystem，不持状态写语义）
-//   - ADR-0004（定序掷骰走骰子3 权威流，禁旁路引擎 RNG）
-//   - control-manifest Foundation Layer §宿主与生命周期（ADR-0001）
+//   - story pt-001 AC-1~5，story pt-002 AC-1~11，TC-1~11，Edge
+//   - ADR-0001（per-match UWorldSubsystem；禁 Latent；枚举字段 + delegate 推进）
+//   - ADR-0004（骰子权威流，F-3 时序契约）
+//   - ADR-0007（回合状态机落 C++；[Logic] BLOCKING AC 被测逻辑落 C++）
+//   - control-manifest Foundation Layer
 // =============================================================================
 
 #include "PlayerTurnSubsystem.h"
@@ -54,7 +70,27 @@ void UPlayerTurnSubsystem::Deinitialize()
 }
 
 // ===========================================================================
-// InitializeFromConfig — 建队 + 定序主入口
+// SetPhase — 状态机推进唯一入口（pt-002 禁 Latent，ADR-0001 §4）
+// ===========================================================================
+
+void UPlayerTurnSubsystem::SetPhase(ETurnPhase NewPhase)
+{
+    // 记录阶段变更（Verbose 级别，避免 hot path 噪音）
+    UE_LOG(LogTemp, Verbose,
+        TEXT("UPlayerTurnSubsystem::SetPhase — %d → %d（ActivePlayerId=%d）。"),
+        static_cast<int32>(CurrentPhase),
+        static_cast<int32>(NewPhase),
+        CurrentActivePlayerId);
+
+    // 设置枚举字段（禁 Latent，ADR-0001 §4 钉死）
+    CurrentPhase = NewPhase;
+
+    // 广播最小 seam delegate（story-004 在此 enrich payload）
+    OnPhaseChanged.Broadcast(NewPhase);
+}
+
+// ===========================================================================
+// InitializeFromConfig — 建队 + 定序主入口（pt-001 + pt-002 AC-10 P 边界）
 // ===========================================================================
 
 bool UPlayerTurnSubsystem::InitializeFromConfig(const FGameSetupConfig& Config)
@@ -63,6 +99,26 @@ bool UPlayerTurnSubsystem::InitializeFromConfig(const FGameSetupConfig& Config)
 
     UE_LOG(LogTemp, Log,
         TEXT("UPlayerTurnSubsystem::InitializeFromConfig — 开始建队，P=%d。"), P);
+
+    // -------------------------------------------------------------------------
+    // pt-002 AC-10 P 边界校验（补充 pt-001 遗漏的防守层）
+    //   P<2 → 至少需要 2 名玩家（GDD Edge Cases L388）
+    //   P>4 → MVP 上限 4（GDD CR-7 L207，AC-10）
+    // -------------------------------------------------------------------------
+    if (P < 2)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::InitializeFromConfig — "
+                 "P=%d 不足（最小 2 人），开局拒绝（AC-10）。"), P);
+        return false;
+    }
+    if (P > 4)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::InitializeFromConfig — "
+                 "P=%d 超出 MVP 上限 4，开局拒绝（AC-10）。"), P);
+        return false;
+    }
 
     // -------------------------------------------------------------------------
     // 1. 清空旧 PlayerStates（幂等，防重复调用）
@@ -81,7 +137,6 @@ bool UPlayerTurnSubsystem::InitializeFromConfig(const FGameSetupConfig& Config)
 
     // -------------------------------------------------------------------------
     // 3. 校验 TokenColor 唯一性（预校验，开局前拒绝重复/None）
-    //    与 board-data 索引唯一性校验同模式（BoardValidator 惯例）
     // -------------------------------------------------------------------------
     TSet<EPlayerColor> UsedColors;
     for (int32 i = 0; i < P; ++i)
@@ -93,7 +148,7 @@ bool UPlayerTurnSubsystem::InitializeFromConfig(const FGameSetupConfig& Config)
         {
             UE_LOG(LogTemp, Error,
                 TEXT("UPlayerTurnSubsystem::InitializeFromConfig — "
-                     "玩家 [%d] TokenColor=None 非法（None 为哨兵值，不可分配给对局玩家）。"
+                     "玩家 [%d] TokenColor=None 非法（None 为哨兵值），"
                      "开局拒绝（AC-5）。"), i);
             PlayerStates.Empty();
             return false;
@@ -104,7 +159,7 @@ bool UPlayerTurnSubsystem::InitializeFromConfig(const FGameSetupConfig& Config)
         {
             UE_LOG(LogTemp, Error,
                 TEXT("UPlayerTurnSubsystem::InitializeFromConfig — "
-                     "玩家 [%d] TokenColor 重复（AC-5 唯一性校验失败）。"
+                     "玩家 [%d] TokenColor 重复（AC-5 唯一性校验失败），"
                      "开局拒绝。"), i);
             PlayerStates.Empty();
             return false;
@@ -138,44 +193,34 @@ bool UPlayerTurnSubsystem::InitializeFromConfig(const FGameSetupConfig& Config)
         // 确保 ConsecutiveDoubles=0（GDD CR-2，定序不累加，AC-1/TC-1）
         State->ConsecutiveDoubles = 0;
 
-        // TurnOrderIndex 初始化为 -1（定序前未分配，防止 ValidateTurnOrderUniqueness 误判）
+        // TurnOrderIndex 初始化为 -1（定序前未分配，防 ValidateTurnOrderUniqueness 误判）
         State->TurnOrderIndex = -1;
 
         PlayerStates.Add(State);
     }
 
     // -------------------------------------------------------------------------
-    // 5. 执行生产定序（走 DiceRngService 权威流，ADR-0004）
+    // 5. 执行定序（pt-002：走 F-4 平手重掷完整路径，ADR-0004）
     // -------------------------------------------------------------------------
     UDiceRngService* DiceService = GetWorld()
         ? GetWorld()->GetSubsystem<UDiceRngService>() : nullptr;
 
     if (DiceService)
     {
-        // pt-001 seed 接线契约（DiceRngService.h L257 / ADR-0004 重放意图）：
-        //   生产每局种子真实来源 = StartNewGame 玩家配置（Config.RandomSeed），
-        //   由本系统在 OnWorldBeginPlay 之后、定序掷骰之前注入权威流。
-        //   这使开局定序可重放，并消除未注入种子时 DiceService 的 lazy-init 兜底 Error。
-        //   0 是合法种子（dice story-004 AC-18，非哨兵），确定性测试可复现。
+        // 注入种子（ADR-0004 接线契约）
         DiceService->SetSeed(Config.RandomSeed);
 
-        // 生产路径：经权威流掷骰定序
-        PerformInitialTurnOrder(DiceService);
+        // pt-002 F-4 完整定序（含平手重掷，AC-11）
+        // 不传 InjectRolls → 走生产路径（DiceService 权威流）
+        ResolveInitialTurnOrderWithTiebreak(DiceService);
     }
     else
     {
-        // 纯防御兜底分支（实证恒不触发）：DiceService 与本系统同为 per-match UWorldSubsystem，
-        // 引擎在 Game/PIE World（含 headless UWorld::CreateWorld(EWorldType::Game)）下自动创建二者
-        // ——pt-001 测试实证：修 seed 前本路径从未走到，DiceService 的 lazy-init Error 真实触发，
-        //   坐实 DiceService 在 headless 恒存在（故上方 if 分支恒命中）。
-        // 保留本 else 仅为防御未来非常规 World 装配（无 DiceService 的极端场景）：退化为座位序号顺序，
-        // 使 ValidateTurnOrderUniqueness 仍能产出唯一 0..P-1（不静默崩）。
+        // 防御兜底：退化为座位序号顺序（参 pt-001 注释）
         UE_LOG(LogTemp, Warning,
             TEXT("UPlayerTurnSubsystem::InitializeFromConfig — "
-                 "UDiceRngService 不可用（非常规 World 装配，防御路径），"
-                 "定序退化为座位序号顺序（seat 0 = TurnOrderIndex 0）。"));
-
-        // 退化定序：seat i → TurnOrderIndex i（测试可覆盖）
+                 "UDiceRngService 不可用（防御路径），"
+                 "定序退化为座位序号顺序。"));
         for (int32 i = 0; i < PlayerStates.Num(); ++i)
         {
             PlayerStates[i]->TurnOrderIndex = i;
@@ -194,8 +239,17 @@ bool UPlayerTurnSubsystem::InitializeFromConfig(const FGameSetupConfig& Config)
         return false;
     }
 
+    // -------------------------------------------------------------------------
+    // 7. 置初始阶段（pt-002：对局开始，状态机处于 TurnStart 待命）
+    //    不广播——此时无活跃玩家，调用方通过 StartTurn(PlayerId) 正式启动第一回合
+    // -------------------------------------------------------------------------
+    CurrentPhase = ETurnPhase::TurnStart;
+    CurrentActivePlayerId = -1;
+    bLastRollWasDouble = false;
+    bSentToJailThisTurnInternal = false;
+
     UE_LOG(LogTemp, Log,
-        TEXT("UPlayerTurnSubsystem::InitializeFromConfig — 建队完成，PlayerStates.Num()=%d。"),
+        TEXT("UPlayerTurnSubsystem::InitializeFromConfig — 建队完成，P=%d，初始阶段 TurnStart。"),
         PlayerStates.Num());
 
     return true;
@@ -227,11 +281,8 @@ void UPlayerTurnSubsystem::AssignTurnOrderByRollTotals(const TArray<int32>& Roll
     // -------------------------------------------------------------------------
     // 按点数和降序排名，高者 TurnOrderIndex=0（先手）
     //
-    // 算法：构建 seat index 数组，按对应 roll 值降序排序，
-    //       排序后第 rank 位的 seat 获得 TurnOrderIndex=rank。
-    //
     // TC-3 验证：rolls=[5,9,3]（seat0=5, seat1=9, seat2=3）
-    //   降序排序后：[seat1(9), seat0(5), seat2(3)]
+    //   降序：[seat1(9), seat0(5), seat2(3)]
     //   seat1→TurnOrderIndex=0, seat0→TurnOrderIndex=1, seat2→TurnOrderIndex=2
     // -------------------------------------------------------------------------
     TArray<int32> SeatIndices;
@@ -241,7 +292,7 @@ void UPlayerTurnSubsystem::AssignTurnOrderByRollTotals(const TArray<int32>& Roll
         SeatIndices.Add(i);
     }
 
-    // 按点数和降序排序 seat 序列（稳定排序不保证，平手处理归 story-002）
+    // 按点数和降序排序 seat 序列
     SeatIndices.Sort([&RollTotals](int32 A, int32 B)
     {
         return RollTotals[A] > RollTotals[B];  // 降序
@@ -255,50 +306,246 @@ void UPlayerTurnSubsystem::AssignTurnOrderByRollTotals(const TArray<int32>& Roll
     }
 
     UE_LOG(LogTemp, Log,
-        TEXT("UPlayerTurnSubsystem::AssignTurnOrderByRollTotals — 定序完成（P=%d）。"), P);
+        TEXT("UPlayerTurnSubsystem::AssignTurnOrderByRollTotals — 排名完成（P=%d）。"), P);
 }
 
 // ===========================================================================
-// PerformInitialTurnOrder — 生产定序（走骰子3 权威流，ADR-0004）
+// ResolveInitialTurnOrderWithTiebreak — F-4 平手重掷完整定序（pt-002 AC-11）
+//   注：pt-001 的 PerformInitialTurnOrder（无平手语义）已被本方法取代并删除（零调用）。
+//   生产路径与测试均走本方法；AssignTurnOrderByRollTotals 仍为纯排名子步骤（TC-3 注入点）。
 // ===========================================================================
 
-void UPlayerTurnSubsystem::PerformInitialTurnOrder(UDiceRngService* DiceService)
+void UPlayerTurnSubsystem::ResolveInitialTurnOrderWithTiebreak(
+    UDiceRngService* DiceService,
+    const TArray<int32>& InjectRolls)
 {
-    check(DiceService);
-
     const int32 P = PlayerStates.Num();
-
     if (P == 0)
     {
         return;
     }
 
     // -------------------------------------------------------------------------
-    // 对每位玩家掷一次骰，取点数和（GDD CR-2 定序形态）：
-    //   - 走骰子3 唯一权威 FRandomStream（ADR-0004 Required）
-    //   - 定序只取 Total（FDiceRollResult.Total）
-    //   - 忽略 bIsDouble（GDD CR-2："定序掷骰只取点数和、忽略 bIsDouble"）
-    //   - ConsecutiveDoubles 保持 0（GDD CR-2："不进双点链"）
+    // 注入 rolls 游标（测试注入路径：每 P 个值对应一轮所有玩家）
     // -------------------------------------------------------------------------
-    TArray<int32> RollTotals;
-    RollTotals.Reserve(P);
+    int32 InjectCursor = 0;
+
+    // -------------------------------------------------------------------------
+    // 第一轮：每位玩家各掷一次，收集初始点数
+    // -------------------------------------------------------------------------
+    TArray<int32> CurrentRolls;
+    CurrentRolls.Reserve(P);
 
     for (int32 i = 0; i < P; ++i)
     {
-        // 调 DiceRngService::RollDice（执行序铁律：流抽→固化→广播→返回同一固化值）
-        // 定序不进双点链，ConsecutiveDoubles 保持 0（已在建队时置 0）
-        const FDiceRollResult Roll = DiceService->RollDice();
-        RollTotals.Add(Roll.Total);
-
-        UE_LOG(LogTemp, Verbose,
-            TEXT("UPlayerTurnSubsystem::PerformInitialTurnOrder — "
-                 "玩家 [%d] 定序掷骰：Die1=%d, Die2=%d, Total=%d (bIsDouble=%s，定序忽略)。"),
-            i, Roll.Die1, Roll.Die2, Roll.Total,
-            Roll.bIsDouble ? TEXT("true") : TEXT("false"));
+        int32 RollVal = 0;
+        if (InjectRolls.Num() > InjectCursor)
+        {
+            // 使用注入值（测试路径，确定性）
+            RollVal = InjectRolls[InjectCursor++];
+        }
+        else if (DiceService)
+        {
+            // 生产路径：走权威流
+            RollVal = DiceService->RollDice().Total;
+        }
+        CurrentRolls.Add(RollVal);
     }
 
-    // 喂排名纯方法（与 TC-3 测试注入路径复用同一逻辑，保证生产/测试一致）
-    AssignTurnOrderByRollTotals(RollTotals);
+    // -------------------------------------------------------------------------
+    // 用 TArray 追踪每个 seat 已确定的 rank（-1 = 尚未确定）
+    // -------------------------------------------------------------------------
+    TArray<int32> AssignedRank;
+    AssignedRank.Init(-1, P);
+
+    // -------------------------------------------------------------------------
+    // 迭代：最多 MaxTiebreakRounds 轮（含初始轮，round=0 即第一轮已取得 rolls）
+    //
+    // GDD L370 off-by-one 澄清：
+    //   实际重掷发生在 round ∈ [0, MaxTiebreakRounds-1]（共 MaxTiebreakRounds 轮）。
+    //   达 MaxTiebreakRounds 轮后剩余平手进入席位裁定。
+    // -------------------------------------------------------------------------
+    for (int32 Round = 0; Round < MaxTiebreakRounds; ++Round)
+    {
+        // ------------------------------------------------------------------
+        // 1. 按当前 rolls 降序将 seat 排序，找出已可确定 rank 的 seat
+        // ------------------------------------------------------------------
+        // 构建 (roll, seat) 对，按 roll 降序排序
+        TArray<TPair<int32, int32>> RollSeatPairs;
+        RollSeatPairs.Reserve(P);
+
+        for (int32 i = 0; i < P; ++i)
+        {
+            if (AssignedRank[i] < 0)  // 尚未确定 rank 的 seat 才参与本轮
+            {
+                RollSeatPairs.Add(TPair<int32, int32>(CurrentRolls[i], i));
+            }
+        }
+
+        // 按 roll 降序排序（同 roll 保持稳定性，后续平手判断依赖此顺序）
+        RollSeatPairs.Sort([](const TPair<int32, int32>& A, const TPair<int32, int32>& B)
+        {
+            if (A.Key != B.Key)
+            {
+                return A.Key > B.Key;  // 降序
+            }
+            return A.Value < B.Value;  // roll 相等时 seat 升序（稳定裁定）
+        });
+
+        // ------------------------------------------------------------------
+        // 2. 计算本轮已确定 rank 的下一起始偏移
+        //    （= 当前已分配 rank 数量，即本轮排名从此开始）
+        // ------------------------------------------------------------------
+        int32 RankOffset = 0;
+        for (int32 i = 0; i < P; ++i)
+        {
+            if (AssignedRank[i] >= 0)
+            {
+                ++RankOffset;
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // 3. 分组找平手子组，确定哪些可分配 rank，哪些需要继续重掷
+        // ------------------------------------------------------------------
+        int32 LocalPos = 0;
+        const int32 TotalRemaining = RollSeatPairs.Num();
+
+        while (LocalPos < TotalRemaining)
+        {
+            // 取当前 roll 值，找连续相同的 tie group
+            const int32 TieRoll = RollSeatPairs[LocalPos].Key;
+            int32 GroupStart = LocalPos;
+            int32 GroupEnd = LocalPos;
+
+            while (GroupEnd + 1 < TotalRemaining &&
+                   RollSeatPairs[GroupEnd + 1].Key == TieRoll)
+            {
+                ++GroupEnd;
+            }
+
+            const int32 GroupSize = GroupEnd - GroupStart + 1;
+
+            if (GroupSize == 1)
+            {
+                // 唯一值，直接分配 rank
+                const int32 Seat = RollSeatPairs[GroupStart].Value;
+                AssignedRank[Seat] = RankOffset;
+                ++RankOffset;
+            }
+            // GroupSize > 1 且是最后一轮时由后续席位裁定处理
+            // GroupSize > 1 且非最后一轮时本组继续参与下轮重掷（不分配 rank）
+
+            LocalPos = GroupEnd + 1;
+        }
+
+        // ------------------------------------------------------------------
+        // 4. 检查是否所有 seat 都已分配 rank
+        // ------------------------------------------------------------------
+        bool bAllAssigned = true;
+        for (int32 i = 0; i < P; ++i)
+        {
+            if (AssignedRank[i] < 0)
+            {
+                bAllAssigned = false;
+                break;
+            }
+        }
+
+        if (bAllAssigned)
+        {
+            // 定序完成，应用 AssignedRank
+            for (int32 i = 0; i < P; ++i)
+            {
+                PlayerStates[i]->TurnOrderIndex = AssignedRank[i];
+            }
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::ResolveInitialTurnOrderWithTiebreak — "
+                     "定序完成（Round=%d，无剩余平手）。"), Round);
+            return;
+        }
+
+        // ------------------------------------------------------------------
+        // 5. 仍有平手 seat → 若本轮为最后一轮，进行席位升序裁定；否则继续重掷
+        // ------------------------------------------------------------------
+        const bool bIsLastRound = (Round == MaxTiebreakRounds - 1);
+        if (bIsLastRound)
+        {
+            // 席位升序裁定（子组内按席位升序，GDD L376 澄清）
+            // 当前仍在 RollSeatPairs 中且尚未分配 rank 的 seat，
+            // 按 (roll 降序, seat 升序) 已排好——此时各平手子组内按 seat 升序分配
+            int32 CurRankOffset2 = 0;
+            for (int32 i = 0; i < P; ++i)
+            {
+                if (AssignedRank[i] >= 0)
+                {
+                    ++CurRankOffset2;
+                }
+            }
+
+            // 重新整理未分配的 seat，按子组内席位升序裁定
+            // 做法：遍历 RollSeatPairs（已按 roll 降序+seat 升序排好），
+            // 连续相同 roll 的组内，按 seat 升序分配 rank（自然顺序已满足）
+            for (const TPair<int32, int32>& Pair : RollSeatPairs)
+            {
+                const int32 Seat = Pair.Value;
+                if (AssignedRank[Seat] < 0)
+                {
+                    // 找该 seat 所在子组的起始 rank（= 已分配 rank + 该子组在剩余中的偏移）
+                    // 由于 RollSeatPairs 已排好 (roll 降序, seat 升序)，直接顺序分配
+                    AssignedRank[Seat] = CurRankOffset2++;
+                }
+            }
+
+            // 应用最终 AssignedRank
+            for (int32 i = 0; i < P; ++i)
+            {
+                PlayerStates[i]->TurnOrderIndex = AssignedRank[i];
+            }
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::ResolveInitialTurnOrderWithTiebreak — "
+                     "达 MaxTiebreakRounds=%d，剩余平手按席位升序裁定。"),
+                MaxTiebreakRounds);
+            return;
+        }
+
+        // ------------------------------------------------------------------
+        // 6. 未达上限 → 对仍未分配 rank 的 seat 重掷
+        // ------------------------------------------------------------------
+        for (int32 i = 0; i < P; ++i)
+        {
+            if (AssignedRank[i] < 0)
+            {
+                // 未确定 rank 的 seat 重掷
+                int32 NewRoll = 0;
+                if (InjectRolls.Num() > InjectCursor)
+                {
+                    NewRoll = InjectRolls[InjectCursor++];
+                }
+                else if (DiceService)
+                {
+                    NewRoll = DiceService->RollDice().Total;
+                }
+                CurrentRolls[i] = NewRoll;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 兜底：确保所有 seat 都有 rank（不应到达此处，防御性补全）
+    // -------------------------------------------------------------------------
+    int32 FallbackRank = 0;
+    for (int32 i = 0; i < P; ++i)
+    {
+        if (AssignedRank[i] < 0)
+        {
+            AssignedRank[i] = FallbackRank++;
+        }
+    }
+    for (int32 i = 0; i < P; ++i)
+    {
+        PlayerStates[i]->TurnOrderIndex = AssignedRank[i];
+    }
 }
 
 // ===========================================================================
@@ -310,11 +557,10 @@ bool UPlayerTurnSubsystem::ValidateTurnOrderUniqueness() const
     const int32 P = PlayerStates.Num();
     if (P == 0)
     {
-        return true;  // 空局允许（P=0 边界）
+        return true;  // 空局允许
     }
 
-    // TurnOrderIndex 须精确覆盖 0..P-1 各一次
-    // 方法：计数 bitmap，复杂度 O(P)
+    // TurnOrderIndex 须精确覆盖 0..P-1 各一次（bitmap 法，O(P)）
     TArray<bool> Seen;
     Seen.Init(false, P);
 
@@ -322,7 +568,7 @@ bool UPlayerTurnSubsystem::ValidateTurnOrderUniqueness() const
     {
         const int32 Idx = PlayerStates[i]->TurnOrderIndex;
 
-        // 越界（<0 或 >=P）
+        // 越界
         if (Idx < 0 || Idx >= P)
         {
             UE_LOG(LogTemp, Error,
@@ -344,6 +590,392 @@ bool UPlayerTurnSubsystem::ValidateTurnOrderUniqueness() const
     }
 
     return true;
+}
+
+// ===========================================================================
+// ShouldGoToJail — F-3 纯函数（static，AC-7 可单测）
+// ===========================================================================
+
+/*static*/
+bool UPlayerTurnSubsystem::ShouldGoToJail(int32 ConsecutiveCount, int32 Threshold)
+{
+    // 用 >= 非 ==（额外防御层，GDD L354 澄清：
+    //   正常路径 ConsecutiveDoubles ∈ [0, threshold]，>=逻辑等价==；
+    //   异常路径内存损坏/读档越级，>= 兜住越级情形）
+    return ConsecutiveCount >= Threshold;
+}
+
+// ===========================================================================
+// StartTurn — 启动指定玩家回合（pt-002 状态机入口）
+// ===========================================================================
+
+void UPlayerTurnSubsystem::StartTurn(int32 PlayerId)
+{
+    // 设置当前行动玩家
+    CurrentActivePlayerId = PlayerId;
+
+    // 重置本回合状态
+    bLastRollWasDouble = false;
+    bSentToJailThisTurnInternal = false;
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::StartTurn — PlayerId=%d 开始回合。"), PlayerId);
+
+    // TurnStart 阶段广播
+    SetPhase(ETurnPhase::TurnStart);
+
+    // 路由：在狱 → JailTurn；正常 → RollPhase（GDD (b) L224）
+    URentoPlayerState* PlayerState = FindPlayerById(PlayerId);
+    if (PlayerState && PlayerState->bIsInJail)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::StartTurn — PlayerId=%d 在狱，路由到 JailTurn。"),
+            PlayerId);
+        SetPhase(ETurnPhase::JailTurn);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::StartTurn — PlayerId=%d 正常，路由到 RollPhase。"),
+            PlayerId);
+        SetPhase(ETurnPhase::RollPhase);
+    }
+}
+
+// ===========================================================================
+// ProcessRollResult — 消费 bIsDouble，驱动 F-3 双点链（pt-002 AC-4/5/6/7/9）
+// ===========================================================================
+
+void UPlayerTurnSubsystem::ProcessRollResult(bool bIsDouble, bool& OutSentToJail)
+{
+    OutSentToJail = false;
+
+    // 非法转移检测（AC-2）：仅 RollPhase 可调用
+    if (CurrentPhase != ETurnPhase::RollPhase)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::ProcessRollResult — "
+                 "非法转移：当前阶段为 %d（非 RollPhase=1），"
+                 "ProcessRollResult 被拒绝，阶段保持不变（AC-2）。"),
+            static_cast<int32>(CurrentPhase));
+        return;
+    }
+
+    // 获取当前玩家 State（校验 bIsInJail 与 bIsBankrupt）
+    URentoPlayerState* PlayerState = FindPlayerById(CurrentActivePlayerId);
+
+    // ------------------------------------------------------------------
+    // F-3 时序契约（GDD L356，pt-002 Note 4）：
+    //   ① 检测 bIsDouble
+    //   ② 若 T → ConsecutiveDoubles+=1（先累加）
+    //   ③ 判 DoublesToJail（>= DoublesJailThreshold）
+    //      T → 送监狱（取消移动，无额外回合，ConsecutiveDoubles 归零）
+    //      F → 正常移动（推进 MovePhase）
+    //   ④ 若 bIsDouble==F → ConsecutiveDoubles=0
+    // ------------------------------------------------------------------
+    if (bIsDouble)
+    {
+        // ② 先累加
+        if (PlayerState)
+        {
+            PlayerState->ConsecutiveDoubles += 1;
+        }
+
+        // ③ 判 DoublesToJail
+        const int32 ConsecNow = PlayerState ? PlayerState->ConsecutiveDoubles : 0;
+        if (ShouldGoToJail(ConsecNow, DoublesJailThreshold))
+        {
+            // 触发 F-3 送监狱：取消移动，无额外回合，ConsecutiveDoubles 归零
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::ProcessRollResult — "
+                     "F-3 触发：ConsecutiveDoubles=%d >= Threshold=%d，"
+                     "PlayerId=%d 送监狱。"),
+                ConsecNow, DoublesJailThreshold, CurrentActivePlayerId);
+
+            if (PlayerState)
+            {
+                PlayerState->ConsecutiveDoubles = 0;
+            }
+            bLastRollWasDouble = false;    // 无额外回合（AC-5 / AC-9）
+            bSentToJailThisTurnInternal = true;
+            OutSentToJail = true;
+
+            // 跳过 MovePhase/ResolvePhase，直接 PostRollAction → TurnEnd
+            // （本系统只发送监狱意图，实际入狱由事件格7负责，pt-002 不改 bIsInJail）
+            SetPhase(ETurnPhase::PostRollAction);
+        }
+        else
+        {
+            // 正常双点：记录双点标记，推进 MovePhase
+            bLastRollWasDouble = true;
+            SetPhase(ETurnPhase::MovePhase);
+        }
+    }
+    else
+    {
+        // ④ 非双点 → ConsecutiveDoubles=0（GDD L356 步骤④）
+        if (PlayerState)
+        {
+            PlayerState->ConsecutiveDoubles = 0;
+        }
+        bLastRollWasDouble = false;
+        SetPhase(ETurnPhase::MovePhase);
+    }
+}
+
+// ===========================================================================
+// AdvanceFromMovePhase — MovePhase → ResolvePhase
+// ===========================================================================
+
+void UPlayerTurnSubsystem::AdvanceFromMovePhase()
+{
+    // 非法转移检测（AC-2）
+    if (CurrentPhase != ETurnPhase::MovePhase)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::AdvanceFromMovePhase — "
+                 "非法转移：当前阶段为 %d（非 MovePhase=2），"
+                 "拒绝推进，阶段保持不变（AC-2）。"),
+            static_cast<int32>(CurrentPhase));
+        return;
+    }
+    SetPhase(ETurnPhase::ResolvePhase);
+}
+
+// ===========================================================================
+// AdvanceFromResolvePhase — ResolvePhase → PostRollAction
+// ===========================================================================
+
+void UPlayerTurnSubsystem::AdvanceFromResolvePhase()
+{
+    // 非法转移检测（AC-2）
+    if (CurrentPhase != ETurnPhase::ResolvePhase)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::AdvanceFromResolvePhase — "
+                 "非法转移：当前阶段为 %d（非 ResolvePhase=3），"
+                 "拒绝推进，阶段保持不变（AC-2）。"),
+            static_cast<int32>(CurrentPhase));
+        return;
+    }
+    SetPhase(ETurnPhase::PostRollAction);
+}
+
+// ===========================================================================
+// EndTurn — PostRollAction → TurnEnd，判定额外回合 or 移交（pt-002 AC-4/6/9）
+// ===========================================================================
+
+void UPlayerTurnSubsystem::EndTurn(bool bSentToJailThisTurn)
+{
+    // 非法转移检测（AC-2）
+    if (CurrentPhase != ETurnPhase::PostRollAction)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::EndTurn — "
+                 "非法转移：当前阶段为 %d（非 PostRollAction=4），"
+                 "拒绝推进，阶段保持不变（AC-2）。"),
+            static_cast<int32>(CurrentPhase));
+        return;
+    }
+
+    // TurnEnd 广播
+    SetPhase(ETurnPhase::TurnEnd);
+
+    // ------------------------------------------------------------------
+    // 判定额外回合（CR-4 / AC-4 / AC-6 / AC-9）：
+    //   bLastRollWasDouble=true
+    //   && 本回合未被送监狱（bSentToJailThisTurn=false 且内部标记也 false）
+    //   && 当前玩家未破产
+    // ------------------------------------------------------------------
+    const bool bEffectiveSentToJail = bSentToJailThisTurn || bSentToJailThisTurnInternal;
+
+    URentoPlayerState* PlayerState = FindPlayerById(CurrentActivePlayerId);
+    const bool bBankrupt = PlayerState ? PlayerState->bIsBankrupt : false;
+
+    // 出狱双点不触发额外回合（AC-9）：
+    //   若本回合玩家 bIsInJail=true（入狱状态进入 JailTurn），双点出狱不算 CR-4
+    //   注意：ProcessRollResult 不处理 JailTurn 路径，JailTurn 走 AdvanceFromJailTurn
+    //   此处 bLastRollWasDouble 由 ProcessRollResult 设置（仅 RollPhase 分支），
+    //   JailTurn 路径不经 ProcessRollResult，故 bLastRollWasDouble=false 自然成立
+
+    if (bLastRollWasDouble && !bEffectiveSentToJail && !bBankrupt)
+    {
+        // 双点额外回合：同玩家继续，ConsecutiveDoubles 不归零（AC-6）
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::EndTurn — "
+                 "双点额外回合：PlayerId=%d 继续，ConsecutiveDoubles=%d（不归零，AC-6）。"),
+            CurrentActivePlayerId,
+            PlayerState ? PlayerState->ConsecutiveDoubles : 0);
+
+        // 重置本回合临时状态（保留 ConsecutiveDoubles）
+        bLastRollWasDouble = false;
+        bSentToJailThisTurnInternal = false;
+
+        // 回到同玩家 RollPhase（不通过 StartTurn，直接推进，不重置 ConsecutiveDoubles）
+        SetPhase(ETurnPhase::RollPhase);
+    }
+    else
+    {
+        // 无额外回合：移交下一玩家
+        // ConsecutiveDoubles 归零（AC-6：行动权实际移交时归零）
+        if (PlayerState)
+        {
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::EndTurn — "
+                     "移交下一玩家：PlayerId=%d ConsecutiveDoubles 归零（AC-6）。"),
+                CurrentActivePlayerId);
+            PlayerState->ConsecutiveDoubles = 0;
+        }
+
+        // 找下一个未破产玩家（pt-002 简单实现，story-003 接管完整 F-1）
+        const int32 NextPlayerId = FindNextActivePlayerId();
+        if (NextPlayerId >= 0)
+        {
+            StartTurn(NextPlayerId);
+        }
+        else
+        {
+            // 无下一玩家（退化局 / 全员破产）：记日志，不进轮转
+            // story-003 将完整处理 OnGameWon 终局信号
+            UE_LOG(LogTemp, Warning,
+                TEXT("UPlayerTurnSubsystem::EndTurn — "
+                     "无下一活跃玩家（退化局？），停止轮转。"
+                     "（story-003 接管 OnGameWon 终局）"));
+        }
+    }
+}
+
+// ===========================================================================
+// AdvanceFromJailTurn — JailTurn → TurnEnd（在狱玩家出狱决策完成）
+// ===========================================================================
+
+void UPlayerTurnSubsystem::AdvanceFromJailTurn(bool bRemainsInJail)
+{
+    // 非法转移检测（AC-2）
+    if (CurrentPhase != ETurnPhase::JailTurn)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::AdvanceFromJailTurn — "
+                 "非法转移：当前阶段为 %d（非 JailTurn=6），"
+                 "拒绝推进，阶段保持不变（AC-2）。"),
+            static_cast<int32>(CurrentPhase));
+        return;
+    }
+
+    // AC-8：留狱时 JailTurnsServed+=1；出狱时不增加
+    URentoPlayerState* PlayerState = FindPlayerById(CurrentActivePlayerId);
+    if (PlayerState)
+    {
+        if (bRemainsInJail)
+        {
+            PlayerState->JailTurnsServed += 1;
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::AdvanceFromJailTurn — "
+                     "PlayerId=%d 留狱，JailTurnsServed=%d。"),
+                CurrentActivePlayerId, PlayerState->JailTurnsServed);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::AdvanceFromJailTurn — "
+                     "PlayerId=%d 出狱，JailTurnsServed 不增加（=%d）。"),
+                CurrentActivePlayerId, PlayerState->JailTurnsServed);
+        }
+    }
+
+    // 推进到 TurnEnd，然后由 EndTurn 的逻辑处理移交
+    // 注意：JailTurn 路径不经 ProcessRollResult，bLastRollWasDouble=false，
+    //   EndTurn 自然走「移交下一玩家」路径（无额外回合，AC-9 出狱双点不累加）
+    SetPhase(ETurnPhase::TurnEnd);
+
+    // JailTurn → TurnEnd 后移交下一玩家（ConsecutiveDoubles 归零，AC-6）
+    if (PlayerState)
+    {
+        PlayerState->ConsecutiveDoubles = 0;
+    }
+    bLastRollWasDouble = false;
+    bSentToJailThisTurnInternal = false;
+
+    // 找下一玩家（同 EndTurn 逻辑）
+    const int32 NextPlayerId = FindNextActivePlayerId();
+    if (NextPlayerId >= 0)
+    {
+        StartTurn(NextPlayerId);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("UPlayerTurnSubsystem::AdvanceFromJailTurn — "
+                 "无下一活跃玩家，停止轮转（story-003 接管）。"));
+    }
+}
+
+// ===========================================================================
+// FindNextActivePlayerId — 找下一个未破产玩家（pt-002 简单递增，story-003 接管 F-1）
+// ===========================================================================
+
+int32 UPlayerTurnSubsystem::FindNextActivePlayerId() const
+{
+    const int32 P = PlayerStates.Num();
+    if (P == 0)
+    {
+        return -1;
+    }
+
+    // 找当前活跃玩家的 TurnOrderIndex
+    int32 CurrentTurnOrder = -1;
+    for (const TObjectPtr<URentoPlayerState>& State : PlayerStates)
+    {
+        if (State && State->PlayerId == CurrentActivePlayerId)
+        {
+            CurrentTurnOrder = State->TurnOrderIndex;
+            break;
+        }
+    }
+
+    if (CurrentTurnOrder < 0)
+    {
+        // 当前玩家找不到，退化为第一个未破产
+        CurrentTurnOrder = -1;
+    }
+
+    // 按 TurnOrderIndex 递增（循环）找下一个未破产玩家
+    // ⚠ story-003 注释：完整 F-1（破产跳过/OnGameWon/INDEX_NONE 哨兵）归 story-003
+    for (int32 Offset = 1; Offset <= P; ++Offset)
+    {
+        const int32 NextTurnOrder = (CurrentTurnOrder + Offset) % P;
+
+        // 在 PlayerStates 中找 TurnOrderIndex == NextTurnOrder 的玩家
+        for (const TObjectPtr<URentoPlayerState>& State : PlayerStates)
+        {
+            if (State &&
+                State->TurnOrderIndex == NextTurnOrder &&
+                !State->bIsBankrupt)
+            {
+                return State->PlayerId;
+            }
+        }
+    }
+
+    return -1;  // 无下一活跃玩家
+}
+
+// ===========================================================================
+// GetCurrentPhase — 获取当前阶段
+// ===========================================================================
+
+ETurnPhase UPlayerTurnSubsystem::GetCurrentPhase() const
+{
+    return CurrentPhase;
+}
+
+// ===========================================================================
+// GetCurrentActivePlayerId — 获取当前行动玩家 ID
+// ===========================================================================
+
+int32 UPlayerTurnSubsystem::GetCurrentActivePlayerId() const
+{
+    return CurrentActivePlayerId;
 }
 
 // ===========================================================================

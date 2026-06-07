@@ -617,14 +617,18 @@ bool FPlayerTurn_Edge_ConsecutiveDoublesKeepsZero::RunTest(const FString& Parame
 }
 
 // =============================================================================
-// Edge_TokenColor8ColorsUnique — TokenColor 8 色唯一分配通过；重复则拒绝
+// Edge_TokenColor8ColorsUnique — TokenColor 唯一分配通过；重复则拒绝
+//
+// 注：8 色调色板由 EPlayerColor 枚举（8 实色+None）定义保证；游戏为 2-4 人局
+//     （pt-002 AC-10 强制 P<=4），故每局取 <=4 色。本测试在合法 P 上限（P=4）验
+//     「4 色互异 → 唯一分配成功」，重复色 → 拒绝。
 //
 // GIVEN：
-//   Part A：8 个玩家配置各用不同颜色（8 色全用完）→ 建队成功
-//   Part B：2 个玩家配置但 TokenColor 重复（均为 Red）→ 建队拒绝，返回 false
+//   Part A：P=4，4 个玩家各用不同颜色（合法上限）→ 建队成功 + 4 色互异
+//   Part B：2 个玩家但 TokenColor 重复（均为 Red）→ 建队拒绝，返回 false
 //
 // 非 vacuous：
-//   Part A：若 8 色唯一分配时建队失败，TestTrue 处真 FAIL。
+//   Part A：若实现复用同色致 <4 互异，TestEqual(4) 处真 FAIL；若建队失败 TestTrue FAIL。
 //   Part B：若重复颜色未被拒绝，TestFalse 处真 FAIL。
 // =============================================================================
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -652,11 +656,26 @@ bool FPlayerTurn_Edge_TokenColor8Colors::RunTest(const FString& Parameters)
             return false;
         }
 
-        // MakeConfig(8) 自动分配 8 种不同颜色（Red/Blue/Green/Yellow/Purple/Orange/Cyan/Pink）
-        const FGameSetupConfig Config8 = PlayerTurnTestHelpers::MakeConfig(8);
+        // 8 色调色板（Red..Pink）由 EPlayerColor 枚举定义保证（PlayerTurnTypes.h）；
+        // 游戏为 2-4 人局（pt-002 AC-10 强制 P<=4），故每局最多用 4 色。
+        // 本 Part 验「从 8 色调色板取 4 色，开局唯一分配」在合法 P 上限成功。
+        // MakeConfig(4) 分配前 4 色（Red/Blue/Green/Yellow，互异）。
+        const FGameSetupConfig Config4 = PlayerTurnTestHelpers::MakeConfig(4);
 
-        const bool bOk = Sub->InitializeFromConfig(Config8);
-        TestTrue(TEXT("Edge_8Color[A]: 8 种不同颜色应建队成功"), bOk);
+        const bool bOk = Sub->InitializeFromConfig(Config4);
+        TestTrue(TEXT("Edge_Color[A]: 4 种不同颜色（P=4 合法上限）应建队成功"), bOk);
+
+        // 验 4 个分配的 TokenColor 确实互异（唯一性意图，非 vacuous：若实现复用同色则 FAIL）
+        if (bOk)
+        {
+            const TArray<TObjectPtr<URentoPlayerState>>& States = Sub->GetPlayerStates();
+            TSet<EPlayerColor> Distinct;
+            for (const TObjectPtr<URentoPlayerState>& S : States)
+            {
+                if (S) { Distinct.Add(S->TokenColor); }
+            }
+            TestEqual(TEXT("Edge_Color[A]: 4 玩家应分得 4 种互异颜色"), Distinct.Num(), 4);
+        }
 
         PlayerTurnTestHelpers::DestroyGameWorld(World);
     }

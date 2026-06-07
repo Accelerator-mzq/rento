@@ -92,3 +92,46 @@ enum class EAIDifficulty : uint8
 
     // ⚠ 新难度只能追加到此处（ordinal >= 4），禁止删除/重排以上值。
 };
+
+// =============================================================================
+// ETurnPhase — 回合阶段状态机枚举（pt-002 / TR-turn-002 / GDD (b) States 表）
+//
+// 每个活跃回合经历的阶段序列（GDD L224 States and Transitions (b)）：
+//   正常路径：TurnStart → RollPhase → MovePhase → ResolvePhase → PostRollAction → TurnEnd
+//   在狱路径：TurnStart → JailTurn → TurnEnd
+//   双点额外：TurnEnd →（双点且未入狱）→ RollPhase（同玩家继续）
+//
+// 禁 Latent（ADR-0001 §4）：状态机仅用枚举字段 + delegate 推进，
+//   绝不用 FTimerHandle/Blueprint Delay/WaitForEvent，以保证读档 switch(CurrentPhase) 重入。
+//
+// ⚠ append-only 纪律（ADR-0005 / GDD L277 R7 澄清）：
+//   整数索引 0..6 已冻结（首次提交即锁定），新阶段只能追加到末尾（ordinal >= 7）。
+//   历史草稿值（AIPlaybackGating）已在任何引擎资产使用前删除，不违反 append-only。
+//   7 个合法值覆盖全部回合阶段，结构（阶段序列）不可变。
+// =============================================================================
+UENUM(BlueprintType)
+enum class ETurnPhase : uint8
+{
+    /** 回合开始（ordinal=0）：行动权移交至本玩家，路由正常/在狱分支 */
+    TurnStart       = 0  UMETA(DisplayName = "Turn Start"),
+
+    /** 掷骰阶段（ordinal=1）：等待完整 FDiceRollResult（Die1/Die2/Total/bIsDouble） */
+    RollPhase       = 1  UMETA(DisplayName = "Roll Phase"),
+
+    /** 移动阶段（ordinal=2）：委派移动(4)，等待落点回报 */
+    MovePhase       = 2  UMETA(DisplayName = "Move Phase"),
+
+    /** 结算阶段（ordinal=3）：落地结算（买地/收租/事件），委派经济(5)/事件格(7) */
+    ResolvePhase    = 3  UMETA(DisplayName = "Resolve Phase"),
+
+    /** 回合后行动（ordinal=4）：人类 UI 发「结束回合」/ AI 同步返回动作列表 */
+    PostRollAction  = 4  UMETA(DisplayName = "Post Roll Action"),
+
+    /** 回合结束（ordinal=5）：判定额外回合 or 移交下一玩家 TurnStart */
+    TurnEnd         = 5  UMETA(DisplayName = "Turn End"),
+
+    /** 入狱回合（ordinal=6）：在狱玩家专属分支，出狱决策点后进 TurnEnd */
+    JailTurn        = 6  UMETA(DisplayName = "Jail Turn"),
+
+    // ⚠ 新阶段只能追加到此处（ordinal >= 7），禁止删除/重排以上值（存档序列化依赖整数索引不变）。
+};
