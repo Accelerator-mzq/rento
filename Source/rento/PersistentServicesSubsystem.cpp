@@ -2,12 +2,18 @@
 // =============================================================================
 // UPersistentServicesSubsystem 实现（story-004 跨局持久服务宿主框架）
 //
-// 本文件为 stub 框架实现。各服务实体（Save/Audio）由各自 epic 填充真实逻辑。
-// 规范依据：ADR-0001、story-004 AC-1~6、control-manifest Foundation Layer §宿主与生命周期
+// StartNewGame body 由 pt-001 填充（story pt-001 Implementation Note 5）：
+//   - 解析当前 World → 取 UPlayerTurnSubsystem → forward config 调建队方法
+//   - GameInstance→World forwarding 在 headless 不可靠（FF-004 已 defer 同类），
+//     故真正的建队/定序逻辑在 UPlayerTurnSubsystem 的 public 方法（headless 可直接构造测）
+//
+// 规范依据：ADR-0001、story-004 AC-1~6、story pt-001 Note 5、control-manifest §宿主与生命周期
 // =============================================================================
 
 #include "PersistentServicesSubsystem.h"
+#include "PlayerTurnSubsystem.h"
 #include "Engine/GameInstance.h"
+#include "Engine/World.h"
 
 // ----------------------------------------------------------------------------
 // Initialize — GameInstance 初始化时调用（进程启动 / 第一次 PIE）
@@ -58,15 +64,73 @@ void UPersistentServicesSubsystem::Deinitialize()
 
 void UPersistentServicesSubsystem::StartNewGame(const FGameSetupConfig& Config)
 {
-    // ⚠ 最小 seam stub — pt-001 / 回合 epic 在此填充完整实现：
-    //   - 验证 Config 字段（PlayerCount、BoardAsset 等）
-    //   - 通过 UGameplayStatics::OpenLevel 或 World 切换触发新局
-    //   - Seed 注入由 per-match World Subsystem::OnWorldBeginPlay 完成（ADR-0001 §2）
+    // -------------------------------------------------------------------------
+    // pt-001 实现（story pt-001 Implementation Note 5）：
+    //   解析当前 World → 取 UPlayerTurnSubsystem → 转发 Config 调建队
     //
-    // 当前仅记录 Log，证明入口可达（AC-2 测试验证挂载点存在 + 跨局可达）。
+    // 架构说明（ADR-0001 §OQ-6 / FF-004 同类 defer）：
+    //   GameInstance→World forwarding 在 headless 下不可靠（World 可能不存在）。
+    //   真正的建队/定序逻辑全部在 UPlayerTurnSubsystem::InitializeFromConfig。
+    //   headless 测试直接构造 World + UPlayerTurnSubsystem，绕过本入口调 InitializeFromConfig。
+    //
+    // 生命周期约束（ADR-0001 Forbidden）：
+    //   PlayerState 实体随局在 World Subsystem 内构建，不在此 GameInstanceSubsystem 中持有。
+    // -------------------------------------------------------------------------
     UE_LOG(LogTemp, Log,
-        TEXT("UPersistentServicesSubsystem::StartNewGame — 入口调用（最小 seam stub）。"
-             "完整实现由 pt-001 / 回合 epic 填充。"));
+        TEXT("UPersistentServicesSubsystem::StartNewGame — 开局入口调用（pt-001 实现）。"
+             "Players.Num()=%d。"),
+        Config.Players.Num());
+
+    // GameInstance→World → UPlayerTurnSubsystem 访问路径
+    UGameInstance* GI = GetGameInstance();
+    if (!GI)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPersistentServicesSubsystem::StartNewGame — "
+                 "GetGameInstance() 返回 null，无法取得 World（headless 或非游戏环境）。"
+                 "生产环境此路径不应触发；headless 测试请直接调 UPlayerTurnSubsystem::InitializeFromConfig。"));
+        return;
+    }
+
+    // 取当前游戏 World（GameInstance 可能同时持有多个 World，取第一个游戏 World）
+    UWorld* GameWorld = GI->GetWorld();
+    if (!GameWorld)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("UPersistentServicesSubsystem::StartNewGame — "
+                 "GetWorld() 返回 null。World 尚未创建或已销毁。"
+                 "开局建队跳过——StartNewGame 应在 OnWorldBeginPlay 之后由大厅(20)触发。"));
+        return;
+    }
+
+    // 取 per-match UPlayerTurnSubsystem（标准 O(1) Subsystem 发现）
+    UPlayerTurnSubsystem* TurnSub = GameWorld->GetSubsystem<UPlayerTurnSubsystem>();
+    if (!TurnSub)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPersistentServicesSubsystem::StartNewGame — "
+                 "UPlayerTurnSubsystem 未在当前 World 中创建（World: %s）。"
+                 "检查 ShouldCreateSubsystem 是否排除了当前 World 类型。"),
+            *GameWorld->GetName());
+        return;
+    }
+
+    // 转发建队调用（建队/定序逻辑全部在 UPlayerTurnSubsystem，headless 可直接测）
+    const bool bSuccess = TurnSub->InitializeFromConfig(Config);
+
+    if (bSuccess)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("UPersistentServicesSubsystem::StartNewGame — 建队成功，"
+                 "PlayerStates.Num()=%d。"),
+            TurnSub->GetPlayerStates().Num());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPersistentServicesSubsystem::StartNewGame — 建队失败（Config 校验错误）。"
+                 "详见上方 UPlayerTurnSubsystem 错误日志。"));
+    }
 }
 
 // ----------------------------------------------------------------------------

@@ -1,11 +1,11 @@
 ---
 Epic: player-turn
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: M
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 ---
 
 # Story 001 — PlayerState 容器 + StartNewGame 开局入口 + 开局定序
@@ -79,3 +79,18 @@ Last Updated: 2026-06-06
 
 - **Depends on**: foundation-framework story-001（`UMatchSubsystemBase` 宿主基类）、foundation-framework story-004（`StartNewGame` 入口 `UGameInstanceSubsystem`）。
 - **Unlocks**: story-002（状态机基于 PlayerState 容器与定序结果驱动）、story-005（受控写接口面封装 PlayerState 委派字段）、story-008（序列化 11 字段 round-trip）。
+
+## Completion Notes
+**Completed**: 2026-06-07
+**Criteria**: 5/5 passing（AC-1~5 全 COVERED；无 DEFERRED）
+- AC-1 → TC1_PlayerStateDefaultValues（11+1 字段默认，含 DisplayName 空 FText）
+- AC-2 → TC2_BuildSquad_SizeAndTurnOrderUnique（P=2&P=4，无硬编码 4）
+- AC-3/AC-4 → TC3_TurnOrder_Rolls_5_9_3（[5,9,3]→{seat1:0,seat0:1,seat2:2}，同源）
+- AC-5 → TC4_Uniqueness_PlayerIdColor_TurnOrderReject + Edge_TokenColorNone_Rejected + Edge_TurnOrderOutOfRange_Rejected（唯一分配 + 重复/None/越界三拒绝 sub-case）
+**实现**：URentoPlayerState（轻量 UObject，11 字段+ConsecutiveDoubles）/ UPlayerTurnSubsystem（:UMatchSubsystemBase，建队+排名纯方法+生产定序+AC-5 校验）/ EPlayerColor+EAIDifficulty 枚举 / FGameSetupConfig+FPlayerSetupEntry 填充 / StartNewGame body forward
+**Deviations（advisory，已登记 tech-debt）**：
+- **seed 接线纳入 pt-001**（story 原文未列）：据 DiceRngService.h L257 契约「生产每局种子由 pt-001 在 OnWorldBeginPlay 后 SetSeed 传入」，InitializeFromConfig 定序前 SetSeed(Config.RandomSeed)，使定序可重放 + 消除 lazy-init Error。RandomSeed 字段置于 FGameSetupConfig（per-match 单种子，ADR-0004 单权威流），非 per-player entry。
+- else 防御分支（DiceService==null seat 序兜底）实证恒不触发（DiceService 同为 WorldSubsystem headless 恒存在），保留为非常规 World 装配防御
+**Test Evidence**：Logic — Source/rentoTests/Private/PlayerStateContainerStartNewGameTest.cpp（9 测试，逻辑归属 tests/unit/player-turn/）；主会话独立全量 179/179 Success, 0 Fail, EXIT 0（Saved/TestReport_pt001_r3/index.json，2026.06.07-12.32.32）
+**Code Review**：Complete — /code-review APPROVED（4 真修复闭合 + deflate 过度 claim，主会话逐条独立裁定）
+**Out of Scope 严守**：ETurnPhase / 受控写接口面 / 平手重掷 / 序列化 均未触碰（→ story-002/005/008）
