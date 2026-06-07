@@ -7,13 +7,17 @@
 //
 // 规范依据：
 //   - ADR-0001（primary）— UObject 宿主与生命周期边界
+//   - ADR-0008（IGameClock DI 注入点）— story-002 扩展
 //   - control-manifest Foundation Layer §宿主与生命周期 (ADR-0001)
 //   - story-001 AC-1/AC-2/AC-5/AC-6
+//   - story-002 AC-4（IGameClock DI 注入点）、AC-5（headless 注入 mock）、
+//              AC-6（TSharedPtr 非裸指针，路径 A 裁定 2026-06-07）
 // =============================================================================
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "IGameClock.h"
 #include "MatchSubsystemBase.generated.h"
 
 /**
@@ -62,7 +66,10 @@ public:
 	virtual bool ShouldCreateSubsystem(UObject* Outer) const override;
 
 	/**
-	 * 宿主初始化入口：取得依赖 Subsystem、建立 IGameClock DI 注入点骨架。
+	 * 宿主初始化入口：取得依赖 Subsystem、建立 IGameClock DI 注入点。
+	 *
+	 * story-002（AC-4）：本方法在此建立 IGameClock 默认生产实现（FWorldGameClock）。
+	 * headless fixture 可在 Initialize 调用后，通过 SetGameClock 替换为 FMockGameClock。
 	 *
 	 * 约束（ADR-0001 §Initialize）：
 	 *   - 此时 World 尚未 BeginPlay，禁读玩家态（玩家配置由 StartNewGame 落地在 BeginPlay 后）
@@ -98,4 +105,55 @@ public:
 	 * 具体 CancelHandle 实现归 story-003；本基类骨架先调 Super 再留扩展点。
 	 */
 	virtual void Deinitialize() override;
+
+	// =========================================================================
+	// IGameClock DI 注入面（story-002 AC-4 / AC-5 / AC-6）
+	// =========================================================================
+
+	/**
+	 * 注入时钟实现（DI 注入面）。
+	 *
+	 * headless fixture 在 Initialize 后调此方法注入 FMockGameClock，替换默认生产时钟。
+	 * 生产代码无需调用（Initialize 已建默认 FWorldGameClock）。
+	 *
+	 * @param InClock TSharedPtr 持有的时钟实现（非裸指针，AC-6 路径 A）
+	 */
+	void SetGameClock(TSharedPtr<IGameClock> InClock);
+
+	/**
+	 * 读取当前注入的时钟实例（供派生类 / 测试读取注入类型）。
+	 *
+	 * 返回类型为 TSharedPtr<IGameClock>，静态可证为非裸指针（TC-4 AC-6 验证点）。
+	 * 未注入时返回空 TSharedPtr（nullptr 语义）。
+	 */
+	TSharedPtr<IGameClock> GetGameClock() const;
+
+	/**
+	 * 经注入时钟读取当前时间（秒）。
+	 *
+	 * 依赖方经此函数读取时间，而非直读 GetWorld()->GetTimeSeconds()。
+	 * 这保证测试时注入 FMockGameClock 后，依赖方读到受控值而非真实世界时间（AC-5 DI 生效）。
+	 *
+	 * 安全兜底（Edge case）：时钟未注入时记 Error 日志并返回 0.0，不崩溃。
+	 *
+	 * @return 当前游戏时间（秒）；未注入时返回 0.0
+	 */
+	double GetClockNowSeconds() const;
+
+private:
+	// =========================================================================
+	// 内部成员
+	// =========================================================================
+
+	/**
+	 * 时钟 DI 引用（story-002 AC-4 / AC-6）。
+	 *
+	 * 关键设计约束：
+	 *   1. 故意不加 UPROPERTY —— 纯 C++ 接口非 UObject，GC 不需要追踪
+	 *   2. 不加 UPROPERTY 保证 FF-001 TC-4「UMatchSubsystemBase 本类 UPROPERTY 总数 == 0」
+	 *      零成员不变式不被回归打破（ADR-0001 / story-001 AC-5 结构断言）
+	 *   3. TSharedPtr（非裸指针）满足 AC-6「生命周期安全」的真意图；
+	 *      路径 A 裁定（msc 2026-06-07）：TSharedPtr 替代 TScriptInterface/TWeakObjectPtr
+	 */
+	TSharedPtr<IGameClock> GameClock;
 };
