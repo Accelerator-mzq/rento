@@ -40,6 +40,8 @@
 
 #include "PlayerTurnSubsystem.h"
 #include "DiceRngService.h"
+#include "LandingResolverInterface.h"   // ILandingResolver（story-006 落地结算 DI 接缝）
+#include "PawnMovementInterface.h"      // IPawnMover（story-006 移动 seam）
 
 // ===========================================================================
 // Initialize — 宿主初始化（World BeginPlay 前调用）
@@ -1290,4 +1292,266 @@ URentoPlayerState* UPlayerTurnSubsystem::FindPlayerById(int32 PlayerId) const
         }
     }
     return nullptr;
+}
+
+// ===========================================================================
+// pt-006: ConsumeRollResult — 消费完整 FDiceRollResult（LOCKED A / AC-1）
+//
+// 执行顺序（LOCKED 设计决策 A）：
+//   1. 写当前行动玩家 CurrentRollContext = Result（holder 写，回合2 = owner）
+//   2. 调现有 ProcessRollResult(Result.bIsDouble, OutSentToJail) 复用 F-3 逻辑
+//      （ProcessRollResult 内有 RollPhase 守卫，非法阶段早返不执行）
+// ===========================================================================
+
+void UPlayerTurnSubsystem::ConsumeRollResult(const FDiceRollResult& Result, bool& OutSentToJail)
+{
+    OutSentToJail = false;
+
+    // 阶段守卫：仅 RollPhase 合法（由内部调用的 ProcessRollResult 守卫负责）
+    // 提前检查以避免写 holder 后 ProcessRollResult 又因非法阶段拒绝执行（不一致状态）
+    if (CurrentPhase != ETurnPhase::RollPhase)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::ConsumeRollResult — "
+                 "非法阶段：当前阶段为 %d（非 RollPhase=1），"
+                 "ConsumeRollResult 被拒绝，holder 不更新（AC-2 对齐）。"),
+            static_cast<int32>(CurrentPhase));
+        return;
+    }
+
+    // 步骤 1：写当前行动玩家的 holder（回合2 = 逻辑 owner，直写字段合法）
+    // C++ 直写 UPROPERTY(BlueprintReadOnly) 字段：BlueprintReadOnly 只限 BP 图写，
+    // C++ 层无限制（ADR-0007 / story-006 LOCKED A）。
+    URentoPlayerState* PlayerState = FindPlayerById(CurrentActivePlayerId);
+    if (PlayerState)
+    {
+        // 正常程写路径：ConsumeRollResult 直写（非 SetCurrentRollContext setter）
+        // setter 唯一合法调用方仍为事件格(7)，此处 C++ 直写不破坏 setter 语义
+        PlayerState->CurrentRollContext = Result;
+
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::ConsumeRollResult — "
+                 "holder 写入：PlayerId=%d, Die1=%d, Die2=%d, Total=%d, bIsDouble=%d。"),
+            CurrentActivePlayerId,
+            Result.Die1, Result.Die2, Result.Total,
+            Result.bIsDouble ? 1 : 0);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("UPlayerTurnSubsystem::ConsumeRollResult — "
+                 "找不到 CurrentActivePlayerId=%d 对应 PlayerState，holder 写入跳过。"),
+            CurrentActivePlayerId);
+    }
+
+    // 步骤 2：复用现有 ProcessRollResult 驱动 F-3 双点链 + 阶段推进
+    // ProcessRollResult 内部有 RollPhase 守卫（上方已提前校验，此处一定在 RollPhase）
+    ProcessRollResult(Result.bIsDouble, OutSentToJail);
+}
+
+// ===========================================================================
+// pt-006: GetCurrentRollContext — PULL accessor（AC-2）
+// ===========================================================================
+
+FDiceRollResult UPlayerTurnSubsystem::GetCurrentRollContext() const
+{
+    // 读当前行动玩家的 CurrentRollContext
+    const URentoPlayerState* PlayerState = FindPlayerById(CurrentActivePlayerId);
+    if (PlayerState)
+    {
+        return PlayerState->CurrentRollContext;
+    }
+
+    // 无活跃玩家：返回零值默认 FDiceRollResult（Die1=0/Die2=0/Total=0/bIsDouble=false）
+    UE_LOG(LogTemp, Verbose,
+        TEXT("UPlayerTurnSubsystem::GetCurrentRollContext — "
+             "无活跃玩家（CurrentActivePlayerId=%d），返回零值 FDiceRollResult。"),
+        CurrentActivePlayerId);
+    return FDiceRollResult{};
+}
+
+// ===========================================================================
+// pt-006: GetCurrentRollTotal — PULL 快捷路径（AC-2）
+// ===========================================================================
+
+int32 UPlayerTurnSubsystem::GetCurrentRollTotal() const
+{
+    return GetCurrentRollContext().Total;
+}
+
+// ===========================================================================
+// pt-006: SetLandingResolver — DI 注入 ILandingResolver
+// ===========================================================================
+
+void UPlayerTurnSubsystem::SetLandingResolver(TSharedPtr<ILandingResolver> Resolver)
+{
+    LandingResolver = Resolver;
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::SetLandingResolver — "
+             "注入 ILandingResolver: %s"),
+        Resolver.IsValid() ? TEXT("有效") : TEXT("nullptr（已清除）"));
+}
+
+// ===========================================================================
+// pt-006: SetPawnMover — DI 注入 IPawnMover
+// ===========================================================================
+
+void UPlayerTurnSubsystem::SetPawnMover(TSharedPtr<IPawnMover> Mover)
+{
+    PawnMover = Mover;
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::SetPawnMover — "
+             "注入 IPawnMover: %s"),
+        Mover.IsValid() ? TEXT("有效") : TEXT("nullptr（已清除）"));
+}
+
+// ===========================================================================
+// pt-006: OrchestrateMove — 程间非重入蹦床（LOCKED D / AC-47）
+//
+// 蹦床机制（杜绝同步嵌套重入）：
+//   - 顶层调用（bInOrchestration=false）进入 while 循环，逐程发起 Advance；
+//     每程 Advance 同步触发 HandlePawnLanded（→ResolveArrival），监听者可能
+//     在回调内再次调 OrchestrateMove 请求下一程。
+//   - 回调内的 OrchestrateMove 调用（bInOrchestration=true）只排队
+//     （置 bPendingNextLeg/PendingLegSteps）并立即返回，绝不在回调栈内递归 Advance。
+//   - 顶层 while 循环消费 bPendingNextLeg，在前一程 Advance 完全返回后发起下一程。
+//
+// 结构不变式：每程 Advance 都由顶层蹦床循环发起，发起时不处于任何落地回调内
+//   → spy 的 bInLandedCallback==false（AC-47）。
+// 变异自检：若去掉 bInOrchestration 排队、改为回调内直接递归 Advance，
+//   则第二程在 bInLandedCallback==true 时发起 → TC-3 断言 FAIL（非 vacuous）。
+// ===========================================================================
+
+void UPlayerTurnSubsystem::OrchestrateMove(int32 Steps)
+{
+    // 排队本程请求（顶层与回调内调用统一经此排队语义）
+    PendingLegSteps = Steps;
+    bPendingNextLeg = true;
+
+    // 若已在蹦床循环中（被某程落地回调栈内调用）：仅排队，立即返回，不递归发起
+    if (bInOrchestration)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::OrchestrateMove — "
+                 "落地回调内请求下一程（Steps=%d），排队延迟至当前程返回后由蹦床发起（非重入）。"),
+            Steps);
+        return;
+    }
+
+    // 顶层蹦床循环：逐程发起 Advance，直到无待发起程
+    bInOrchestration = true;
+    while (bPendingNextLeg)
+    {
+        bPendingNextLeg = false;
+        const int32 LegSteps = PendingLegSteps;
+
+        if (!PawnMover.IsValid())
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("UPlayerTurnSubsystem::OrchestrateMove — "
+                     "PawnMover 未注入，无法发起 Advance(Steps=%d)；蹦床退出。"),
+                LegSteps);
+            break;
+        }
+
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::OrchestrateMove — "
+                 "蹦床发起一程 Advance(PlayerId=%d, Steps=%d)。"),
+            CurrentActivePlayerId, LegSteps);
+
+        // 同步发起：Advance 内同步触发 HandlePawnLanded（→ResolveArrival），
+        // 监听者可能在回调内调 OrchestrateMove 请求下一程（仅排队，见上方分支）。
+        PawnMover->Advance(CurrentActivePlayerId, LegSteps);
+    }
+    bInOrchestration = false;
+}
+
+// ===========================================================================
+// pt-006: HandlePawnLanded — public 落地回调（LOCKED D / AC-47）
+//
+// 在前一程 Advance 的同步调用栈内被调用，仅委派 ResolveArrival 做本程落地结算路由。
+// 不在此发起下一程——下一程由 OrchestrateMove 蹦床在本回调返回后发起（结构性非重入）。
+// ===========================================================================
+
+void UPlayerTurnSubsystem::HandlePawnLanded(EArrivalContext ArrivalContext)
+{
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::HandlePawnLanded — "
+             "PlayerId=%d, ArrivalContext=%d（0=DiceMove, 1=SentToJail）。"),
+        CurrentActivePlayerId,
+        static_cast<int32>(ArrivalContext));
+
+    // 仅执行本程落地结算路由；下一程发起归 OrchestrateMove 蹦床（非重入）
+    ResolveArrival(ArrivalContext);
+}
+
+// ===========================================================================
+// pt-006: ResolveArrival — 据 EArrivalContext 路由落地结算（LOCKED C / AC-4）
+//
+// 路由规则（GDD Edge Cases L392 / AC-46）：
+//   SentToJail → 跳过全部落地结算分支（DecideBuyProperty/SettleRent 均不调）
+//                → 推进 PostRollAction
+//   DiceMove    → 调 ILandingResolver::DecideBuyProperty 恰 1 次（MVP 均视为无主地产路径）
+//                → 推进 PostRollAction
+//
+// ⚠ Out of Scope 严守：
+//   已有主地产→SettleRent 路由、事件格结算、完整地产状态查询归各 epic；
+//   本 story 只实现 SentToJail 抑制 + DiceMove DecideBuyProperty seam。
+// ===========================================================================
+
+void UPlayerTurnSubsystem::ResolveArrival(EArrivalContext ArrivalContext)
+{
+    if (ArrivalContext == EArrivalContext::SentToJail)
+    {
+        // SentToJail 路径：跳过全部落地结算（GDD Edge Cases L392 / AC-46 抑制）
+        // 进/出狱规则归事件格(7)；本 story 只保证「不进结算分支」
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::ResolveArrival — "
+                 "SentToJail：跳过全部落地结算分支（AC-46 抑制）。"
+                 "进/出狱状态更新归事件格(7)。"));
+
+        // 直接推进 PostRollAction → TurnEnd（标准路径）
+        SetPhase(ETurnPhase::PostRollAction);
+    }
+    else
+    {
+        // DiceMove（及未来其他正常落地上下文）：执行买地决策 seam
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::ResolveArrival — "
+                 "DiceMove：调 DecideBuyProperty（PlayerId=%d）。"),
+            CurrentActivePlayerId);
+
+        // MVP seam：调 ILandingResolver::DecideBuyProperty 恰 1 次
+        // （本 story 均视为落无主地产；已有主地产→SettleRent 路由归 property/economy epic）
+        if (LandingResolver.IsValid())
+        {
+            // 获取当前玩家落点（MVP：读 CurrentTileIndex）
+            int32 TileIndex = 0;
+            const URentoPlayerState* PlayerState = FindPlayerById(CurrentActivePlayerId);
+            if (PlayerState)
+            {
+                TileIndex = PlayerState->CurrentTileIndex;
+            }
+
+            const bool bWillBuy = LandingResolver->DecideBuyProperty(
+                CurrentActivePlayerId, TileIndex);
+
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::ResolveArrival — "
+                     "DecideBuyProperty(PlayerId=%d, TileIndex=%d) = %d。"),
+                CurrentActivePlayerId, TileIndex, bWillBuy ? 1 : 0);
+        }
+        else
+        {
+            // 未注入 LandingResolver：MVP 阶段无买地逻辑（软约束）
+            UE_LOG(LogTemp, Verbose,
+                TEXT("UPlayerTurnSubsystem::ResolveArrival — "
+                     "LandingResolver 未注入，跳过 DecideBuyProperty seam（MVP 无买地逻辑）。"));
+        }
+
+        // 推进 PostRollAction
+        SetPhase(ETurnPhase::PostRollAction);
+    }
 }

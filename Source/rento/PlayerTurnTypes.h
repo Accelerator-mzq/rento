@@ -115,6 +115,40 @@ enum class EJailReason : uint8
 };
 
 // =============================================================================
+// EArrivalContext — 落地上下文枚举（pt-006 / story-006 LOCKED 设计决策 B / AC-4）
+//
+// 最小占位（story-006）：
+//   DiceMove=0 — 正常骰子移动落地（对照组，走正常落地结算分支）
+//   SentToJail=1 — 被传送入狱（GoToJail 格/三连双点/入狱牌），抑制全部落地结算
+//
+// 完整 EArrivalContext 语境（GoToJailTile / EventCard / AdvanceCard 等）归 movement epic；
+// 本 story 仅最小占位：DiceMove 对照组 + SentToJail 抑制组（Out of Scope 严守）。
+//
+// ⚠ append-only 纪律（ADR-0005）：
+//   DiceMove=0 / SentToJail=1 已冻结，movement epic 追加值只能从 2 开始。
+//   GDD Edge Cases L392 / AC-46 / TR-move-006 引用。
+// =============================================================================
+UENUM(BlueprintType)
+enum class EArrivalContext : uint8
+{
+    /**
+     * 正常骰子移动落地（ordinal=0，对照组）。
+     * RollPhase → MovePhase → 正常落地结算（DecideBuyProperty / SettleRent）。
+     */
+    DiceMove    = 0  UMETA(DisplayName = "Dice Move"),
+
+    /**
+     * 被传送入狱（ordinal=1，抑制组）。
+     * GoToJail 格 / 三连双点 / 入狱牌 → 直接传送入狱格，跳过全部落地结算分支。
+     * GDD Edge Cases L392：被传送入狱非「正常落地」，Jail 格不可购买/无租/无事件。
+     */
+    SentToJail  = 1  UMETA(DisplayName = "Sent To Jail"),
+
+    // ⚠ movement epic 追加完整上下文值（ordinal >= 2），禁止删除/重排以上值。
+    // 待追加：GoToJailTile / EventCard / AdvanceCard / PassGo 等（归 movement epic）。
+};
+
+// =============================================================================
 // ETurnPhase — 回合阶段状态机枚举（pt-002 / TR-turn-002 / GDD (b) States 表）
 //
 // 每个活跃回合经历的阶段序列（GDD L224 States and Transitions (b)）：

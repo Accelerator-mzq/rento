@@ -29,6 +29,16 @@
 //  16. HandlePlayerBankruptcy — 注入 IResolveBankruptcy stub，读返回值驱动 bIsBankrupt + OnGameWon
 //  17. SetBankruptcyResolver — DI 注入接口（测试注入 stub）
 //
+// Story pt-006 scope（RollPhase 消费 FDiceRollResult + holder PULL + 程间非重入 + AI RNG）：
+//  18. ConsumeRollResult — 接收完整 FDiceRollResult，写当前玩家 holder + 驱动 F-3 双点链
+//  19. GetCurrentRollContext — PULL accessor：读当前行动玩家 CurrentRollContext（供经济5）
+//  20. GetCurrentRollTotal — PULL accessor：读当前程 Total（快捷路径）
+//  21. SetLandingResolver — DI 注入 ILandingResolver（落地结算 hook）
+//  22. SetPawnMover — DI 注入 IPawnMover（移动 seam）
+//  23. OrchestrateMove — 程间非重入蹦床（串行发起每程 Advance，回调外消费下一程，AC-47）
+//  24. HandlePawnLanded — public 落地回调（移动 spy 在 Advance 内同步调用→ResolveArrival）
+//  25. ResolveArrival — 据 EArrivalContext 路由落地结算
+//
 // Out of Scope（不在本 story）：
 //   - ETurnPhase 状态机阶段转换序列（pt-002）
 //   - SetBankrupt 封装强度（story-005）
@@ -51,7 +61,9 @@
 #include "RentoPlayerState.h"
 #include "GameSetupConfig.h"
 #include "PlayerTurnTypes.h"
-#include "BankruptcyInterface.h"   // IResolveBankruptcy + FBankruptcyResolution（story-003 DI 接缝）
+#include "BankruptcyInterface.h"         // IResolveBankruptcy + FBankruptcyResolution（story-003 DI 接缝）
+#include "LandingResolverInterface.h"    // ILandingResolver（story-006 落地结算 DI 接缝）
+#include "PawnMovementInterface.h"       // IPawnMover（story-006 移动 DI seam + 程间非重入）
 #include "PlayerTurnSubsystem.generated.h"
 
 // 前向声明：DiceRngService（防循环 include，仅在 .cpp 完整 include）
@@ -321,6 +333,125 @@ public:
     static int32 ActivePlayerCount(const TArray<bool>& BankruptFlags);
 
     // =========================================================================
+    // pt-006：ConsumeRollResult + holder PULL accessor
+    // =========================================================================
+
+    /**
+     * 消费完整 FDiceRollResult（RollPhase 核心入口，pt-006 AC-1）。
+     *
+     * 执行顺序（LOCKED 设计决策 A）：
+     *   1. 写当前行动玩家的 CurrentRollContext = Result（holder 写，回合2 = 逻辑 owner，
+     *      GDD L246；C++ 直写 BlueprintReadOnly 字段合法，非 setter）
+     *   2. 调现有 ProcessRollResult(Result.bIsDouble, OutSentToJail) 复用 F-3 双点链逻辑
+     *      （保留现有 ProcessRollResult(bool, bool&) 签名不动，pt-002 测试用它）
+     *
+     * 阶段守卫：仅 RollPhase 合法调用（继承自 ProcessRollResult 守卫）。
+     *
+     * ⚠ 非替换而叠加（story-006 LOCKED A）：
+     *   ProcessRollResult(bool, bool&) 签名保留，此方法在其之上叠加 holder 写。
+     *
+     * @param Result        本次掷骰完整结果（Die1/Die2/Total/bIsDouble）
+     * @param OutSentToJail [out] 是否因 F-3 三连双点触发送监狱
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|Roll")
+    void ConsumeRollResult(const FDiceRollResult& Result, bool& OutSentToJail);
+
+    /**
+     * PULL accessor：读当前行动玩家的完整 CurrentRollContext（pt-006 AC-2）。
+     *
+     * 经济(5) 在 ResolvePhase 经此接口 PULL 当前程骰上下文（GDD CR-3.1）。
+     * 无活跃玩家时返回零值 FDiceRollResult（Die1=0/Die2=0/Total=0/bIsDouble=false）。
+     *
+     * @return 当前行动玩家的 CurrentRollContext；无活跃玩家返回默认零值
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|Roll")
+    FDiceRollResult GetCurrentRollContext() const;
+
+    /**
+     * PULL accessor：读当前程骰点合计（快捷路径，pt-006 AC-2）。
+     *
+     * 等价于 GetCurrentRollContext().Total，供经济 Utility 租 F-4 PULL（GDD CR-3.1）。
+     * 无活跃玩家时返回 0。
+     *
+     * @return 当前程 Total；无活跃玩家返回 0
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|Roll")
+    int32 GetCurrentRollTotal() const;
+
+    // =========================================================================
+    // pt-006：落地结算 DI + 移动 DI + 程间非重入编排
+    // =========================================================================
+
+    /**
+     * 注入 ILandingResolver（落地结算 hook DI，pt-006 LOCKED C）。
+     *
+     * 测试注入 stub 计数 DecideBuyProperty 调用次数（TC-4 确定性）。
+     * 生产由 economy/property epic 实现注入。
+     * 阶段守卫：对局初始化后（InitializeFromConfig 后），在任何落地事件前注入。
+     *
+     * @param Resolver TSharedPtr 持有的注入实现（nullptr = 清除注入）
+     */
+    void SetLandingResolver(TSharedPtr<ILandingResolver> Resolver);
+
+    /**
+     * 注入 IPawnMover（移动 seam DI，pt-006 LOCKED D）。
+     *
+     * 测试注入 spy（在 Advance 内同步调 HandlePawnLanded，驱动非重入验证 TC-3）。
+     * 生产由 movement epic 实现注入。
+     *
+     * @param Mover TSharedPtr 持有的注入实现（nullptr = 清除注入）
+     */
+    void SetPawnMover(TSharedPtr<IPawnMover> Mover);
+
+    /**
+     * 程间非重入蹦床：发起一程移动 Advance（pt-006 LOCKED D / AC-47）。
+     *
+     * 编排机制（杜绝同步嵌套重入，AC-47 可测核心）：
+     *   - 每程 Advance 只由本方法的蹦床 while 循环发起，绝不在落地回调栈内发起。
+     *   - 若本方法在某程 Advance 的同步回调栈内被再次调用（监听者在
+     *     HandlePawnLanded 内请求下一程），bInOrchestration==true，本调用仅
+     *     排队（置 bPendingNextLeg/PendingLegSteps）并立即返回，不递归 Advance；
+     *     由顶层蹦床循环在前一程 Advance 完全返回后再发起下一程。
+     *
+     * 因此「本系统发起第二程 Advance 时不处于任何落地回调内」是结构不变式：
+     *   spy 在落地回调入口/出口翻转 bInLandedCallback，断言第二程 Advance
+     *   发起时 bInLandedCallback==false（AC-47）。
+     *   变异自检：若改成回调内同步递归 Advance，第二程发起时 bInLandedCallback==true → TC-3 FAIL。
+     *
+     * @param Steps 本程前进步数（来自 FDiceRollResult.Total；多程时由调用方逐程提供）
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|Movement")
+    void OrchestrateMove(int32 Steps);
+
+    /**
+     * 落地回调（public，移动系统/spy 在 Advance/TeleportTo 完成前同步调用）。
+     *
+     * 在前一程 Advance 的同步调用栈内被调用，仅执行本程落地结算路由
+     * （委派 ResolveArrival，据 EArrivalContext 抑制/结算）。
+     * 不在此发起下一程——下一程由 OrchestrateMove 蹦床在本回调返回后发起（AC-47）。
+     *
+     * @param ArrivalContext 落地上下文（DiceMove / SentToJail）
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|Movement")
+    void HandlePawnLanded(EArrivalContext ArrivalContext);
+
+    /**
+     * 据 EArrivalContext 路由落地结算（ResolvePhase 内调用，pt-006 LOCKED C）。
+     *
+     * 路由规则（GDD Edge Cases L392 / AC-46）：
+     *   SentToJail → 跳过全部落地结算分支（DecideBuyProperty/SettleRent 均不调）
+     *                → 直接推进 PostRollAction/TurnEnd
+     *   DiceMove    → 调 ILandingResolver::DecideBuyProperty 恰 1 次（无主地产路径）
+     *                → 推进 PostRollAction
+     *
+     * ⚠ 完整路由（已有主地产→SettleRent / 事件格→事件7）归各 epic；
+     *   本 story 仅实现 SentToJail 抑制 + DiceMove 买地路径 seam（Out of Scope 严守）。
+     *
+     * @param ArrivalContext 落地上下文
+     */
+    void ResolveArrival(EArrivalContext ArrivalContext);
+
+    // =========================================================================
     // 破产移出 + OnGameWon 触发接口（story pt-003）
     // =========================================================================
 
@@ -529,4 +660,52 @@ private:
      *   - nullptr 时 HandlePlayerBankruptcy 记 Error 并返回（防御兜底）
      */
     TSharedPtr<IResolveBankruptcy> BankruptcyResolver;
+
+    // =========================================================================
+    // pt-006 私有成员
+    // =========================================================================
+
+    /**
+     * ILandingResolver DI 注入（story-006 落地结算 hook）。
+     *
+     * 纯 C++ TSharedPtr，非 UObject：
+     *   - return-only seam，不回调本系统
+     *   - 测试注入 spy 计数 DecideBuyProperty 次数（TC-4）
+     *   - nullptr 时 ResolveArrival 跳过结算分支 + UE_LOG Warning
+     */
+    TSharedPtr<ILandingResolver> LandingResolver;
+
+    /**
+     * IPawnMover DI 注入（story-006 移动 seam）。
+     *
+     * 纯 C++ TSharedPtr，非 UObject：
+     *   - Advance/TeleportTo 同步触发 HandlePawnLanded
+     *   - 测试注入 spy 驱动程间非重入验证（TC-3）
+     *   - nullptr 时回合2 只发起逻辑移动意图（无实际移动）
+     */
+    TSharedPtr<IPawnMover> PawnMover;
+
+    /**
+     * 蹦床编排进行中标志（程间非重入 guard，LOCKED D / AC-47）。
+     *
+     * true = OrchestrateMove 的蹦床 while 循环正在运行（某程 Advance 同步执行中）。
+     * 若 OrchestrateMove 在某程落地回调栈内被再次调用（监听者请求下一程），
+     * 本标志为 true → 该调用仅排队（置 bPendingNextLeg）并立即返回，不递归发起 Advance；
+     * 顶层蹦床循环在前一程 Advance 完全返回后再发起下一程。
+     *
+     * 变异自检（AC-47）：若回调内同步递归 Advance，spy 的 bInLandedCallback
+     * 在第二程发起时 ==true，TC-3 断言 FAIL（非 vacuous 保证）。
+     */
+    bool bInOrchestration = false;
+
+    /**
+     * 待发起下一程标志（非重入延迟，LOCKED D）。
+     *
+     * 监听者在落地回调内请求下一程时，OrchestrateMove 置本标志而非递归发起。
+     * 顶层蹦床 while 循环消费本标志，在当前程 Advance 返回后发起下一程。
+     */
+    bool bPendingNextLeg = false;
+
+    /** 待发起下一程的步数（与 bPendingNextLeg 配对，蹦床消费）。 */
+    int32 PendingLegSteps = 0;
 };

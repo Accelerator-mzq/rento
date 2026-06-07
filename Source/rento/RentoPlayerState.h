@@ -189,13 +189,21 @@ public:
     // =========================================================================
 
     /**
-     * 当前程掷骰上下文（FDiceRollResult，事件格7额外掷骰 holder）。
+     * 当前程掷骰上下文（FDiceRollResult，统一当前程 holder）。
      *
-     * GDD CR-3.1：仅事件格7 在事件额外掷骰时写入（SetCurrentRollContext setter）。
-     * 本字段是 result 存储 holder，非每程正常骰子结果。
-     * PULL 消费 + 程间非重入语义 → story-006（本 story 只提供 holder + setter）。
+     * GDD CR-3.1（story-006 确立双写路径）：
+     *   - 正常程（回合2 RollPhase）：由 UPlayerTurnSubsystem::ConsumeRollResult 直写
+     *     本字段（C++ 直写 BlueprintReadOnly 字段合法，回合2 = 逻辑 owner）。
+     *   - 事件额外程（事件格7）：由 SetCurrentRollContext(FDiceRollResult) setter 写入
+     *     （唯一合法调用方仍为事件格(7)，setter 语义不变）。
      *
-     * 改写规则归：事件格(7)，经受控写接口 SetCurrentRollContext（story-005 实现）。
+     * 本字段是「当前程骰点」的单一权威来源（holder=回合2，GDD L246）：
+     *   经济(5) 在 ResolvePhase 经 GetCurrentRollContext()/GetCurrentRollTotal() PULL，
+     *   保证读到「正在结算这一程」的骰点，不串程（GDD CR-3.1 程间非重入）。
+     *
+     * 改写规则：
+     *   - 正常程写路径：ConsumeRollResult（回合2 直写，非 setter）
+     *   - 事件额外程写路径：SetCurrentRollContext setter（唯一合法调用方=事件格(7)）
      * 默认值：Die1=0/Die2=0/Total=0/bIsDouble=false（零值 holder）。
      */
     UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|PlayerState")

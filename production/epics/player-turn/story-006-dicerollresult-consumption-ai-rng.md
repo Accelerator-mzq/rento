@@ -1,6 +1,6 @@
 ---
 Epic: player-turn
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: M
@@ -77,3 +77,18 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-002（状态机 RollPhase/ResolvePhase 阶段）、story-005（`SetCurrentRollContext` 受控写 holder）；dice-rng epic（`FDiceRollResult` + `OnDiceRolled`）。
 - **Unlocks**: story-007（ResolvePhase 聚合 + AI hook 消费 snapshot 在本系统 holder/RNG 基础上）、story-008（`FDiceRollResult` 完整序列化）。
+
+## Completion Notes（2026-06-08，mode-A workflow + human-on-halt）
+
+- **Verdict**: COMPLETE。AC-1/2/3/4 COVERED（自动化测试）+ AC-5 Advisory（静态 checklist）。
+- **实现（生产）**:
+  - `UPlayerTurnSubsystem::ConsumeRollResult(const FDiceRollResult&, bool&)` — RollPhase 消费完整结果，写当前玩家 holder（直写字段，回合2=逻辑 owner GDD L246）后复用 `ProcessRollResult(bool)` 驱动 F-3（保留旧签名不破 pt-002）。
+  - `GetCurrentRollContext()` / `GetCurrentRollTotal()` — PULL accessor（读当前行动玩家 `CurrentRollContext`）。
+  - `OrchestrateMove(int32)` 程间非重入**蹦床**（`bInOrchestration` guard：回调内请求下一程仅排队，蹦床在前程 Advance 返回后才发起）+ `HandlePawnLanded(EArrivalContext)`（仅委派 `ResolveArrival`）+ `ResolveArrival`（SentToJail→抑制全部落地结算分支；DiceMove→`DecideBuyProperty` 恰 1 次）。
+  - `EArrivalContext{DiceMove=0,SentToJail=1}`（最小占位，完整语境归 movement epic）。
+  - DI 接缝 `ILandingResolver`（DecideBuyProperty/SettleRent）、`IPawnMover`（Advance/TeleportTo），仿 pt-003 `IResolveBankruptcy` 纯 C++ TSharedPtr 模式。
+  - **holder 跨档协调**：pt-005 的 `RentoPlayerState.CurrentRollContext` 确立为统一当前程 holder——正常程回合2 直写、事件额外程事件7 `SetCurrentRollContext` setter 写（setter「唯一调用方=事件7」语义不变）；字段注释已更新双写路径。
+- **测试**: `Source/rentoTests/Private/DiceRollResultConsumptionAiRngTest.cpp`，类目 `Rento.PlayerTurn.DiceRollResultConsumption`，TC-1/2/3/4 + spy `LandingResolverSpy.h`/`PawnMoverSpy.h`。AC-5 证据 `production/qa/evidence/pt-006-ai-rng-static-checklist.md`。
+- **验证（主会话独立复跑，铁律不信 agent 自报）**: UBT Succeeded；全量 **208/208 Success, 0 Fail, 0 notRun, EXIT 0**（基线 204+4 零回归，Saved/TestReport_pt006_final 2026.06.07-17.00.38）。**TC-3 变异坐实非 vacuous**：移除 `OrchestrateMove` 非重入 guard → TC-3 精确 FAIL（其余 3 测试不受影响），还原后复绿。
+- **mode-A halt 记录**: workflow halt @ Verify——implement agent 落生产代码 + 3 接缝/spy 头但**未写测试 cpp**（impl 返回为空，弱环再现），且非重入机制结构性错（在 Advance 同步栈内发起第二程=递归，且第二程仅 log 未真发，AC-47 不可测）。主会话 human-on-halt 改写为 trampoline + 补全 PawnMoverSpy + 全部 4 测试。
+- **Out of Scope 严守**: `ILandingResolver::SettleRent` 空 seam（无经济公式）；`FDiceRollResult`/`ProcessRollResult(bool)` 未破坏；movement Advance/经济算租/AI 算法/序列化均未触碰。
