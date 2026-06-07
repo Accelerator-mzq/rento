@@ -39,6 +39,10 @@
 //  24. HandlePawnLanded — public 落地回调（移动 spy 在 Advance 内同步调用→ResolveArrival）
 //  25. ResolveArrival — 据 EArrivalContext 路由落地结算
 //
+// Story pt-007 scope A 簇（GameStateSnapshot 值语义 + AI 决策 hook DI + RunAiPostRollActions）：
+//  26. SetAIDecisionMaker — DI 注入 IAIDecisionMaker（AI 决策接口，仿 SetBankruptcyResolver 模式）
+//  27. RunAiPostRollActions — PostRollAction 阶段 AI 执行路径（阶段守卫 + 调 hook + EndTurn）
+//
 // Out of Scope（不在本 story）：
 //   - ETurnPhase 状态机阶段转换序列（pt-002）
 //   - SetBankrupt 封装强度（story-005）
@@ -64,6 +68,8 @@
 #include "BankruptcyInterface.h"         // IResolveBankruptcy + FBankruptcyResolution（story-003 DI 接缝）
 #include "LandingResolverInterface.h"    // ILandingResolver（story-006 落地结算 DI 接缝）
 #include "PawnMovementInterface.h"       // IPawnMover（story-006 移动 DI seam + 程间非重入）
+#include "AIDecisionMakerInterface.h"    // IAIDecisionMaker + FTurnAction（story-007 AI 决策 DI 接缝）
+#include "GameStateSnapshot.h"           // FGameStateSnapshot（story-007 AI 只读快照）
 #include "PlayerTurnSubsystem.generated.h"
 
 // 前向声明：DiceRngService（防循环 include，仅在 .cpp 完整 include）
@@ -452,6 +458,40 @@ public:
     void ResolveArrival(EArrivalContext ArrivalContext);
 
     // =========================================================================
+    // pt-007 簇 A：AI 决策 DI + PostRollAction 执行路径
+    // =========================================================================
+
+    /**
+     * 注入 IAIDecisionMaker（AI 决策 hook DI，pt-007 AC-3 前置）。
+     *
+     * 仿 SetBankruptcyResolver / SetLandingResolver 纯 C++ TSharedPtr DI 模式。
+     * 测试注入 FAIDecisionMakerSpy（spy 控返回值 + 计数调用次数）。
+     * 生产由 ai-opponent epic 实现注入。
+     * nullptr 时 RunAiPostRollActions 记 Error 并 EndTurn（防御兜底）。
+     *
+     * @param DecisionMaker TSharedPtr 持有的注入实现（nullptr = 清除注入）
+     */
+    void SetAIDecisionMaker(TSharedPtr<IAIDecisionMaker> DecisionMaker);
+
+    /**
+     * AI PostRollAction 执行路径（pt-007 AC-3 / AC-37d）。
+     *
+     * 执行流程：
+     *   ① 阶段守卫：仅 PostRollAction 合法（非则 UE_LOG Error + return，G2）
+     *   ② 调 AIDecisionMaker->DecidePostRollActions(Snapshot) 取动作列表
+     *   ③ 逐 FTurnAction 执行（本簇 = 最小占位：计数 + UE_LOG；
+     *      真实动作执行 + 逐动作可行性重校验归簇 B/C，本簇勿做经济/建房调用）
+     *   ④ 执行完（含空数组）→ 调 EndTurn(false) 推进 TurnEnd + 移交下一未破产玩家
+     *
+     * ⚠ 不广播 OnAIActionExecuted（该 delegate 声明归 story-004；本簇 Out of Scope）。
+     * ⚠ AIDecisionMaker 为 nullptr 时 UE_LOG Error + EndTurn 兜底，不崩溃。
+     *
+     * @param AiPlayerId 当前 AI 行动玩家 PlayerId（阶段守卫验证对齐）
+     * @param Snapshot   只读快照（装配方传入，由调用方负责装配；本簇签名接收，不内部装配）
+     */
+    void RunAiPostRollActions(int32 AiPlayerId, const FGameStateSnapshot& Snapshot);
+
+    // =========================================================================
     // 破产移出 + OnGameWon 触发接口（story pt-003）
     // =========================================================================
 
@@ -660,6 +700,17 @@ private:
      *   - nullptr 时 HandlePlayerBankruptcy 记 Error 并返回（防御兜底）
      */
     TSharedPtr<IResolveBankruptcy> BankruptcyResolver;
+
+    /**
+     * IAIDecisionMaker DI 注入（story-007 pt-007 AC-3 DI 接缝）。
+     *
+     * 纯 C++ TSharedPtr（非 UObject，GC 不追踪）：
+     *   - 仿 BankruptcyResolver / LandingResolver 模式
+     *   - 测试注入 FAIDecisionMakerSpy（spy 控返回值+计数）
+     *   - 生产由 ai-opponent epic 提供实现
+     *   - nullptr 时 RunAiPostRollActions 记 Error + EndTurn 兜底
+     */
+    TSharedPtr<IAIDecisionMaker> AIDecisionMaker;
 
     // =========================================================================
     // pt-006 私有成员

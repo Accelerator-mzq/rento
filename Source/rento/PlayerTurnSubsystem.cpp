@@ -1555,3 +1555,97 @@ void UPlayerTurnSubsystem::ResolveArrival(EArrivalContext ArrivalContext)
         SetPhase(ETurnPhase::PostRollAction);
     }
 }
+
+// ===========================================================================
+// pt-007 簇 A：SetAIDecisionMaker + RunAiPostRollActions
+// ===========================================================================
+
+/**
+ * 注入 IAIDecisionMaker（AI 决策 hook DI，pt-007 AC-3）。
+ *
+ * 仿 SetBankruptcyResolver / SetLandingResolver 模式，TSharedPtr 持有。
+ * nullptr = 清除注入（RunAiPostRollActions 记 Error + EndTurn 兜底）。
+ */
+void UPlayerTurnSubsystem::SetAIDecisionMaker(TSharedPtr<IAIDecisionMaker> DecisionMaker)
+{
+    // 直接赋值，TSharedPtr 自动管理生命周期（非 UObject，GC 不追踪，TSharedPtr 正确释放）
+    AIDecisionMaker = DecisionMaker;
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::SetAIDecisionMaker — "
+             "AIDecisionMaker %s。"),
+        AIDecisionMaker.IsValid() ? TEXT("已注入") : TEXT("已清除（nullptr）"));
+}
+
+/**
+ * AI PostRollAction 执行路径（pt-007 AC-3 / AC-37d）。
+ *
+ * 执行流程（LOCKED 设计决策 C）：
+ *   ① 阶段守卫：仅 PostRollAction 合法（非则 UE_LOG Error + return，G2 约束）
+ *   ② 调 AIDecisionMaker->DecidePostRollActions(Snapshot) 取动作列表
+ *   ③ 逐 FTurnAction 执行 — 本簇最小占位：计数 + UE_LOG
+ *      （真实动作执行 + 可行性重校验归簇 B/C，Out of Scope 严守）
+ *   ④ 执行完（含空数组 []）→ 调 EndTurn(false) 推进 TurnEnd + 移交下一未破产玩家
+ *
+ * ⚠ 不广播 OnAIActionExecuted（story-004 Out of Scope，本簇 AC-44 不在 AC 列）。
+ * ⚠ AIDecisionMaker 为 nullptr 时 UE_LOG Error + EndTurn 兜底，不崩溃。
+ */
+void UPlayerTurnSubsystem::RunAiPostRollActions(int32 AiPlayerId, const FGameStateSnapshot& Snapshot)
+{
+    // ① 阶段守卫：仅 PostRollAction 合法（G2：验证型错误路径用 UE_LOG Error，不用 ensure）
+    if (CurrentPhase != ETurnPhase::PostRollAction)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::RunAiPostRollActions — "
+                 "非法调用：当前阶段 %d 非 PostRollAction（4）。"
+                 "AiPlayerId=%d 被忽略，回合状态未变更。"),
+            static_cast<int32>(CurrentPhase),
+            AiPlayerId);
+        return;
+    }
+
+    // AIDecisionMaker 未注入时兜底（Error + EndTurn，不崩溃）
+    if (!AIDecisionMaker.IsValid())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::RunAiPostRollActions — "
+                 "AIDecisionMaker 未注入（nullptr）。"
+                 "AiPlayerId=%d，执行 0 条动作并 EndTurn 兜底。"),
+            AiPlayerId);
+        EndTurn(/*bSentToJailThisTurn=*/false);
+        return;
+    }
+
+    // ② 调 DecidePostRollActions，获取 AI 决策动作列表（本簇 snapshot 由调用方装配并传入）
+    TArray<FTurnAction> Actions = AIDecisionMaker->DecidePostRollActions(Snapshot);
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::RunAiPostRollActions — "
+             "AiPlayerId=%d，DecidePostRollActions 返回 %d 条动作。"),
+        AiPlayerId, Actions.Num());
+
+    // ③ 逐 FTurnAction 执行 — 本簇最小占位（簇 A）
+    //    只计数 + UE_LOG，不调经济/建房/所有权接口（Out of Scope 严守）
+    //    真实执行 + 逐动作可行性重校验 = 簇 B/C
+    for (int32 i = 0; i < Actions.Num(); ++i)
+    {
+        const FTurnAction& Action = Actions[i];
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::RunAiPostRollActions — "
+                 "  [%d/%d] ActionType=%d TargetTileIndex=%d（簇 A 占位，不执行实际经济操作）。"),
+            i + 1, Actions.Num(),
+            static_cast<int32>(Action.ActionType),
+            Action.TargetTileIndex);
+        // ⚠ 簇 B/C Out of Scope：此处不调 Economy/Building/Ownership 任何接口。
+        // 完整动作执行（可行性重校验 + 经济/建房/所有权调用）归后续 pass。
+    }
+
+    // 空数组 [] → 执行 0 条（AC-37d：仍需走 EndTurn 移交下一玩家）
+    // ④ 执行完（含空数组）→ EndTurn 推进 TurnEnd + 移交下一未破产玩家（复用 pt-002/003）
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::RunAiPostRollActions — "
+             "AiPlayerId=%d，共执行 %d 条动作，调 EndTurn 推进 TurnEnd。"),
+        AiPlayerId, Actions.Num());
+
+    EndTurn(/*bSentToJailThisTurn=*/false);
+}
