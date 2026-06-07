@@ -1,6 +1,6 @@
 // PlayerTurnSubsystem.h
 // =============================================================================
-// UPlayerTurnSubsystem — 回合系统 per-match 宿主（pt-001/pt-002 / TR-turn-001/002/015）
+// UPlayerTurnSubsystem — 回合系统 per-match 宿主（pt-001/pt-002/pt-003 / TR-turn-001/002/006/015）
 //
 // 继承关系（ADR-0001 §per-match 服务一律继承 UWorldSubsystem）：
 //   UMatchSubsystemBase（FF-001，纯骨架）
@@ -22,16 +22,24 @@
 //  11. ShouldGoToJail — F-3 纯函数，可单测（AC-7）
 //  12. ResolveInitialTurnOrderWithTiebreak — F-4 平手重掷确定性裁定（AC-11）
 //
-// Out of Scope（本 story 不实现）：
-//   - F-1 NextActivePlayer 寻路 + 破产移出 + OnGameWon → story-003
-//   - 6 回合事件 USTRUCT payload → story-004
-//   - 受控写接口面 SetPosition/SetCash → story-005
-//   - RollPhase 真实骰子消费 → story-006
-//   - 读档 switch(CurrentPhase) round-trip → story-008
+// Story pt-003 scope（F-1 NextActivePlayer + 破产移出 + OnGameWon + IResolveBankruptcy DI）：
+//  13. NextActivePlayer — 静态纯函数，守卫先行，入口规范化（AC-1/2/3）
+//  14. ActivePlayerCount — 静态计数辅助（AC-4；绝非胜负裁决器）
+//  15. OnGameWon — 最小 seam delegate（story-004 enrich；本 story 验触发语义/次数）
+//  16. HandlePlayerBankruptcy — 注入 IResolveBankruptcy stub，读返回值驱动 bIsBankrupt + OnGameWon
+//  17. SetBankruptcyResolver — DI 注入接口（测试注入 stub）
+//
+// Out of Scope（不在本 story）：
+//   - ETurnPhase 状态机阶段转换序列（pt-002）
+//   - SetBankrupt 封装强度（story-005）
+//   - OnGameWon delegate 完整契约声明（story-004）
+//   - bankruptcy9 内部 ResolveBankruptcy 算法（bankruptcy epic）
+//   - OnPlayerBankrupt / OnBankruptcyDeclared（不在本 story）
 //
 // 规范依据：
-//   - story pt-001 AC-1~5，story pt-002 AC-1~11
+//   - story pt-001 AC-1~5，story pt-002 AC-1~11，story pt-003 AC-1~8
 //   - ADR-0001（per-match 宿主，UWorldSubsystem；禁 Latent，枚举字段 + delegate 推进）
+//   - ADR-0003（OnGameWon 单一事件源：回合2 触发，9 return-only）
 //   - ADR-0004（骰子权威流，F-3 时序契约）
 //   - ADR-0007（回合状态机落 C++，[Logic] BLOCKING AC 被测逻辑落 C++）
 //   - control-manifest Foundation Layer §宿主与生命周期（ADR-0001）
@@ -43,6 +51,7 @@
 #include "RentoPlayerState.h"
 #include "GameSetupConfig.h"
 #include "PlayerTurnTypes.h"
+#include "BankruptcyInterface.h"   // IResolveBankruptcy + FBankruptcyResolution（story-003 DI 接缝）
 #include "PlayerTurnSubsystem.generated.h"
 
 // 前向声明：DiceRngService（防循环 include，仅在 .cpp 完整 include）
@@ -58,6 +67,21 @@ class UDiceRngService;
 // ⚠ 字段扩展代价（GDD L274 R5 unreal）：未来 enrich payload 须检查全部下游 BP 图引脚连接。
 // =============================================================================
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTurnPhaseChanged, ETurnPhase, NewPhase);
+
+// =============================================================================
+// OnGameWon 最小 seam delegate 声明（pt-003 / TR-turn-006）
+//
+// 最小 seam：仅携带 WinnerId（int32，开局后恒定 PlayerId）。
+// story-004 将在此 delegate 上 enrich 完整 FGameWonInfo payload，不重新声明。
+//
+// 触发规则（ADR-0003 单一事件源）：
+//   - 唯一触发来源 = HandlePlayerBankruptcy 内 IResolveBankruptcy 返回 WinnerId!=INDEX_NONE
+//   - 9 永不直接广播（return-only 接口保证）
+//   - 边沿触发：bGameWon=true 后再次触发被守卫拦截（AC-7）
+//
+// ⚠ story-004 enrich：完整 delegate 契约声明（USTRUCT payload、字段）归 story-004。
+// =============================================================================
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGameWon, int32, WinnerId);
 
 /**
  * UPlayerTurnSubsystem — 回合系统 per-match 宿主（story pt-001/pt-002）
@@ -254,6 +278,115 @@ public:
     static bool ShouldGoToJail(int32 ConsecutiveCount, int32 Threshold);
 
     // =========================================================================
+    // F-1 / F-2 静态纯函数（story pt-003 / TR-turn-006）
+    // =========================================================================
+
+    /**
+     * F-1 NextActivePlayer — 静态纯函数，守卫先行，入口规范化（pt-003 AC-1/2/3）。
+     *
+     * 守卫先行（GDD L289-293）：
+     *   |A|=0 → INDEX_NONE + ensureMsgf（正常不可达）
+     *   |A|=1 → INDEX_NONE（仅剩 1 名未破产玩家，对局已由 CR-6 终结；不返回唯一存活者）
+     *   |A|≥2 → 入口规范化后枚举
+     *
+     * 入口规范化（GDD L295-297）：
+     *   cur_safe = ((cur % P) + P) % P（欧几里得取模，保证 cur_safe ∈ [0,P-1]）
+     *   枚举 k = min{k ∈ [1,P-1] | (cur_safe+k)%P ∈ ActiveIndices}
+     *
+     * dev 诊断：另加 ensureMsgf(cur>=0 && cur<P) 检查原始 cur（规范化前），
+     *   规范化后的枚举不依赖此 ensure，仅作 dev 诊断。
+     *
+     * @param cur           当前行动玩家的 TurnOrderIndex
+     * @param P             总玩家数（TurnOrderIndex 空间 [0,P-1]）
+     * @param ActiveIndices 未破产玩家的 TurnOrderIndex 集合
+     * @return 下一个活跃玩家的 TurnOrderIndex；|A|<=1 时返回 INDEX_NONE
+     */
+    static int32 NextActivePlayer(int32 cur, int32 P, const TSet<int32>& ActiveIndices);
+
+    /**
+     * F-2 ActivePlayerCount — 静态计数辅助（pt-003 AC-4）。
+     *
+     * 数 BankruptFlags 中 false 的个数（false=未破产=活跃）。
+     *
+     * ⚠ 重要约束（GDD L331 / story-003 §2）：
+     *   本函数是纯计数辅助，绝非胜负裁决器。
+     *   禁止在任何地方用「APC==1 → 广播 OnGameWon」逻辑。
+     *   胜负裁决由破产9 在 ResolveBankruptcy 内部算，回传 WinnerId 给回合2。
+     *
+     * 边界（AC-4）：[T,T,T,T] → 0，触发 ensureMsgf（正常流程不可达）。
+     *
+     * @param BankruptFlags 每位玩家的破产标志（true=已破产，false=活跃）
+     * @return 活跃玩家数（false 个数）
+     */
+    static int32 ActivePlayerCount(const TArray<bool>& BankruptFlags);
+
+    // =========================================================================
+    // 破产移出 + OnGameWon 触发接口（story pt-003）
+    // =========================================================================
+
+    /**
+     * 注入 IResolveBankruptcy 实现（DI 注入面）。
+     *
+     * 测试注入 stub 返回受控值；生产由 bankruptcy epic 实现注入。
+     * 调用时机：对局初始化后（InitializeFromConfig 后），在任何破产事件前注入。
+     *
+     * @param Resolver TSharedPtr 持有的注入实现（nullptr = 清除注入）
+     */
+    void SetBankruptcyResolver(TSharedPtr<IResolveBankruptcy> Resolver);
+
+    /**
+     * 处理玩家破产（story pt-003 AC-5/6/7/8 / CR-6 破产移出）。
+     *
+     * 执行顺序（GDD §CR-6 / story-003 Implementation Notes §5/6）：
+     *   1. 调注入的 IResolveBankruptcy::ResolveBankruptcy（return-only，绝不回调）
+     *   2. 若 bDebtorEliminated=true → 置 debtor.bIsBankrupt=true + 移出轮转
+     *   3. 若 WinnerId!=INDEX_NONE 且未进 Winner 终态（!bGameWon）
+     *      → 广播 OnGameWon(WinnerId) 恰一次 + 置 bGameWon=true（边沿触发）
+     *
+     * ⚠ AC-8 封堵 2↔9：本方法是 OnGameWon 唯一触发路径。
+     *   正常 TurnEnd→F-1 移交路径（无 ResolveBankruptcy 调用）即便 APC==1 也绝不广播。
+     *
+     * @param DebtorId   债务玩家 PlayerId
+     * @param CreditorId 债权玩家 PlayerId（-1 = 银行/无债权方）
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|Bankruptcy")
+    void HandlePlayerBankruptcy(int32 DebtorId, int32 CreditorId);
+
+    // =========================================================================
+    // OnGameWon 事件（最小 seam，pt-003；story-004 在此 enrich 完整契约声明）
+    // =========================================================================
+
+    /**
+     * 游戏胜利广播事件（最小 seam，pt-003）。
+     *
+     * 每当 IResolveBankruptcy 返回 WinnerId!=INDEX_NONE 且对局尚未进入 Winner 终态时广播。
+     * 边沿触发：bGameWon=true 后再次返回相同 WinnerId 不重发（AC-7 幂等）。
+     *
+     * story-004 将在此既有 delegate 上 enrich 完整 FGameWonInfo payload，不重新声明。
+     *
+     * 绑定示例（C++）：
+     * @code
+     *   Sub->OnGameWon.AddDynamic(this, &MyClass::HandleGameWon);
+     * @endcode
+     */
+    UPROPERTY(BlueprintAssignable, Category="PlayerTurn|Bankruptcy")
+    FOnGameWon OnGameWon;
+
+    // =========================================================================
+    // 胜负终态标志（pt-003，边沿触发守卫）
+    // =========================================================================
+
+    /**
+     * 对局是否已进入 Winner 终态（边沿触发守卫，AC-7）。
+     *
+     * HandlePlayerBankruptcy 广播 OnGameWon 后置 true。
+     * 此后再次调用 HandlePlayerBankruptcy 时，即便 IResolveBankruptcy 返回有效 WinnerId，
+     * 也被此守卫拦截不重发（电平→边沿转换）。
+     */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Bankruptcy")
+    bool bGameWon = false;
+
+    // =========================================================================
     // 只读访问接口（供测试/下游消费）
     // =========================================================================
 
@@ -378,12 +511,22 @@ private:
     void SetPhase(ETurnPhase NewPhase);
 
     /**
-     * 找下一个未破产玩家的 PlayerId（pt-002 简单递增，story-003 完整 F-1 接管）。
+     * 找下一个未破产玩家的 PlayerId（story-003 接管完整 F-1）。
      *
-     * pt-002 实现：按 TurnOrderIndex 递增找下一个未破产玩家（不含当前）。
-     * ⚠ story-003 注释：完整 F-1 寻路（破产跳过/OnGameWon/INDEX_NONE 哨兵）归 story-003。
+     * story-003 实现：调 static NextActivePlayer(cur, P, ActiveIndices)。
+     * F-1 返回 INDEX_NONE（|A|<=1）时对局结束，轮转停止。
      *
-     * @return 下一未破产玩家的 PlayerId；无合法下一玩家时返回 -1
+     * @return 下一未破产玩家的 PlayerId；F-1 返回 INDEX_NONE 时返回 INDEX_NONE
      */
     int32 FindNextActivePlayerId() const;
+
+    /**
+     * IResolveBankruptcy DI 注入（story-003 §4）。
+     *
+     * 纯 C++ TSharedPtr（非 UObject，GC 不追踪）：
+     *   - return-only 接口物理阻断 2↔9 回调环
+     *   - 测试注入 stub，生产由 bankruptcy epic 提供
+     *   - nullptr 时 HandlePlayerBankruptcy 记 Error 并返回（防御兜底）
+     */
+    TSharedPtr<IResolveBankruptcy> BankruptcyResolver;
 };

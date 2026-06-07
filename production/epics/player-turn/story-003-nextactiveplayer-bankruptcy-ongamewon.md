@@ -1,6 +1,6 @@
 ---
 Epic: player-turn
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: M
@@ -82,3 +82,21 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（PlayerState 容器，含 `bIsBankrupt`/`TurnOrderIndex` 字段）、story-002（状态机 TurnEnd 处调用 F-1）。
 - **Unlocks**: story-004（`OnGameWon` delegate 契约声明承接本 story 触发语义）、story-008（破产/胜负态序列化）。
+
+## Completion Notes
+**Completed**: 2026-06-07
+**Criteria**: 8/8 passing（AC-1~8 全 COVERED；无 DEFERRED）
+- AC-1/2/3 → TC1/TC2/TC3（F-1 NextActivePlayer 静态纯函数：基础寻路/守卫先行/入口规范化）
+- AC-4 → TC4（F-2 ActivePlayerCount 计数辅助，[T,T,T,T]→0）
+- AC-5 → TC5（自回合破产移出 + F-1 推进）
+- AC-6 → TC6（**不得降级**：IResolveBankruptcy stub 注入，APC==1→OnGameWon 恰 1 次 payload 正确；INDEX_NONE→0 次）
+- AC-7 → TC7（边沿幂等：第二次同 winnerId 被 bGameWon 终态守卫拦截，计数精确 1）
+- AC-8 → TC8（**不得降级**：B 完整 TurnEnd+F-1 无 ResolveBankruptcy 调用 → OnGameWon 计数 0，封堵 2↔9）
+**实现**：BankruptcyInterface.h（IResolveBankruptcy return-only 接口 + FBankruptcyResolution）+ UPlayerTurnSubsystem 扩展（NextActivePlayer/ActivePlayerCount 静态纯函数 + SetBankruptcyResolver DI + HandlePlayerBankruptcy 2↔9 安全阀 + OnGameWon 最小 seam）+ OnGameWonSpy.h（文件作用域 UCLASS）
+**2↔9 单一事件源铁证**：`OnGameWon.Broadcast` 全 cpp 唯一调用点（HandlePlayerBankruptcy 的 `!bGameWon` 守卫内）；F-1/F-2/TurnEnd 移交路径绝不广播（AC-8 TC8 坐实）
+**Deviations（advisory）**：
+- 3 处 `ensureMsgf`（|A|=0 / 全破产 APC=0 / 负 cur 诊断）→ 改 `UE_LOG`，遵 active.md logged-decision「验证型错误路径用 UE_LOG(Error) 替 ensure（headless ensure callstack 致 AddExpectedError 计数不可靠）」（FF-003/DR-001/BD-004 一脉）；负 cur 是 handled 情形改 `UE_LOG(Warning)`（规范化兜住，不致 Automation FAIL）。偏离 story Note 1/3 字面「ensureMsgf」，但遵既有项目约定。
+- 修 implement 阶段缺陷：EAutomationTestFlags scoped-member 误用（编译错）+ TC5/TC8 `*new bool` 内存泄漏×2 → 局部 bool。
+**Test Evidence**：Logic — Source/rentoTests/Private/NextActivePlayerBankruptcyOnGameWonTest.cpp（11 测试）+ OnGameWonSpy.h；主会话独立全量 202/202 Success, 0 Fail, EXIT 0（Saved/TestReport_pt003_r3/index.json，2026.06.07-15.23.41）
+**生产方式**：workflow pilot（wf_3d1bbcee）的 implement agent 产出 → 独立 verify agent 抓到编译失败 HALT → 主会话 human-on-halt 修编译+ensure约定+泄漏 + 完整对抗审查（2↔9 接缝/spy 真实性/AC-6·8 非 vacuity）。
+**Out of Scope 严守**：ETurnPhase（002）/ SetBankrupt 封装强度（005）/ OnGameWon 完整契约声明（004）/ bankruptcy9 内部算法（bankruptcy epic）/ OnPlayerBankrupt·OnBankruptcyDeclared 均未实现

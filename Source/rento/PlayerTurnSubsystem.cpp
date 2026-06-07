@@ -1,12 +1,11 @@
 // PlayerTurnSubsystem.cpp
 // =============================================================================
-// UPlayerTurnSubsystem — 回合系统 per-match 宿主实现（story pt-001 / pt-002）
+// UPlayerTurnSubsystem — 回合系统 per-match 宿主实现（story pt-001 / pt-002 / pt-003）
 //
 // pt-001 scope（开局入口 + 建队 + 定序）：
 //   - InitializeFromConfig：建队（AC-10 P 边界 + TokenColor 唯一）+ 调定序
 //   - AssignTurnOrderByRollTotals：排名纯方法（降序，TC-3 测试 mock 注入点）
 //   - ResolveInitialTurnOrderWithTiebreak：生产定序 + F-4 平手重掷（走 DiceRngService 权威流，ADR-0004）
-//   - ResolveInitialTurnOrderWithTiebreak：F-4 平手重掷完整裁定（AC-11）
 //   - ValidateTurnOrderUniqueness：AC-5 TurnOrderIndex 唯一性校验
 //   - GetPlayerStates / FindPlayerById：只读访问接口
 //
@@ -15,18 +14,25 @@
 //   - StartTurn：行动权移交，路由正常/在狱分支
 //   - ProcessRollResult：消费 bIsDouble，驱动 F-3 双点链计数
 //   - AdvanceFromMovePhase / AdvanceFromResolvePhase：阶段推进
-//   - EndTurn：PostRollAction → TurnEnd，判定额外回合 or 移交
+//   - EndTurn：PostRollAction → TurnEnd，判定额外回合 or 移交（pt-003 接管完整 F-1 寻路）
 //   - AdvanceFromJailTurn：JailTurn → TurnEnd
 //   - ShouldGoToJail：F-3 纯函数（static，AC-7 可单测）
-//   - FindNextActivePlayerId：pt-002 简单递增（story-003 接管完整 F-1）
+//
+// pt-003 scope（F-1 NextActivePlayer + 破产移出 + OnGameWon + IResolveBankruptcy DI）：
+//   - NextActivePlayer：静态纯函数，守卫先行，入口规范化（AC-1/2/3）
+//   - ActivePlayerCount：静态计数辅助（AC-4；纯计数，绝非胜负裁决器）
+//   - SetBankruptcyResolver：注入 IResolveBankruptcy（DI 注入面）
+//   - HandlePlayerBankruptcy：调注入接口读返回值，驱动 bIsBankrupt + OnGameWon
+//   - FindNextActivePlayerId：改为调真 F-1（NextActivePlayer，守卫先行）
 //
 // 禁 Latent 强约束（ADR-0001 §4）：
 //   绝不使用 FTimerHandle / Blueprint Delay / WaitForEvent。
 //   状态机仅通过 ETurnPhase 枚举字段 + delegate 推进，保证读档 switch(CurrentPhase) 重入。
 //
 // 规范依据：
-//   - story pt-001 AC-1~5，story pt-002 AC-1~11，TC-1~11，Edge
+//   - story pt-001 AC-1~5，story pt-002 AC-1~11，story pt-003 AC-1~8
 //   - ADR-0001（per-match UWorldSubsystem；禁 Latent；枚举字段 + delegate 推进）
+//   - ADR-0003（OnGameWon 单一事件源：回合2 触发，9 return-only）
 //   - ADR-0004（骰子权威流，F-3 时序契约）
 //   - ADR-0007（回合状态机落 C++；[Logic] BLOCKING AC 被测逻辑落 C++）
 //   - control-manifest Foundation Layer
@@ -827,20 +833,20 @@ void UPlayerTurnSubsystem::EndTurn(bool bSentToJailThisTurn)
             PlayerState->ConsecutiveDoubles = 0;
         }
 
-        // 找下一个未破产玩家（pt-002 简单实现，story-003 接管完整 F-1）
+        // 找下一个未破产玩家（story-003 接管完整 F-1；F-1 守卫 |A|<=1 返回 INDEX_NONE）
         const int32 NextPlayerId = FindNextActivePlayerId();
-        if (NextPlayerId >= 0)
+        if (NextPlayerId != INDEX_NONE)
         {
             StartTurn(NextPlayerId);
         }
         else
         {
-            // 无下一玩家（退化局 / 全员破产）：记日志，不进轮转
-            // story-003 将完整处理 OnGameWon 终局信号
-            UE_LOG(LogTemp, Warning,
+            // F-1 返回 INDEX_NONE（|A|<=1）：对局结束，停止轮转
+            // OnGameWon 由 HandlePlayerBankruptcy 触发（AC-8 封堵：此处不独立广播）
+            UE_LOG(LogTemp, Log,
                 TEXT("UPlayerTurnSubsystem::EndTurn — "
-                     "无下一活跃玩家（退化局？），停止轮转。"
-                     "（story-003 接管 OnGameWon 终局）"));
+                     "F-1 返回 INDEX_NONE（|A|<=1），停止轮转。"
+                     "OnGameWon 由 HandlePlayerBankruptcy 触发（AC-8 封堵）。"));
         }
     }
 }
@@ -896,22 +902,275 @@ void UPlayerTurnSubsystem::AdvanceFromJailTurn(bool bRemainsInJail)
     bLastRollWasDouble = false;
     bSentToJailThisTurnInternal = false;
 
-    // 找下一玩家（同 EndTurn 逻辑）
+    // 找下一玩家（调完整 F-1，F-1 守卫 |A|<=1 返回 INDEX_NONE）
     const int32 NextPlayerId = FindNextActivePlayerId();
-    if (NextPlayerId >= 0)
+    if (NextPlayerId != INDEX_NONE)
     {
         StartTurn(NextPlayerId);
     }
     else
     {
-        UE_LOG(LogTemp, Warning,
+        // F-1 返回 INDEX_NONE（|A|<=1）：对局结束，停止轮转
+        UE_LOG(LogTemp, Log,
             TEXT("UPlayerTurnSubsystem::AdvanceFromJailTurn — "
-                 "无下一活跃玩家，停止轮转（story-003 接管）。"));
+                 "F-1 返回 INDEX_NONE，停止轮转（对局结束）。"));
     }
 }
 
 // ===========================================================================
-// FindNextActivePlayerId — 找下一个未破产玩家（pt-002 简单递增，story-003 接管 F-1）
+// NextActivePlayer — F-1 静态纯函数（story pt-003 AC-1/2/3）
+//
+// 守卫先行（GDD L289-293）：
+//   |A|=0 → INDEX_NONE + ensureMsgf（正常不可达）
+//   |A|=1 → INDEX_NONE（不返回唯一存活者；对局已由 CR-6 终结）
+//   |A|≥2 → 入口规范化后枚举
+//
+// 入口规范化（GDD L295-297）：
+//   cur_safe = ((cur % P) + P) % P（欧几里得取模，保证 cur_safe ∈ [0,P-1]）
+//   k = min{k ∈ [1,P-1] | (cur_safe+k)%P ∈ ActiveIndices}
+// ===========================================================================
+
+/*static*/
+int32 UPlayerTurnSubsystem::NextActivePlayer(int32 cur, int32 P, const TSet<int32>& ActiveIndices)
+{
+    const int32 ActiveCount = ActiveIndices.Num();
+
+    // -------------------------------------------------------------------------
+    // 守卫 1：|A|=0 → 正常流程不可达，ensureMsgf + 返回 INDEX_NONE
+    // -------------------------------------------------------------------------
+    if (ActiveCount == 0)
+    {
+        // |A|=0 正常流程不可达（MVP 单线程，退化局由破产9内部兜底）。
+        // 项目约定（active.md logged-decision）：验证型错误路径用 UE_LOG(Error) 替 ensure
+        // ——headless Automation 中 ensure callstack 产生整片 Error 行致 AddExpectedError 计数不可靠。
+        UE_LOG(LogTemp, Error,
+            TEXT("NextActivePlayer: ActiveIndices is empty (|A|=0), "
+                 "unreachable in normal game flow. cur=%d, P=%d. 返回 INDEX_NONE。"),
+            cur, P);
+        return INDEX_NONE;
+    }
+
+    // -------------------------------------------------------------------------
+    // 守卫 2：|A|=1 → 对局已由 CR-6 终结，不返回唯一存活者索引
+    // 守卫判据仅看 |A|，与 cur 是否∈A 无关（GDD L290 澄清）
+    // -------------------------------------------------------------------------
+    if (ActiveCount == 1)
+    {
+        return INDEX_NONE;
+    }
+
+    // -------------------------------------------------------------------------
+    // dev 诊断：检查原始 cur 是否在合法范围（规范化前，GDD L315）
+    // ⚠ 此越界是 handled 情形（下方欧几里得取模规范化兜住），故用 Warning 而非 Error：
+    //    越界 cur 是上游异常输入信号，但已被安全处理；Warning 不致 Automation FAIL，
+    //    TC3 验证规范化输出（无需 AddExpectedError 体操）。
+    // -------------------------------------------------------------------------
+    if (!(cur >= 0 && cur < P))
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("NextActivePlayer: cur=%d is out of range [0,%d), "
+                 "will normalize via Euclidean modulo (handled)。"),
+            cur, P - 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // 入口规范化（GDD L295）：欧几里得取模保证 cur_safe ∈ [0,P-1]
+    // 即使 cur 为负数，((cur%P)+P)%P 仍正确（C++ 负数取模可为负，+P 再%P 修正）
+    // -------------------------------------------------------------------------
+    const int32 CurSafe = ((cur % P) + P) % P;
+
+    // -------------------------------------------------------------------------
+    // 枚举：k = min{k ∈ [1,P-1] | (cur_safe+k)%P ∈ ActiveIndices}
+    // k 从 1 开始（跳过自身），最大 P-1（|A|≥2 保证必有命中）
+    // -------------------------------------------------------------------------
+    for (int32 k = 1; k < P; ++k)
+    {
+        const int32 Candidate = (CurSafe + k) % P;
+        if (ActiveIndices.Contains(Candidate))
+        {
+            return Candidate;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 不可达兜底（|A|≥2 且枚举 P-1 个候选，必有命中）
+    // -------------------------------------------------------------------------
+    ensureMsgf(false,
+        TEXT("NextActivePlayer: No active player found after full enumeration. "
+             "cur=%d, P=%d, ActiveCount=%d. This should be unreachable."),
+        cur, P, ActiveCount);
+    return INDEX_NONE;
+}
+
+// ===========================================================================
+// ActivePlayerCount — F-2 静态计数辅助（story pt-003 AC-4）
+//
+// 数 BankruptFlags 中 false 的个数（false=活跃，true=已破产）。
+// ⚠ 纯计数辅助，绝非胜负裁决器（GDD L331 / story-003 §2）
+// ===========================================================================
+
+/*static*/
+int32 UPlayerTurnSubsystem::ActivePlayerCount(const TArray<bool>& BankruptFlags)
+{
+    // 遍历标志，计数 false（未破产=活跃）
+    int32 Count = 0;
+    for (bool bBankrupt : BankruptFlags)
+    {
+        if (!bBankrupt)
+        {
+            ++Count;
+        }
+    }
+
+    // AC-4：全员破产（APC=0）正常流程不可达。项目约定用 UE_LOG(Error) 替 ensure（headless 可吞）。
+    if (Count <= 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("ActivePlayerCount: All players are bankrupt (APC=0), "
+                 "unreachable in normal game flow."));
+    }
+
+    return Count;
+}
+
+// ===========================================================================
+// SetBankruptcyResolver — DI 注入接口（story pt-003）
+// ===========================================================================
+
+void UPlayerTurnSubsystem::SetBankruptcyResolver(TSharedPtr<IResolveBankruptcy> Resolver)
+{
+    BankruptcyResolver = Resolver;
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::SetBankruptcyResolver — "
+             "注入 IResolveBankruptcy: %s"),
+        Resolver.IsValid() ? TEXT("有效") : TEXT("nullptr（已清除）"));
+}
+
+// ===========================================================================
+// HandlePlayerBankruptcy — 破产移出 + OnGameWon 触发（story pt-003 AC-5/6/7/8）
+//
+// 执行顺序（CR-6 / story-003 §5/6）：
+//   1. 调注入的 IResolveBankruptcy::ResolveBankruptcy（return-only，绝不回调）
+//   2. bDebtorEliminated=true → 置 debtor.bIsBankrupt=true + 移出轮转
+//   3. WinnerId!=INDEX_NONE 且 !bGameWon → 广播 OnGameWon(WinnerId) 一次 + bGameWon=true
+//
+// ⚠ AC-8 封堵 2↔9：本方法是 OnGameWon 唯一触发来源
+//   正常 TurnEnd→F-1 移交路径绝不广播（即便 APC==1 也不触发）
+// ===========================================================================
+
+void UPlayerTurnSubsystem::HandlePlayerBankruptcy(int32 DebtorId, int32 CreditorId)
+{
+    // -------------------------------------------------------------------------
+    // 防御：注入接口必须有效（生产中 bankruptcy epic 保证注入；测试中 stub 注入）
+    // -------------------------------------------------------------------------
+    if (!BankruptcyResolver.IsValid())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::HandlePlayerBankruptcy — "
+                 "BankruptcyResolver 未注入（nullptr），"
+                 "无法处理破产事件（DebtorId=%d, CreditorId=%d）。"
+                 "请在对局初始化后注入 IResolveBankruptcy 实现。"),
+            DebtorId, CreditorId);
+        return;
+    }
+
+    // -------------------------------------------------------------------------
+    // 1. 计算注入前的活跃玩家数（debtor 排除后的快照值）
+    //    按 GDD CR-6：破产9 在 activePlayersSnapshot 上算 APC，显式排除 debtor
+    //    本系统构建快照传给接口，不依赖9 算 APC——让接口实现自由裁决
+    // -------------------------------------------------------------------------
+    // 构建活跃玩家数（排除 debtor）：数 bIsBankrupt=false 且 PlayerId!=DebtorId 的数量
+    int32 ActiveCountForResolver = 0;
+    for (const TObjectPtr<URentoPlayerState>& State : PlayerStates)
+    {
+        if (State && !State->bIsBankrupt && State->PlayerId != DebtorId)
+        {
+            ++ActiveCountForResolver;
+        }
+    }
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::HandlePlayerBankruptcy — "
+             "DebtorId=%d, CreditorId=%d, ActiveCountForResolver=%d。"),
+        DebtorId, CreditorId, ActiveCountForResolver);
+
+    // -------------------------------------------------------------------------
+    // 2. 调注入的 IResolveBankruptcy（return-only，绝不回调，AC-6 AC-8 安全阀）
+    // -------------------------------------------------------------------------
+    const FBankruptcyResolution Result = BankruptcyResolver->ResolveBankruptcy(
+        DebtorId, CreditorId, ActiveCountForResolver);
+
+    // -------------------------------------------------------------------------
+    // 3. 据 bDebtorEliminated 置 bIsBankrupt + 移出轮转（GDD CR-6）
+    // -------------------------------------------------------------------------
+    if (Result.bDebtorEliminated)
+    {
+        URentoPlayerState* DebtorState = FindPlayerById(DebtorId);
+        if (DebtorState)
+        {
+            // 时序：先写 bIsBankrupt（先同步算定权威结果），再触发事件（ADR-0003 结算同步先行）
+            DebtorState->bIsBankrupt = true;
+
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::HandlePlayerBankruptcy — "
+                     "DebtorId=%d bIsBankrupt 已置 true（移出轮转）。"),
+                DebtorId);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error,
+                TEXT("UPlayerTurnSubsystem::HandlePlayerBankruptcy — "
+                     "找不到 DebtorId=%d 对应的 PlayerState，bIsBankrupt 未写入。"),
+                DebtorId);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. 据 WinnerId 广播 OnGameWon（边沿触发，bGameWon 守卫，AC-7）
+    //
+    // ⚠ AC-8 封堵：此处是系统内 OnGameWon 的唯一触发路径。
+    //   正常 TurnEnd→F-1 移交路径（无本方法调用）即便 APC==1 也绝不广播。
+    // -------------------------------------------------------------------------
+    if (Result.WinnerId != INDEX_NONE)
+    {
+        if (!bGameWon)
+        {
+            // 进入 Winner 终态（边沿触发，先置标志防重入）
+            bGameWon = true;
+
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::HandlePlayerBankruptcy — "
+                     "广播 OnGameWon(WinnerId=%d)（首次触发，bGameWon 已置 true）。"),
+                Result.WinnerId);
+
+            // 广播（ADR-0003：结算同步先行——bIsBankrupt 已写，OnGameWon 后随）
+            OnGameWon.Broadcast(Result.WinnerId);
+        }
+        else
+        {
+            // 已进 Winner 终态，边沿守卫拦截（AC-7）
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::HandlePlayerBankruptcy — "
+                     "WinnerId=%d 被边沿守卫拦截（bGameWon=true 已进 Winner 终态，"
+                     "AC-7 幂等保证）。"),
+                Result.WinnerId);
+        }
+    }
+    else
+    {
+        // WinnerId==INDEX_NONE → 对局继续，不触发（AC-6 第二分支）
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::HandlePlayerBankruptcy — "
+                 "WinnerId==INDEX_NONE，对局继续，OnGameWon 不触发。"));
+    }
+}
+
+// ===========================================================================
+// FindNextActivePlayerId — 找下一个未破产玩家（story-003 接管完整 F-1）
+//
+// 构建 ActiveIndices TSet（TurnOrderIndex 空间），调 static NextActivePlayer。
+// F-1 返回 INDEX_NONE（|A|<=1）时返回 INDEX_NONE（轮转停止，对局结束）。
 // ===========================================================================
 
 int32 UPlayerTurnSubsystem::FindNextActivePlayerId() const
@@ -919,10 +1178,12 @@ int32 UPlayerTurnSubsystem::FindNextActivePlayerId() const
     const int32 P = PlayerStates.Num();
     if (P == 0)
     {
-        return -1;
+        return INDEX_NONE;
     }
 
-    // 找当前活跃玩家的 TurnOrderIndex
+    // -------------------------------------------------------------------------
+    // 找当前活跃玩家的 TurnOrderIndex（F-1 的 cur 参数）
+    // -------------------------------------------------------------------------
     int32 CurrentTurnOrder = -1;
     for (const TObjectPtr<URentoPlayerState>& State : PlayerStates)
     {
@@ -935,29 +1196,58 @@ int32 UPlayerTurnSubsystem::FindNextActivePlayerId() const
 
     if (CurrentTurnOrder < 0)
     {
-        // 当前玩家找不到，退化为第一个未破产
-        CurrentTurnOrder = -1;
+        UE_LOG(LogTemp, Warning,
+            TEXT("UPlayerTurnSubsystem::FindNextActivePlayerId — "
+                 "CurrentActivePlayerId=%d 找不到对应 TurnOrderIndex，"
+                 "退化为 cur=0。"),
+            CurrentActivePlayerId);
+        CurrentTurnOrder = 0;
     }
 
-    // 按 TurnOrderIndex 递增（循环）找下一个未破产玩家
-    // ⚠ story-003 注释：完整 F-1（破产跳过/OnGameWon/INDEX_NONE 哨兵）归 story-003
-    for (int32 Offset = 1; Offset <= P; ++Offset)
+    // -------------------------------------------------------------------------
+    // 构建 ActiveIndices：未破产玩家的 TurnOrderIndex 集合
+    // -------------------------------------------------------------------------
+    TSet<int32> ActiveIndices;
+    for (const TObjectPtr<URentoPlayerState>& State : PlayerStates)
     {
-        const int32 NextTurnOrder = (CurrentTurnOrder + Offset) % P;
-
-        // 在 PlayerStates 中找 TurnOrderIndex == NextTurnOrder 的玩家
-        for (const TObjectPtr<URentoPlayerState>& State : PlayerStates)
+        if (State && !State->bIsBankrupt && State->TurnOrderIndex >= 0)
         {
-            if (State &&
-                State->TurnOrderIndex == NextTurnOrder &&
-                !State->bIsBankrupt)
-            {
-                return State->PlayerId;
-            }
+            ActiveIndices.Add(State->TurnOrderIndex);
         }
     }
 
-    return -1;  // 无下一活跃玩家
+    // -------------------------------------------------------------------------
+    // 调 F-1 静态纯函数（守卫先行，入口规范化）
+    // -------------------------------------------------------------------------
+    const int32 NextTurnOrder = NextActivePlayer(CurrentTurnOrder, P, ActiveIndices);
+
+    if (NextTurnOrder == INDEX_NONE)
+    {
+        // F-1 返回 INDEX_NONE（|A|<=1）：对局结束，轮转停止
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::FindNextActivePlayerId — "
+                 "F-1 返回 INDEX_NONE（|A|=%d），对局结束，轮转停止。"),
+            ActiveIndices.Num());
+        return INDEX_NONE;
+    }
+
+    // -------------------------------------------------------------------------
+    // 从 TurnOrderIndex 反查 PlayerId
+    // -------------------------------------------------------------------------
+    for (const TObjectPtr<URentoPlayerState>& State : PlayerStates)
+    {
+        if (State && State->TurnOrderIndex == NextTurnOrder)
+        {
+            return State->PlayerId;
+        }
+    }
+
+    // 不可达兜底
+    UE_LOG(LogTemp, Error,
+        TEXT("UPlayerTurnSubsystem::FindNextActivePlayerId — "
+             "F-1 返回 NextTurnOrder=%d 但找不到对应 PlayerState（内部错误）。"),
+        NextTurnOrder);
+    return INDEX_NONE;
 }
 
 // ===========================================================================
