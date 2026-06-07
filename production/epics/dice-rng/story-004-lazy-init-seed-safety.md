@@ -1,11 +1,11 @@
 ---
 Epic: dice-rng
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: S
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 ---
 
 # Story 004 — lazy-init 兜底种子安全（禁默构 0）
@@ -30,7 +30,7 @@ Last Updated: 2026-06-06
 
 > scoped 到本 story（未 SetSeed 兜底路径安全）。
 
-- [ ] **AC-17** [Logic] 不调 `SetSeed` 直接 `RollDice()`：shipping 不崩、返回值满足 AC-1 约束（`Die1∈[1,6]` 等，lazy-init 兜底）；dev ensure 触发。
+- [ ] **AC-17** [Logic] 不调 `SetSeed` 直接 `RollDice()`：shipping 不崩、返回值满足 AC-1 约束（`Die1∈[1,6]` 等，lazy-init 兜底）；`UE_LOG(LogTemp, Error, "...lazy-init...")` 触发（`AddExpectedError(Contains "lazy-init", 1)` 捕获）。〔🟡 logged decision 2026-06-07：原文「dev ensure 触发」doc-sync 为 `UE_LOG(Error)`——循 FF-003→DR-001→BD-003→BD-004→DR-003 既定惯例（headless ensure callstack 不稳致 AddExpectedError 计数不可靠）。〕
 - [ ] **AC-17b** [Logic] 不调 `SetSeed` 直接 `RollDice()` 触发 lazy-init 后：经公有 accessor（`GetInitialSeed()`/`GetCurrentSeed()`）断言 **lazy-init 实际写入的 `InitialSeed != 0`**（证明兜底种子取自非确定源 `FPlatformTime::Cycles()`、未退化为 `FRandomStream` 默认构造的固定 `0`）。
 
 ## Implementation Notes
@@ -38,7 +38,7 @@ Last Updated: 2026-06-06
 > 来自 ADR-0004 Implementation Guidelines + dice Edge Cases，逐字保真不改写语义。
 
 - **lazy-init 兜底种子**（ADR-0004 Guideline 3）：lazy-init 兜底种子用 `FPlatformTime::Cycles()`，**禁** `FRandomStream()` 默构 0（否则忘 SetSeed 的对局掷出相同确定序列，砸穿「骰子不可预测」信任底线，且范围断言查不出）。Full Vision 重放模式下未 SetSeed = fail-fast，不走 lazy-init。
-- **未初始化兜底**（dice Edge Cases）：开局必先 `SetSeed`（CR-3）。未初始化调用 → `ensure` dev 诊断 + lazy-init 兜底（shipping 不崩、不返回未定义值）。
+- **未初始化兜底**（dice Edge Cases）：开局必先 `SetSeed`（CR-3）。未初始化调用 → `UE_LOG(LogTemp, Error, "...lazy-init...")` 诊断（既定惯例替 `ensure`，见 AC-17 logged decision）+ lazy-init 兜底（shipping 不崩、不返回未定义值）。
 - **种子合法值**（dice Edge Cases）：`FRandomStream` 接受任意 int32 种子，**`0` 是合法种子**（非"无种子"哨兵）—— 注意：`0` 作**显式 SetSeed 传入**仍合法（见 story-001 AC-18），本 story 只拦截 lazy-init 退化到默认构造 `0` 的路径。
 - **AC-17b 为确定性断言**（R2 修正）：原"两次冷启动序列不完全相同"是概率命题（违反"统计/频率断言永不作 [Logic] gate"原则）；改为确定性单点断言 `InitialSeed != 0`（`Cycles()` 实际恒不返回 0 → 断言结果确定为真、零 flaky），直接覆盖 B4 意图。
 
@@ -56,9 +56,9 @@ Last Updated: 2026-06-06
 > 每 AC 一条 Given/When/Then。`-nullrhi` headless。
 
 - **AC-17（未 SetSeed 兜底不崩）**
-  - Given: `NewObject` DiceService，**不调** `SetSeed`；dev 配置注册 `AddExpectedError` 捕获 ensure。
+  - Given: `NewObject` DiceService，**不调** `SetSeed`；注册 `AddExpectedError(Contains "lazy-init", 1)` 捕获 `UE_LOG(Error)`（doc-sync：ensure→UE_LOG(Error) 既定惯例，见 AC-17 logged decision）。
   - When: 直接 `RollDice()`。
-  - Then: shipping 不崩、返回值满足 AC-1 约束（`Die1∈[1,6]` ∧ `Die2∈[1,6]` ∧ `Total==Die1+Die2` ∧ `bIsDouble==(Die1==Die2)`）；dev ensure 触发（被捕获）。
+  - Then: shipping 不崩、返回值满足 AC-1 约束（`Die1∈[1,6]` ∧ `Die2∈[1,6]` ∧ `Total==Die1+Die2` ∧ `bIsDouble==(Die1==Die2)`）；`UE_LOG(LogTemp, Error, "...lazy-init...")` 触发（被 `AddExpectedError` 捕获，计数 1）。
   - Edge: 不返回未定义/越界值。
 - **AC-17b（兜底种子非固定 0）**
   - Given: `NewObject` DiceService，不调 `SetSeed`。
@@ -75,3 +75,16 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（宿主 + `GetInitialSeed`/`GetCurrentSeed` accessor）、story-002（RollDice 主路径 + AC-1 约束）须 DONE。
 - **Unlocks**: 无（叶子边界 story）；与 story-006 fixture 正交。
+
+## Completion Notes
+**Completed**: 2026-06-07
+**Criteria**: 2/2 passing（AC-17/17b 全 [Logic] COVERED；无 deferred。AC 数=2 < Logic≥3 启发阈，但窄叶子 story〔lazy-init 安全〕，AC-17 捆绑不崩+AC-1 四字段约束+UE_LOG 子断言，已完整覆盖）
+**Test Evidence**: Logic — `Source/rentoTests/Private/LazyInitSeedSafetyTest.cpp`（2 测试函数，类目 `Rento.Dice.LazyInitSeedSafety`）。主会话独立重编译（UBT Succeeded）+ 独立重跑全量 Rento. **142/142 Success（135+7 warn）, 0 Fail, EXIT 0**（证据 `Saved/TestReport_dr004_verify/index.json`；注：agent 报「total=135」是把 succeeded 字段当 total 的混淆，真 total=135+7=142，主会话独立解析坐实无丢测试）。
+**Code Review**: Complete — **APPROVED（首轮即过，零 must-fix）**。两专家（unreal+qa）均报 CLEAN（0 BLOCKING/0 GAP）。生产 CLEAN（独立 flag 非 seed==0 哨兵 / `Cycles()|1u` 确定非0 / guard 早退后抽流前 / GetInitialSeed 不触发 / SetSeed 仅加 flag / 三道门+RollDice 执行序未改）；测试非 vacuous（AC-17b 退化默构0→GetInitialSeed==0 必 FAIL；AddExpectedError count=1 逐路径核）。
+**Deviations**: None（diff 证三道门/RollDice 未改，删除10行全注释，仅插 EnsureSeed guard+SetSeed flag+新函数）。
+**Logged decisions（非债，已 doc-sync AC-17/Impl Notes/QA Test Cases）**:
+- lazy-init 兜底用 `UE_LOG(LogTemp,Error,"...lazy-init...")` 替 `ensure()`（既定惯例 FF-003→DR-001→BD-003→BD-004→DR-003，headless 稳定）。
+- `FPlatformTime::Cycles()|1u` 强制奇数→`InitialSeed` 确定非0（AC-17b 真确定性断言，非依赖「Cycles 恒非0」概率）；独立 `bSeedInitialized` flag（0 是合法显式 seed，不可作哨兵）。
+- 引擎核实 CONFIRMED：FRandomStream 默构种子0 / GetInitialSeed 返 InitialSeed / Cycles uint32。
+**Tech debt logged**: None（manifest/ADR ensure+Warning stale 文本的 producer propagate 项已在 DR-003 登记，本 story 复用同惯例无新增）。
+**Advisory（未折叠）**: RandomFloat01 的 lazy-init 路径未单测（out of scope per AC——AC 只要求 RollDice 路径，guard 同代码已经 RollDice 覆盖）。

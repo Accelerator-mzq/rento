@@ -16,22 +16,28 @@
 //     返回==payload 同源）；触发次数不变式 / 重入禁止 / 完整 BP 暴露纪律仍
 //     → story-005，story-005 在此既有 delegate 上加语义，不重新声明
 //
+// 实现内容（story-004 scope，追加，不改 story-001/002/003 既有语义）：
+//   - bSeedInitialized 独立 flag（非 seed==0 哨兵，0 是合法种子，ADR-0004）
+//   - EnsureSeedInitialized() 私有辅助：lazy-init 兜底用 FPlatformTime::Cycles()|1u
+//   - GetInitialSeed() accessor（AC-17b 需要，读 FRandomStream::GetInitialSeed()）
+//
 // Out of Scope（严守各 story 边界）：
-//   - RandomRange 退化契约（Min==Max/Min>Max/2^24） → story-003
-//   - lazy-init 兜底种子（!bUseFixedSeed 路径）    → story-004
+//   - RandomRange 退化契约（Min==Max/Min>Max/2^24） → story-003（已实现）
+//   - lazy-init 兜底种子（!bUseFixedSeed 路径）    → story-004（已实现）
 //   - OnDiceRolled 触发次数不变式 / 重入禁止 / 完整 BP 暴露纪律 → story-005
 //   - 确定性序列 fixture（AC-8/9）                 → story-006
 //   - CI 禁全局 RNG 静态扫描 / 流隔离 spy          → story-007
 //   - Seed 序列化                                   → story-008
 //
 // 规范依据：
-//   - ADR-0004（primary）— 确定性 RNG 服务 + 执行序铁律
+//   - ADR-0004（primary）— 确定性 RNG 服务 + 执行序铁律 + lazy-init 兜底
 //   - ADR-0001            — UObject 宿主与生命周期边界
 //   - ADR-0003            — 事件总线：OnDiceRolled payload 形态
 //   - ADR-0007            — BP/C++ 边界：含 gameplay 随机 → C++ UFUNCTION
 //   - control-manifest Foundation Layer §确定性 RNG (ADR-0004)
 //   - story-001（dice-rng epic）AC-23/18/13/12c + [Host] AC
 //   - story-002（dice-rng epic）AC-1/2/6/7/16c
+//   - story-004（dice-rng epic）AC-17/17b
 // =============================================================================
 #pragma once
 
@@ -104,6 +110,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDiceRolled, FDiceRollResult, Resu
  *
  * OQ 登记（本 story 未实现，待后续 story）：
  *   - OQ-2：GetCurrentSeed() 显式存取，勿靠 struct 反射（已实现显式 accessor）
+ *   - OQ-3：Full Vision 重放模式下未 SetSeed = fail-fast（非 lazy-init，属 OQ-3）
  *   - OQ-4：RandomFloat01() 半开 [0,1)，floor(f*N) 仅 MVP 小 N 安全；N>=2^24 浮点舍入越界未测
  */
 UCLASS()
@@ -194,6 +201,8 @@ public:
 	 *   - 负数种子同样合法（FRandomStream::Initialize 接受 int32 全范围）
 	 *   - 生产环境由 StartNewGame 玩家配置传入（ff-004/pt-001 接线），
 	 *     固定种子仅用于测试 / 调试（bUseFixedSeed 旋钮）
+	 *   - story-004：SetSeed 成功执行后置 bSeedInitialized=true，
+	 *     阻止后续 lazy-init 兜底路径触发（正常路径语义不变）
 	 *
 	 * @param InitialSeed 种子值（int32 全范围合法）
 	 */
@@ -214,6 +223,23 @@ public:
 		meta=(DisplayName="Get Current RNG Seed (Auth)", ToolTip="获取权威流当前种子"))
 	int32 GetCurrentSeed() const;
 
+	/**
+	 * 获取权威流初始种子（story-004 AC-17b；读 FRandomStream::GetInitialSeed()）。
+	 *
+	 * 用途：
+	 *   RollDice() 抽流后 GetCurrentSeed() 已推进，无法读到注入的初始值；
+	 *   GetInitialSeed() 返回 FRandomStream::Initialize() 时传入的种子，
+	 *   供测试验证 lazy-init 写入的 Cycles()|1u 值确实非 0（AC-17b 确定性断言）。
+	 *
+	 * 注意：本函数不调用 EnsureSeedInitialized()——不抽流，不应触发 lazy-init。
+	 * 若在 SetSeed()/lazy-init 之前调用，返回 FRandomStream 默构值（0）是预期行为。
+	 *
+	 * @return 权威流的初始种子（FRandomStream::InitialSeed 成员，int32）
+	 */
+	UFUNCTION(BlueprintCallable, Category="Rento|RNG",
+		meta=(DisplayName="Get Initial RNG Seed (Auth)", ToolTip="获取权威流初始种子（lazy-init 验证用）"))
+	int32 GetInitialSeed() const;
+
 	// -------------------------------------------------------------------------
 	// 测试 / 调试旋钮（bUseFixedSeed / FixedSeed）
 	// 生产路径：bUseFixedSeed=false，OnWorldBeginPlay 不注入（见注释）
@@ -227,7 +253,7 @@ public:
 	 *   这是故意的「未接线」结构事实（story-001 Out of Scope 界定）：
 	 *   生产每局不同种子的真实来源为 StartNewGame 玩家配置，
 	 *   由 ff-004 / pt-001 在 OnWorldBeginPlay 之后调用 SetSeed() 传入；
-	 *   防 seed=0 footgun 的 lazy-init 兜底属 story-004。
+	 *   防 seed=0 footgun 的 lazy-init 兜底属 story-004（已实现）。
 	 *   本 story 仅锚定「OnWorldBeginPlay = 唯一合法 Seed 注入时机」这一结构事实。
 	 *
 	 * true：调用 SetSeed(FixedSeed)，适用于确定性测试 / 回归门 / 调试复现。
@@ -288,8 +314,35 @@ private:
 	//   - 值语义（非指针）：FRandomStream 是 plain C++ struct，无需 GC 管理
 	//   - private：禁止任何 BP 直接访问——所有随机必须经封装函数（BlueprintCallable）
 	//   - 不标 UPROPERTY：防止意外 BP 暴露；序列化由 story-008 显式处理（GetCurrentSeed/SetSeed）
-	//   - 默构种子恒 0（ADR-0004 Verification ③ CONFIRMED）：
-	//     lazy-init 兜底（生产路径 seed 非 0）属 story-004，本 story 不实现
+	//   - 默构种子恒 0（ADR-0004 Verification ③ CONFIRMED，UE5.7 RandomStream.h L30-33）：
+	//     lazy-init 兜底（story-004）用 FPlatformTime::Cycles()|1u 防止退化到 0
 	// -------------------------------------------------------------------------
 	FRandomStream AuthoritativeStream;
+
+	// -------------------------------------------------------------------------
+	// bSeedInitialized — lazy-init 兜底状态 flag（story-004，ADR-0004 Guideline 3）
+	//
+	// 设计决策：
+	//   - 独立 bool flag，非 seed==0 哨兵——0 是合法显式 SetSeed 值（AC-18）
+	//   - 不标 UPROPERTY：纯运行时状态，无需 GC 管理，不参与序列化
+	//   - 置 true 时机：SetSeed() 成功执行后（正常路径）；EnsureSeedInitialized() lazy-init 后
+	//   - 置 false 时机：仅初始默构（=false）——本 MVP 无 reset 语义
+	// -------------------------------------------------------------------------
+	bool bSeedInitialized = false;
+
+	// -------------------------------------------------------------------------
+	// EnsureSeedInitialized — lazy-init 兜底辅助（story-004，ADR-0004 Guideline 3）
+	//
+	// 若 bSeedInitialized==false（未经 SetSeed 或 OnWorldBeginPlay 注入）：
+	//   1. 记 UE_LOG(LogTemp, Error) 含稳定子串「lazy-init」供 AddExpectedError 匹配
+	//   2. AuthoritativeStream.Initialize(static_cast<int32>(FPlatformTime::Cycles() | 1u))
+	//      Cycles()|1u：强制最低位为 1，确保 InitialSeed 永远非 0（AC-17b 确定性断言）
+	//   3. bSeedInitialized = true
+	//
+	// 调用点（精确，story-004 设计约束）：
+	//   RandomRange()：Min==Max/Min>Max 早返之后，2^24 检查及 RandRange 调用之前
+	//   RandomFloat01()：FRand() 调用之前
+	//   （RollDice 经 RandomRange 间接触发，不在 RollDice 本体额外调用）
+	// -------------------------------------------------------------------------
+	void EnsureSeedInitialized();
 };
