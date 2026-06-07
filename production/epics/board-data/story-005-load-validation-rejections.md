@@ -1,11 +1,11 @@
 ---
 Epic: board-data
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: L
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 ---
 
 # Story 005 — 加载期完整性校验（拒绝类）+ 结构化错误码
@@ -76,7 +76,7 @@ Last Updated: 2026-06-06
 - **AC-22 / AC-22b**：GIVEN Property `RentTable.Num()==4` / Railroad `RentTable.Num()==6` WHEN Validate THEN 拒绝 + 期望/实际长度 + TileIndex。
 - **AC-23**：三 fixture（Property/Railroad/Utility `PurchasePrice=0` 或负）WHEN Validate THEN 各拒绝 + TileIndex。Edge：三类型必须各覆盖，不止 Railroad。
 - **AC-23b/c/d**：EventDeck=None on Chance / GoToJail 无 Jail / Go 数 0 或 2 → `EventDeckMissing`/`NoJailTile`/`GoTileCountInvalid`。
-- **AC-23e**：`MortgageValue=PurchasePrice+1` → 拒绝。Edge：`MortgageValue==PurchasePrice` 由 AC-23e 拒绝（边界），`> 60%` 但 `< 100%` 走警告（story-006，不在本 story）。
+- **AC-23e**：`MortgageValue=PurchasePrice+1` → 拒绝。Edge：`MortgageValue==PurchasePrice` 是**合法边界**（**不拒绝**）——GDD §Edge Cases 第 272 行明文「`MortgageValue ≤ PurchasePrice` 是硬数据约束」，仅 `>` 触发拒绝（code-review BD-005 doc-sync：原 edge 措辞「`==` 由 AC-23e 拒绝」与 GDD + AC-23e 正文「`>`」相反，系孤立 stale 误述，已更正为 GDD 权威口径）。`MortgageValue > PurchasePrice×0.6` 但 `≤ PurchasePrice` 走警告 `MortgageRateHigh`（story-006，不在本 story）。
 - **AC-23f/g-a/g-b/g-c**：Utility 倍率长度≠2 / Property 带倍率 / Utility 带租金 / Tax 带数组 → 各对应错误码。
 - **AC-23h/i**：Property `SalaryAmount=200` / Property `TaxAmount=100`（非 Tax）→ `SalaryOnNonGoTile`/`TaxOnNonTaxTile`。
 - **AC-23j**：`[0,10]` / `[4,200000000]` → `DiceMultiplierOutOfRange{TileIndex}` + 区间 `[1, DICE_MULT_MAX]`。Edge：`[1, DICE_MULT_MAX]` 合法不拒绝。
@@ -84,10 +84,21 @@ Last Updated: 2026-06-06
 
 ## Test Evidence
 
-- **Path**: `tests/unit/board/board_validation_rejections_test.cpp`（[Logic] fixture，`-nullrhi` headless，BLOCKING PR gate）
-- **Status**: 未创建
+- **Path**: `tests/unit/board/board_validation_rejections_test.cpp`（[Logic] fixture，`-nullrhi` headless，BLOCKING PR gate）；物理实现 `Source/rentoTests/Private/BoardValidationRejectionsTest.cpp`（项目既定 UE 惯例，循 bd-001~004）
+- **Status**: 已创建并通过（32 测试函数，独立重跑全量 Rento. 117/117 Success, 0 Fail, EXIT 0，证据 `Saved/TestReport_bd005_r2/index.json`）
 
 ## Dependencies
 
 - **Depends on**: story-001（DONE，`FBoardTileData`/枚举）。可与 story-002/003/004 并行（纯逻辑）。
 - **Unlocks**: story-002（状态机据校验返回推进 `Validated`/`LoadFailed`）；story-006（警告类共用校验框架）；下游系统安全消费（无效盘被拒绝）。
+
+## Completion Notes
+**Completed**: 2026-06-07
+**Criteria**: 21/21 [Logic] COVERED（32 测试函数；无 deferred——纯逻辑，无真磁盘/ff-007 类延迟项）
+**Deviations**:
+- 🟡 **doc-sync（logged decision）**：本节 QA Test Cases 第 79 行 AC-23e edge note 原写「`MortgageValue==PurchasePrice` 由 AC-23e 拒绝」与 GDD §Edge Cases 第 272 行「`MortgageValue ≤ PurchasePrice` 是硬数据约束」+ AC-23e 正文「`>`」相反，系孤立 stale 误述 → code-review 阶段已更正为 GDD 权威口径（`==` 是合法边界，仅 `>` 拒绝）。代码实现 `>` 自始正确。补 `TC_AC23e_MortgageEqualsPurchase_Valid` 正路径锁边界。
+- **实现顺序决定（非 GDD/ADR 偏离）**：板级校验顺序中 `GoTileCountInvalid` 前移至 `Index0NotGo` 之前。理由：fail-fast 下若 Index0NotGo 先，AC-23d「0 个 Go」永远被抢先不可达 GoTileCountInvalid。新序职责切分清晰（计数错误 0/≥2→GoTileCountInvalid；计数恰 1 但 Go 不在 index0→Index0NotGo），两 AC（20/23d）均可达。AC-23d 正文「0 个或 ≥2 个」本就涵盖，无需改 AC 文本。`TC_AC23d_ZeroGo` + `TC_AC20_Index0NotGo` 双测守此顺序契约。
+- **DICE_MULT_MAX=1_000_000**：取 GDD 初值（留 ~178× int32 溢出裕度）；最终值并入经济 OQ-Econ-10 裁定（既有 OQ，非本 story 新债）。编译期 `static_assert(12×MAX ≤ MAX_int32)` 守不变式。
+**Test Evidence**: Logic — `Source/rentoTests/Private/BoardValidationRejectionsTest.cpp`（32 测试）；独立重跑 117/117 Success, 0 Fail（`Saved/TestReport_bd005_r2/index.json`）
+**Code Review**: Complete（本会话 /code-review = APPROVED；首轮 CHANGES REQUIRED → reorder + 6 测试补强全闭）
+**Scope**: CLEAN — 未触碰 BoardDataAssetHost/DataAssetHostSubsystem/EHostLoadState（状态机推进 = story-002 域，本 story 只交付纯校验函数 + 错误码枚举）

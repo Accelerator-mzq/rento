@@ -1,11 +1,11 @@
 ---
 Epic: board-data
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: M
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 ---
 
 # Story 006 — 加载期完整性校验（警告类）：加载成功 + 结构化警告
@@ -68,10 +68,22 @@ Last Updated: 2026-06-06
 
 ## Test Evidence
 
-- **Path**: `tests/unit/board/board_validation_warnings_test.cpp`（[Logic] fixture，`-nullrhi` headless，BLOCKING PR gate）
-- **Status**: 未创建
+- **Path**: `tests/unit/board/board_validation_warnings_test.cpp`（[Logic] fixture，`-nullrhi` headless，BLOCKING PR gate）；物理实现 `Source/rentoTests/Private/BoardValidationWarningsTest.cpp`（项目既定 UE 惯例，循 bd-001~005）
+- **Status**: 已创建并通过（15 测试函数，独立重跑全量 Rento. 132/132 Success, 0 Fail, EXIT 0，证据 `Saved/TestReport_bd006_r2/index.json`）
 
 ## Dependencies
 
 - **Depends on**: story-001（DONE，struct/枚举）、story-005（DONE 或并行，共用校验框架与 `Validated` 流程）。
 - **Unlocks**: story-007（资产层精确计数引用警告码语义）；地图编辑器(26) 体验层设计债（警告码供其消费）。
+
+## Completion Notes
+**Completed**: 2026-06-07
+**Criteria**: 6/6 [Logic] COVERED（AC-24a/24b/24c/24d/35/36；15 测试函数；无 deferred——纯逻辑无 ff-007 类延迟）
+**Deviations**:
+- 🟡 **AC-24a 显示回退（tech-debt 登记）**：AC-24a 第二从句「GetTileData 回退显示 "Tile {index}"」非 bd-006 校验器交付——bd-006 产 EmptyDisplayName 警告（已测）；回退「显示」是显示层行为，GetTileData 返 raw 数据，「Tile {index}」是玩家可见串须本地化归 HUD/显示层。登 docs/tech-debt-register.md（2026-06-07），不越权改已批 story-004。
+- 🟡 **AC-24b 参数注入（logged decision）**：经典精确计数（棕2/浅蓝3/…）归 story-007 资产层（AC-6），不硬编码进 generic 校验器；「声明」=调用方注入 ExpectedGroupSizes TMap；空 map=跳过（自定义盘允许）。数据驱动。
+- **W-1 int64 硬化（code-review）**：MortgageRateHigh 阈值 (price*6)/10 用 int64 中间量，消除自定义盘大值的理论 int32 溢出。
+- **设计**：警告类全收集（非 fail-fast）返 TArray<FBoardValidationWarning>，警告不拒绝加载；状态机推进 = story-002 域（Out of Scope）。
+**Test Evidence**: Logic — `Source/rentoTests/Private/BoardValidationWarningsTest.cpp`（15 测试，含多警告共存证全收集语义 + AC-24d Count=0/=2 双分支 + null 兜底 + Railroad 路径）；独立重跑 132/132 Success, 0 Fail（`Saved/TestReport_bd006_r2/index.json`）
+**Code Review**: Complete（本会话 /code-review = APPROVED；首轮 CHANGES REQUIRED → int64硬化 + 4测试补强 + AC-24a tech-debt deflate 全闭）
+**Scope**: CLEAN — 追加警告类符号到 BoardValidator.h/.cpp，**拒绝类 + ValidateTiles 一字未改**（diff + 117 旧测试无回归核实）；未触碰 Host/Subsystem/EHostLoadState/GetTileData
