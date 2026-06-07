@@ -1,11 +1,11 @@
 ---
 Epic: board-data
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Config-Data
 Estimate: L
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 ---
 
 # Story 007 — DA_Board_Classic40 temp-fill + [Config] 资产校验 harness + bIsPlaceholderData cook 门控
@@ -81,4 +81,15 @@ Last Updated: 2026-06-06
 ## Dependencies
 
 - **Depends on**: story-001（DONE，`UBoardDataAsset` 类型）、story-004（DONE，`GetTilesInGroup` 用于 AC-6）、story-005/006（DONE，校验通过的盘才作资产基线）。
-- **Unlocks**: Alpha 里程碑门控（AC-4c）；下游系统集成（真实经典盘可跑通一局）；经济(5) 数值覆盖入口（OQ-1）。
+- **Unlocks**: Alpha 里程碑门控（AC-4c）；下游系统集成（真实经典盘可跑通一局）；经济(5) 数值覆盖入口（OQ-1）；**ff-007 的 FF-004 AC-5 跨局缓存 + FF-003 AC-4 真磁盘 UAF 验证**（现有真磁盘 DA_Board_Classic40 可供加载）。
+
+## Completion Notes
+**Completed**: 2026-06-07（编辑器/commandlet 会话，全自动 CLI 驱动）
+**Criteria**: 9/9 COVERED（AC-3/4-asset/4b/4c/5/6/7/7b + Harness），0 UNTESTED、0 DEFERRED
+**实现**: 方案 B（C++ commandlet 生成器）。`Source/rento/Commandlets/{GenerateClassic40,BoardCookGate}Commandlet.h+.cpp`（editor-only，#if WITH_EDITOR）+ `Source/rentoTests/Private/Classic40AssetValidationTest.cpp`（9 test）+ `rento.Build.cs`（if bBuildEditor 加 AssetRegistry）+ 生成 `Content/Boards/DA_Board_Classic40.uasset`（40 格 temp-fill，bIsPlaceholderData=true）
+**验证（主会话亲核 rento.log）**: 编译 Succeeded ｜ generator 幂等 EXIT 0 ｜ Classic40 套件 9/9 Success ｜ cook-gate 占位/无资产两路径 EXIT 1 ｜ 全量回归 162/162 Success 0 Fail（153+9 零回归）
+**Deviations（ADVISORY，已登记 tech-debt-register 2026-06-07）**: W-1 commandlet 模块边界（Shipping 前迁 rentoEditor）/ W-4 Main 重构 / I-2 LogRento / AC-4c false 路径覆盖留经济 epic / INFO-4 多 board gate / CI 排序→devops
+**code-review 修复（已闭合）**: F-1 cook-gate fail-closed / F-2 MarkPackageDirty / F-3 TC_AC6b 经 GetTilesInGroup 验真资产 / BONUS 幂等覆盖崩溃（FullyLoad+复用，真因 SavePackage partially-loaded appError）
+**Test Evidence**: Config/Data → `production/qa/evidence/bd-007-classic40-asset-validation-evidence.md`
+**Code Review**: Complete（本会话 /code-review APPROVED）
+**遗留 Advisory（非阻）**: TR-board-015 / ADR-0002 VC#1 Details 面板手工录入 TArray 截图（GUI 路径证明）——可推迟，commandlet 程序化生成已证 schema 承载多值

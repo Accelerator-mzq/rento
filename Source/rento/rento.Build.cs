@@ -31,6 +31,15 @@ public class rento : ModuleRules
 		{
 		});
 
+		// AssetRegistry：仅 editor 构建需要（story-007 的两个 commandlet
+		// GenerateClassic40 / BoardCookGate 用 FAssetRegistryModule 生成/枚举棋盘资产）。
+		// 两 commandlet 全程 #if WITH_EDITOR 包裹，故依赖也仅在 editor target 加，
+		// Shipping 构建不引入（CreatePackage/UPackage::Save/LoadObject/UCommandlet 均在已有 CoreUObject）。
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.Add("AssetRegistry");
+		}
+
 		// MetaSound（ADR-0010）按需在音频系统实现时追加 "MetasoundEngine" 等依赖。
 	}
 }
