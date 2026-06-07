@@ -1,11 +1,11 @@
 ---
 Epic: foundation-framework
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: S
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 ---
 
 # Story 004 — 跨局 UGameInstanceSubsystem 宿主框架（Save/Audio/Setup 入口）
@@ -68,10 +68,19 @@ Last Updated: 2026-06-06
 ## Test Evidence
 
 - **Type**: Integration
-- **Path**: `tests/integration/foundation/game_instance_subsystem_host_test.cpp`
-- **Status**: 未创建（待 dev-story 实现）
+- **Path**: `Source/rentoTests/Private/GameInstanceSubsystemHostTest.cpp`（逻辑分类 `tests/integration/foundation/game_instance_subsystem_host_test.cpp`）
+- **Status**: 已创建（headless 结构反射路径：代码 TC-1 继承链 / TC-2 入口存在性〔Save/Setup UFUNCTION + Audio 成员指针〕/ TC-3 反射无 per-match 字段 + Edge×2，5 测试全 Success）。**story-004 QA TC-1/TC-2/TC-3/TC-5（PIE 跨局存活/三局单例/DA_Board 跨局缓存）= DEFER ff-007 + bd-007**（headless `-nullrhi` 不可驱动 GameInstance PIE 生命周期 + 需真 DA_Board 资产）。
+- **headless 验证边界（code-review 2026-06-07）**：AC-1/3/4 由结构反射覆盖；AC-2/5/6 运行时行为 defer ff-007/bd-007，登记 tech-debt-register（无 false-green 假断言）。
 
 ## Dependencies
 
 - **Depends on**: story-001（与 per-match World Subsystem 宿主分类对照，OQ-6 资产缓存 vs World 实例拆分）。
-- **Unlocks**: Save epic（ADR-0005 SaveGame 宿主分量）、Audio epic（ADR-0010 混音宿主）、Setup epic（`StartNewGame` 入口）。
+- **Unlocks**: Save epic（ADR-0005 SaveGame 宿主分量）、Audio epic（ADR-0010 混音宿主）、Setup epic（`StartNewGame` 入口）；pt-001（PlayerState，回合 epic——填充 FGameSetupConfig + StartNewGame body）。
+
+## Completion Notes
+**Completed**: 2026-06-07
+**Criteria**: 6/6 处理（AC-1/AC-3/AC-4 COVERED 结构反射；AC-2 结构 COVERED + 运行时 DEFER ff-007；AC-5 DEFER ff-007+bd-007；AC-6 DEFER ff-007）。独立重跑全量 Rento. 153/153 Success, 0 failed, EXIT 0（Saved/TestReport_ff004_final/index.json）。
+**Deviations**: 无 BLOCKING。Advisory：① headless 验证边界——GameInstance::Init 在 -nullrhi 不可靠，AC-1/3 走结构反射退化路径（IsChildOf+FindFunctionByName+成员函数指针，非实例化），AC-2/5/6 运行时行为 DEFER ff-007/bd-007（无 false-green 假断言）；② StartNewGame 最小 seam（FGameSetupConfig 空 USTRUCT 占位→pt-001 填充，禁重声明）。
+**Test Evidence**: Integration — `Source/rentoTests/Private/GameInstanceSubsystemHostTest.cpp`（Rento.Foundation.GameInstanceSubsystemHost，5 测试 TC1-3+Edge×2，全 Success）+ `Source/rento/GameSetupConfig.h`/`PersistentServicesSubsystem.h`+`.cpp`。
+**Code Review**: Complete（本会话 /code-review = APPROVED；MF-1 Audio 挂载点覆盖 + R-1 ExcludeSuper 归属本类 + R-2 doc-sync + R-3 TC 编号消歧闭合；deflate qa BLOCKING-2 EFieldIterationFlags〔引擎源码 UnrealType.h:7041 坐实 None=ExcludeSuper〕+ unreal W-1 Super 顺序〔前提错，与 sibling 一致〕）。
+**Tech debt logged**: 2 项入 register（AC-2/5/6 运行时验证 defer ff-007+bd-007 / StartNewGame+FGameSetupConfig 最小 seam pt-001 填充）。
