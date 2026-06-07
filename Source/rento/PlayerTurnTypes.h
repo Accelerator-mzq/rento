@@ -94,6 +94,27 @@ enum class EAIDifficulty : uint8
 };
 
 // =============================================================================
+// EJailReason — 入狱原因枚举（最小占位，pt-005 / GDD CR-3.1 SetJailState）
+//
+// 完整 EJailReason 枚举规则归事件格7 epic；本枚举是最小占位定义，
+// 供 SetJailState(bInJail, EJailReason) setter 签名使用（story-005）。
+//
+// ⚠ append-only 纪律（ADR-0005）：
+//   None=0 已冻结，事件7 追加值只能从 1 开始。
+// =============================================================================
+UENUM(BlueprintType)
+enum class EJailReason : uint8
+{
+    /**
+     * 无原因 / 占位（ordinal=0）。
+     * 用于 SetJailState 中入狱前的清除状态，或事件7 尚未追加完整值时的默认值。
+     */
+    None    = 0  UMETA(DisplayName = "None"),
+
+    // ⚠ 事件格7 追加完整 EJailReason 值（ordinal >= 1），禁止删除/重排 None。
+};
+
+// =============================================================================
 // ETurnPhase — 回合阶段状态机枚举（pt-002 / TR-turn-002 / GDD (b) States 表）
 //
 // 每个活跃回合经历的阶段序列（GDD L224 States and Transitions (b)）：

@@ -1110,18 +1110,21 @@ void UPlayerTurnSubsystem::HandlePlayerBankruptcy(int32 DebtorId, int32 Creditor
         if (DebtorState)
         {
             // 时序：先写 bIsBankrupt（先同步算定权威结果），再触发事件（ADR-0003 结算同步先行）
-            DebtorState->bIsBankrupt = true;
+            // story-005 AC-4：经受控写接口 SetBankrupt(true) 写入，而非直写字段——
+            // 确保 SetBankrupt 是唯一路径，破产9 不直写（return-only 物理防环）。
+            DebtorState->SetBankrupt(true);
 
             UE_LOG(LogTemp, Log,
                 TEXT("UPlayerTurnSubsystem::HandlePlayerBankruptcy — "
-                     "DebtorId=%d bIsBankrupt 已置 true（移出轮转）。"),
+                     "DebtorId=%d bIsBankrupt 已经 SetBankrupt(true) 置位（移出轮转，"
+                     "story-005 AC-4 受控写路径）。"),
                 DebtorId);
         }
         else
         {
             UE_LOG(LogTemp, Error,
                 TEXT("UPlayerTurnSubsystem::HandlePlayerBankruptcy — "
-                     "找不到 DebtorId=%d 对应的 PlayerState，bIsBankrupt 未写入。"),
+                     "找不到 DebtorId=%d 对应的 PlayerState，SetBankrupt 未调用。"),
                 DebtorId);
         }
     }

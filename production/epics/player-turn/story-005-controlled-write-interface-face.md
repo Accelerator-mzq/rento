@@ -1,6 +1,6 @@
 ---
 Epic: player-turn
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: S
@@ -72,3 +72,17 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（PlayerState 容器及其委派字段）。
 - **Unlocks**: story-003（经 `SetBankrupt` 写 `bIsBankrupt`）、story-006（`SetCurrentRollContext` holder 更新）；移动4/经济5/事件7 epic 经各自具名 setter 写 PlayerState 委派字段。
+
+## Completion Notes
+**Completed**: 2026-06-07
+**Criteria**: 4/4（AC-1 COVERED, AC-2 Advisory checklist, AC-3 deferred-by-design, AC-4 COVERED）
+- AC-1 → TC1_SettersMakeFieldsChange（5 具名 setter SetPosition/SetCash/SetJailState/SetCurrentRollContext/SetBankrupt 各调后字段真变，非 vacuous）
+- AC-2 → production/qa/evidence/controlled-write-interface-checklist-pt005.md（[Advisory] code-review checklist，当前稳定门）
+- AC-3/AC-35a → **deferred-by-design**（OQ-1 ADR 未裁前不写恒 pending 的 [Logic] 静态扫描门，仅注释记录待激活——story AC-3 明确要求避免永远 pending gate）
+- AC-4 → TC4_SetBankruptIsOnlyPath（破产经 SetBankrupt 路径，bIsBankrupt==true）
+**实现**：RentoPlayerState 5 具名受控写 setter（UFUNCTION BlueprintCallable，doc 注明唯一合法调用方）+ CurrentRollContext holder 字段 + EJailReason 最小枚举（None=0，完整规则归事件7）
+**封装强度**：当前 [Advisory] code-review 软约束；**字段保持 UPROPERTY(BlueprintReadOnly) 不改 private**（强封装待 OQ-1 ADR；改 private 会破坏 pt-001/002/003 既有测试直接字段读写）
+**跨 story 整合**：pt-003 HandlePlayerBankruptcy 的 `bIsBankrupt=true` 直写已迁移为 `SetBankrupt(true)`（AC-4 唯一路径；pt-003 TC6/TC8 零回归）
+**Test Evidence**：Logic — Source/rentoTests/Private/ControlledWriteInterfaceTest.cpp（2 测试）+ evidence checklist；主会话独立全量 204/204 Success, 0 Fail, EXIT 0（Saved/TestReport_pt005，2026.06.07-15.51.03）
+**生产方式**：mode-A workflow（wf_f1893f1a，加固 brief 含已知坑清单）implement → 独立 verify 抓裸 AddToRoot 编译错 HALT → 主会话 human-on-halt 删 2 行 + 对抗审查（字段没误改 private/EJailReason 最小/AC-35a 未写 pending gate/SetBankrupt 迁移正确）。加固 brief 把缺陷从 pilot 4 个降到 1 typo。
+**Out of Scope 严守**：字段构成（001）/bIsBankrupt 触发语义（003）/SetCurrentRollContext PULL 消费（006）/移动 SetTileIndex（movement）/经济公式（economy）均未触碰

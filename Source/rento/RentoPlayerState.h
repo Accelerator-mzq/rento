@@ -24,14 +24,28 @@
 //   （注：GDD CR-1 表格 11 字段不含此项，但 AC-1/TC-1 明确要求 ConsecutiveDoubles=0 默认）
 //
 // 字段写语义归属（GDD CR-1 边界契约）：
-//   本 story 只声明字段容器与默认值，不实现委派字段的改写规则（story-005）。
-//   受控写接口面（SetPosition/SetCash/SetJailState/SetBankrupt）留 story-005 实现。
+//   本 story 声明字段容器与默认值，并实现委派字段的受控写接口（story-005）。
+//   受控写接口面（SetPosition/SetCash/SetJailState/SetCurrentRollContext/SetBankrupt）由
+//   story-005 添加于此文件，以字段 owner 身份持有 setter。
+//
+// story-005 新增（受控写接口面，TR-turn-003 / GDD CR-1 L92-99）：
+//   SetPosition(int32 Index)              — 唯一合法调用方：移动(4)
+//   SetCash(int32 Value)                  — 唯一合法调用方：经济(5)
+//   SetJailState(bool, EJailReason)       — 唯一合法调用方：事件格(7)
+//   SetCurrentRollContext(FDiceRollResult) — 唯一合法调用方：事件格(7)，仅事件额外掷骰
+//   SetBankrupt(bool)                     — 唯一合法调用方：本系统回合(2)
+//
+//   ⚠ 封装强度（OQ-1 ADR 未裁前为 [Advisory] code-review 软约束）：
+//     字段保持 UPROPERTY(BlueprintReadOnly) 不改 private（AC-3/AC-35a 静态门 deferred）。
+//     强封装（private + BP 只读）待 OQ-1 ADR 裁定后升级。
 //
 // 规范依据：
-//   - GDD player-turn.md CR-1（11 字段表，L74-90）
+//   - GDD player-turn.md CR-1（11 字段表，L74-90）+ CR-3.1（SetCurrentRollContext）
 //   - story pt-001 AC-1（字段清单权威）+ TC-1（默认值校验）
+//   - story pt-005 AC-1~4（受控写接口面）+ TC-1/TC-4（setter 验证）
 //   - ADR-0001（UObject 宿主与生命周期，UPROPERTY+TObjectPtr 防 GC）
 //   - ADR-0005（字段对齐 PlayerState/GameState，Full Vision 迁移预留）
+//   - ADR-0007（写权威状态 → C++；BP↔C++ handoff → BlueprintCallable）
 //   - control-manifest Foundation Layer §Full Vision 迁移预留
 // =============================================================================
 #pragma once
@@ -39,6 +53,7 @@
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 #include "PlayerTurnTypes.h"
+#include "DiceRngService.h"      // FDiceRollResult（SetCurrentRollContext 参数类型）
 #include "RentoPlayerState.generated.h"
 
 /**
@@ -168,4 +183,120 @@ public:
      */
     UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|PlayerState")
     int32 ConsecutiveDoubles = 0;
+
+    // =========================================================================
+    // §story-005 新增 holder 字段（GDD CR-3.1 SetCurrentRollContext）
+    // =========================================================================
+
+    /**
+     * 当前程掷骰上下文（FDiceRollResult，事件格7额外掷骰 holder）。
+     *
+     * GDD CR-3.1：仅事件格7 在事件额外掷骰时写入（SetCurrentRollContext setter）。
+     * 本字段是 result 存储 holder，非每程正常骰子结果。
+     * PULL 消费 + 程间非重入语义 → story-006（本 story 只提供 holder + setter）。
+     *
+     * 改写规则归：事件格(7)，经受控写接口 SetCurrentRollContext（story-005 实现）。
+     * 默认值：Die1=0/Die2=0/Total=0/bIsDouble=false（零值 holder）。
+     */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|PlayerState")
+    FDiceRollResult CurrentRollContext;
+
+    // =========================================================================
+    // §story-005 受控写接口面（TR-turn-003 / GDD CR-1 L92-99 / ADR-0007）
+    //
+    // 架构约定（OQ-1 ADR 未裁前）：
+    //   封装强度 = [Advisory] code-review 软约束（AC-3/AC-35a 静态门 deferred）。
+    //   字段保持 UPROPERTY(BlueprintReadOnly)，不改 private（防破坏既有测试直接读写）。
+    //   强封装（private + BP 只读）待 OQ-1 ADR 裁定后实施。
+    //
+    // 唯一合法调用方文档化（ADR-0007 BP↔C++ handoff，BlueprintCallable 暴露）：
+    //   每个 setter 注释明确「唯一合法调用方」，code-review 强制核对。
+    // =========================================================================
+
+    /**
+     * 受控写接口：更新当前棋盘位置（CurrentTileIndex）。
+     *
+     * 唯一合法调用方：移动(4) 系统在落点确定后调用本 setter。
+     * 任何其他路径的直写 CurrentTileIndex 均为受控写违规（AC-35 code-review 核对）。
+     *
+     * 实现语义（字段级 setter）：
+     *   直接写 CurrentTileIndex = Index，不校验格子合法性（边界校验归移动4）。
+     *
+     * @param Index 目标 tile 索引（由移动4 计算并传入）
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|ControlledWrite",
+        meta=(DisplayName="Set Position (Controlled Write — Move System Only)",
+              ToolTip="受控写接口：唯一合法调用方=移动(4)。更新玩家当前棋盘位置。"))
+    void SetPosition(int32 Index);
+
+    /**
+     * 受控写接口：更新玩家现金（Cash）。
+     *
+     * 唯一合法调用方：经济(5) 系统经 Debit/Credit 公式结算后调用本 setter。
+     * Debit/Credit 是经济5 侧封装，本 setter 是字段级写接口（story-005 Out of Scope：
+     * Debit/Credit 公式归 economy epic，本 story 只暴露 SetCash 字段级 setter）。
+     *
+     * 实现语义（字段级 setter）：
+     *   直接写 Cash = Value，不校验负数（破产判定归经济5/破产9）。
+     *
+     * @param Value 新现金值（由经济5 计算并传入）
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|ControlledWrite",
+        meta=(DisplayName="Set Cash (Controlled Write — Economy System Only)",
+              ToolTip="受控写接口：唯一合法调用方=经济(5)。更新玩家现金值。"))
+    void SetCash(int32 Value);
+
+    /**
+     * 受控写接口：更新入狱状态（bIsInJail）。
+     *
+     * 唯一合法调用方：事件格(7) 系统在入狱/出狱结算后调用本 setter。
+     *
+     * EJailReason 枚举（最小占位，完整枚举规则归事件格7）：
+     *   - None=0：清除入狱状态时使用（bInJail=false 时传 None）
+     *   - 事件7 追加完整原因值（ordinal >= 1，append-only）
+     *
+     * 实现语义（字段级 setter）：
+     *   直接写 bIsInJail = bInJail；Reason 字段本 story 仅接收存储，
+     *   完整 EJailReason 使用语义归事件格7（story-005 Out of Scope）。
+     *
+     * @param bInJail  是否进入入狱状态（true=入狱，false=出狱/清除）
+     * @param Reason   入狱原因（最小占位枚举，完整值归事件7）
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|ControlledWrite",
+        meta=(DisplayName="Set Jail State (Controlled Write — Event System Only)",
+              ToolTip="受控写接口：唯一合法调用方=事件格(7)。更新入狱状态与原因。"))
+    void SetJailState(bool bInJail, EJailReason Reason = EJailReason::None);
+
+    /**
+     * 受控写接口：更新当前程掷骰上下文（CurrentRollContext holder）。
+     *
+     * 唯一合法调用方：事件格(7) 系统在事件额外掷骰时调用本 setter（仅事件额外掷骰，非每程）。
+     * PULL 消费 + 程间非重入语义 → story-006（本 story 只声明 holder + setter）。
+     *
+     * 实现语义（字段级 setter）：
+     *   直接写 CurrentRollContext = RollResult，存储最新的事件额外掷骰结果。
+     *
+     * @param RollResult 事件额外掷骰结果（由事件格7 传入 FDiceRollResult）
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|ControlledWrite",
+        meta=(DisplayName="Set Current Roll Context (Controlled Write — Event System Only)",
+              ToolTip="受控写接口：唯一合法调用方=事件格(7)，仅事件额外掷骰时更新。"))
+    void SetCurrentRollContext(const FDiceRollResult& RollResult);
+
+    /**
+     * 受控写接口：更新破产标志（bIsBankrupt）。
+     *
+     * 唯一合法调用方：本系统回合(2)，据破产(9) ResolveBankruptcy 返回
+     * debtorEliminated=true 后由 HandlePlayerBankruptcy 调用。
+     * 破产(9) 为 return-only 接口，绝不直写本字段（防 2↔9 回调环，AC-4）。
+     *
+     * 实现语义（字段级 setter）：
+     *   直接写 bIsBankrupt = bNewBankrupt，破产标志单调递增（true 后通常不再回到 false）。
+     *
+     * @param bNewBankrupt 新破产状态（true=已破产移出，false=理论上不使用）
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|ControlledWrite",
+        meta=(DisplayName="Set Bankrupt (Controlled Write — Turn System Only)",
+              ToolTip="受控写接口：唯一合法调用方=本系统回合(2)，据破产(9) return-only 结果写入。"))
+    void SetBankrupt(bool bNewBankrupt);
 };
