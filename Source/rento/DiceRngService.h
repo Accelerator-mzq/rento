@@ -158,15 +158,19 @@ public:
 	/**
 	 * 从权威流取 [Min, Max] 范围内的整数随机数（闭区间）。
 	 *
-	 * 本 story 只实现正常路径（直通 Stream.RandRange）。
-	 * 退化契约（Min==Max 早退 / Min>Max ensure / 2^24 guard）由 story-003 实现。
+	 * 退化与边界契约（ADR-0004 §Key Interfaces / dice F-2 / story-003，doc-sync）：
+	 *   - Min==Max → early-return Min，不调流（Seed 不推进，dice F-2/F-4④）
+	 *   - Min>Max  → UE_LOG(LogTemp, Error, "...Min>Max...")，返回 Min，绝不自动交换
+	 *                （swap 静默掩盖参数反向 bug，control-manifest Forbidden）
+	 *   - Range = (int64)Max-(int64)Min+1 >= 2^24 → UE_LOG(LogTemp, Error, ...)，仍直通
+	 *                （FRand() 浮点中介精度崩溃，OQ-3 降 Full Vision 处理）
 	 *
 	 * @param Min 最小值（含）
 	 * @param Max 最大值（含）
-	 * @return [Min, Max] 内的随机整数
+	 * @return [Min, Max] 内的随机整数；Min>Max 时返回 Min（fail-safe，不 swap）
 	 */
 	UFUNCTION(BlueprintCallable, Category="Rento|RNG",
-		meta=(DisplayName="Random Range (Auth)", ToolTip="从权威流取 [Min,Max] 随机整数，退化契约见 story-003"))
+		meta=(DisplayName="Random Range (Auth)", ToolTip="从权威流取 [Min,Max] 随机整数；退化契约：Min==Max 早退/Min>Max 返 Min 不 swap/Range>=2^24 精度警告"))
 	int32 RandomRange(int32 Min, int32 Max);
 
 	/**

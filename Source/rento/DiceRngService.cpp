@@ -86,19 +86,55 @@ FDiceRollResult UDiceRngService::RollDice()
 }
 
 // ----------------------------------------------------------------------------
-// RandomRange — 从权威流取 [Min, Max] 随机整数（本 story 正常路径，直通）
+// RandomRange — 从权威流取 [Min, Max] 随机整数（story-003：退化/边界三道门）
 // ----------------------------------------------------------------------------
 
 int32 UDiceRngService::RandomRange(int32 Min, int32 Max)
 {
-	// 本 story 只实现正常路径：直通 FRandomStream::RandRange
-	//
-	// 退化契约（story-003 实现，本 story 不写，防止模糊归属）：
-	//   - Min==Max：early-return Min，不调流（Seed 不推进）
-	//   - Min>Max ：ensure + UE_LOG(Warning)，返回 Min，绝不 swap
-	//   - Range >= 2^24：ensure（浮点中介精度崩）
-	//
-	// 引擎事实①（spike CONFIRMED）：RandRange 走 FRand() 浮点中介，
+	// ── 第一道门：Min==Max 退化早返，不调流（Seed 不推进）────────────────────
+	// ADR-0004 Guideline 3 / dice F-2 / F-4④ / control-manifest Guardrail
+	// 退化路径不消耗 Seed，守已固化 fixture 序列（story-006 依赖）。
+	// 先于 Min>Max 判断：Min==Max 时两条分支互斥，先判 == 即正确短路。
+	if (Min == Max)
+	{
+		return Min;
+	}
+
+	// ── 第二道门：Min>Max 非法参数，记 Error，返回 Min，绝不 swap ─────────────
+	// ADR-0004 Guideline 3 / control-manifest Forbidden §"Never Min>Max 自动 swap"
+	// swap 静默掩盖参数反向 bug。返回 Min 是 fail-safe（明确告知调用方错误）。
+	// 本门先于 2^24 检查：Min>Max 时 (int64)Max-(int64)Min+1 为负数或 0，
+	// 先早返可避免后续 Range 计算的语义混淆。
+	if (Min > Max)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("UDiceRngService::RandomRange: Min>Max（Min=%d，Max=%d），"
+			     "返回 Min 不 swap。调用方传入参数反向，请检查调用点。"
+			     "（ADR-0004 / control-manifest Forbidden）"),
+			Min, Max);
+		return Min;
+	}
+
+	// ── 第三道门：范围 >= 2^24 精度警告，记 Error，仍直通 ───────────────────
+	// ADR-0004 §Key Interfaces / dice F-2 / control-manifest Required
+	// RandRange 内部走 FRand()*Range 浮点中介（spike CONFIRMED：UE5.7 RandomStream.h L186-202）。
+	// float 尾数 23 位，Range >= 2^24（=16777216）时浮点乘积精度崩溃，均匀性破坏。
+	// 使用 int64 中间量防止 (Max-Min+1) 在 int32 层面溢出（如 Max=INT_MAX，Min=0）。
+	// MVP 实际跨度极小（骰面 6 / AI 三选一），此路径属异常，降 Full Vision OQ-3 处理。
+	const int64 Range = (int64)Max - (int64)Min + 1;
+	if (Range >= (1 << 24))  // 2^24 = 16777216
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("UDiceRngService::RandomRange: Range=%lld >= 2^24=%d，"
+			     "FRand() 浮点中介精度崩溃（均匀性破坏）。"
+			     "MVP 实际跨度极小，此路径异常，大跨度路径降 Full Vision OQ-3 处理。"
+			     "（ADR-0004 / dice F-2）"),
+			Range, (1 << 24));
+		// 仍直通：告警调用方，不阻断返回——OQ-3 大跨度处理留 Full Vision
+	}
+
+	// ── 正常路径：直通权威流 ──────────────────────────────────────────────────
+	// 引擎事实①（spike CONFIRMED）：RandRange 走 Min+TruncToInt(FRand()*Range) 浮点中介，
 	// 同平台 / 同编译配置重放安全；跨平台 off-by-one 降 Full Vision OQ-3。
 	return AuthoritativeStream.RandRange(Min, Max);
 }
