@@ -155,11 +155,11 @@ stories:
     name: "Event Bus 纪律层：delegate 规范 + USTRUCT payload 契约"
     file: "production/epics/foundation-framework/story-005-event-bus-delegate-contract.md"
     priority: should-have
-    status: backlog
+    status: done
     owner: "unreal-specialist"
     estimate_days: 1.0
     blocker: ""
-    completed: ""
+    completed: "2026-06-08"
   - id: "dr-002"
     name: "RollDice 核心契约 + 执行序铁律"
     file: "production/epics/dice-rng/story-002-rolldice-core-contract.md"

@@ -1,11 +1,11 @@
 ---
 Epic: foundation-framework
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: M
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-08
 ---
 
 # Story 005 — Event Bus 纪律层：统一 delegate 规范 + USTRUCT payload 契约
@@ -94,10 +94,33 @@ Last Updated: 2026-06-06
 ## Test Evidence
 
 - **Type**: Integration
-- **Path**: `tests/integration/foundation/event_bus_delegate_contract_test.cpp`
-- **Status**: 未创建（待 dev-story 实现）
+- **Path（逻辑）**: `tests/integration/foundation/event_bus_delegate_contract_test.cpp`
+- **Path（实际）**: `Source/rentoTests/Private/EventBusDelegateContractTest.cpp`（本 repo UE 自动化测试统一落 rentoTests 模块，逻辑路径仅作 GDD 约定记号）
+- **Status**: ✅ 已实现并通过（dev-story 2026-06-08）。8 TC（TC1-8）全 Success；全量套件 247 total / 0 Failed / 0 NotRun（基线 239 + 8 零回归）。报告：`Saved/TestReport_ff005_full/index.json`。
+
+### Coverage Notes（范围裁定：纪律层+验已有面，用户 2026-06-08 选项①）
+
+被验证的 8 个 delegate（回合2 的 7 个 + 骰子3 的 OnDiceRolled）已由 player-turn/dice epic 落地并合规；本 story 立**可执行纪律验证 harness** 回溯断言其合规，未重声明 delegate。引用未建 Core 层 owner epic 的 AC 子句按 **deferred-to-owner-epic** 处理（test 内留 TODO 锚点，不写 vacuous 假断言）：
+
+| AC | 覆盖状态 |
+|----|---------|
+| AC-1/2/3/4 | ✅ 全覆盖（TC1-4：无集中 Bus 对象 / BlueprintAssignable 反射 + AddDynamic 通路 / FTurnOrderResult USTRUCT 封装 / On<PastTense>+F…Info 命名） |
+| AC-5 | ✅ 部分（TC5：OnGameWon/OnAIActionExecuted 属回合2 owner、骰子3 无越权）；⏳ `OnBuildingChanged`(建房8 2字段) **deferred-to-building**（与回合2 的 OnBuildingAnnounced 3字段是**不同事件**，勿混） |
+| AC-6 | ✅ 部分（TC6：已落面无成对 On*Increased/Decreased 方向事件）；⏳ `OnCashChanged`(经济5) **deferred-to-economy** |
+| AC-7 | ✅ 部分（TC7：EArrivalContext/EJailReason 越界 cast 中性兜底不崩）；⏳ `EChangeReason` **deferred-to-economy**（owner-held，ADR-0003 禁本 story 预声明） |
+| AC-8 | ⏳ 全 deferred（TC8：OnBankruptcyDeclared 经济5 / OnPlayerBankrupt 破产9，两 owner epic 均未建；TC8 含负向守卫——若二者意外注册则 Warning 提醒补验） |
+
+> deferred 子句的最终兑现归各 owner epic 的事件发射 story（落地时回读本规范并补 owner-side 断言）。本 story 在 Foundation 阶段能验的纪律面已全部坐实。
 
 ## Dependencies
 
 - **Depends on**: story-001（订阅生命周期锚宿主 `Initialize`/`Deinitialize`）。
 - **Unlocks**: story-006（读档重绑工具基于本规范的 owner delegate 集合）；各 owner epic 的事件发射 story（dice/turn/economy/building/bankruptcy）；Presentation epic 订阅 story。
+
+## Completion Notes
+**Completed**: 2026-06-08
+**Criteria**: 7/8 COVERED（AC-1~7，TC1-7 全 Success）+ AC-8 DEFERRED-by-design（经济5/破产9 epic 未建，TC8 含负向 tripwire 占位）。AC-5/6/7 的未建 owner 子句（OnBuildingChanged 建房8 / OnCashChanged 经济5 / EChangeReason 经济5）亦 deferred-to-owner-epic。
+**Deviations**: ADVISORY — deferred 子句登记 docs/tech-debt-register.md（传播债，归各 owner 事件 story 落地时回读本 harness 补 owner-side 断言）。范围裁定=用户 2026-06-08 选项①「纪律层+验已有面」+ 微调（不预声明 economy owner-held 的 EChangeReason，避免 ADR-0003 越权）。
+**Test Evidence**: Integration — `Source/rentoTests/Private/EventBusDelegateContractTest.cpp`（8 TC）；全量 247/0 Failed/0 NotRun（基线 239+8 零回归）；`Saved/TestReport_ff005_full/index.json`。
+**Code Review**: Complete — /code-review APPROVED（无 Required Changes；3 条 INFO 级 suggestion 已记）。
+**主会话独立验证**：未信 implement agent 自报（其最终消息截断），亲跑 Build（Succeeded）+ 全量测试核实；抓修 2 真缺陷（TC3 TBaseStructure 编译错→StaticStruct / TC7 多余 AddExpectedError 假Fail→删）。
