@@ -47,6 +47,7 @@
 #include "AIDecisionMakerInterface.h"
 #include "AIDecisionMakerSpy.h"
 #include "ActionValidatorSpy.h"
+#include "RuleProviderSpies.h"    // FOwnershipProviderSpy/FBuildingProviderSpy/FEconomyResolverSpy（簇C1）
 
 // =============================================================================
 // 测试辅助（独立命名空间避免 ODR，不依赖 TurnPhaseTestHelpers）
@@ -1163,6 +1164,469 @@ bool FGssAiHooks_TC45_ResolveAuctionBid::RunTest(const FString& Parameters)
         TEXT("TC-45 [7]: RawBid=5 < MinIncrement=10 → 放弃（0）"),
         UPlayerTurnSubsystem::ResolveAuctionBid(5, 0, 10, 200), 0);
 
+    return true;
+}
+
+// =============================================================================
+// TC-2（AC-2）— AssembleSnapshot：全盘装配、PreaggregatedNlv、Rent_top1/top2、值语义
+//
+// GIVEN：注入 3 spy；BoardToReturn = 4 格：
+//   tile0：AI 自有，未抵押，MortgageValue=100，HouseCount=2，BuildingCost=100
+//   tile1：对手 ownerB，未抵押（Rent_top 候选）
+//   tile2：对手 ownerB，已抵押（Rent_top 不计）
+//   tile3：对手 ownerB，未抵押（Rent_top 候选）
+//   RentSequence={30,50}（tile1→30，tile3→50，tile2 抵押跳过）
+// WHEN：AssembleSnapshot(AiId)
+// THEN：
+//   ① S.Tiles.Num()==4
+//   ② tile0.PreaggregatedNlv == 2*(100/2)+100 == 200（AI 自有未抵押）
+//   ③ S.Rent_top1==50 && S.Rent_top2==30（降序前两高）
+//   ④ GetBoardOwnershipCallCount==1（一次性装配）
+//   ⑤ 值语义冻结：拷贝 Copy=S，改 Copy.Rent_top1=999，S.Rent_top1 仍==50
+//
+// 非 vacuous：
+//   ② 若 PreaggregatedNlv 未装配（留 0）→ FAIL
+//   ③ 若 Rent_top 未降序取前二 → FAIL
+//   ④ 若逐格 round-trip 而非一次 GetBoardOwnership → FAIL
+// =============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FGssAiHooks_TC2_AssembleSnapshot,
+    "Rento.PlayerTurn.GameStateSnapshotAiHooks.TC2_AssembleSnapshot",
+    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FGssAiHooks_TC2_AssembleSnapshot::RunTest(const FString& Parameters)
+{
+    // ---- 创建 World + 初始化（AssembleSnapshot 是 const 方法，需要 FindPlayerById 有 PlayerState）----
+    UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC2_World"));
+    if (!TestNotNull(TEXT("TC-2: World 应能创建"), World)) return false;
+
+    UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+    if (!TestNotNull(TEXT("TC-2: Subsystem 应能取得"), Sub))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    // 2 人对局，AiId = TurnOrderIndex==0 的玩家
+    const bool bInit = Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+    if (!TestTrue(TEXT("TC-2: InitializeFromConfig(P=2) 应成功"), bInit))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const int32 AiId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+    if (!TestNotEqual(TEXT("TC-2: 应找到先手 AiId"), AiId, -1))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    // ---- 构造 spy + 配置 BoardToReturn（4 格）----
+    const int32 OpponentId = 99; // 对手 ID（不是 AiId）
+
+    // tile0：AI 自有，未抵押，MortgageValue=100，HouseCount=2，BuildingCost=100
+    FOwnershipSnapshot OS0;
+    OS0.TileIndex     = 0;
+    OS0.OwnerId       = AiId;
+    OS0.bIsMortgaged  = false;
+    OS0.bIsMonopoly   = false;
+    OS0.MortgageValue = 100;
+    OS0.PurchasePrice = 200;
+
+    // tile1：对手未抵押（Rent_top 候选1）
+    FOwnershipSnapshot OS1;
+    OS1.TileIndex    = 1;
+    OS1.OwnerId      = OpponentId;
+    OS1.bIsMortgaged = false;
+
+    // tile2：对手已抵押（Rent_top 不计）
+    FOwnershipSnapshot OS2;
+    OS2.TileIndex    = 2;
+    OS2.OwnerId      = OpponentId;
+    OS2.bIsMortgaged = true;
+
+    // tile3：对手未抵押（Rent_top 候选2）
+    FOwnershipSnapshot OS3;
+    OS3.TileIndex    = 3;
+    OS3.OwnerId      = OpponentId;
+    OS3.bIsMortgaged = false;
+
+    TSharedPtr<FOwnershipProviderSpy> OwnerSpy = MakeShared<FOwnershipProviderSpy>();
+    OwnerSpy->BoardToReturn.Add(OS0);
+    OwnerSpy->BoardToReturn.Add(OS1);
+    OwnerSpy->BoardToReturn.Add(OS2);
+    OwnerSpy->BoardToReturn.Add(OS3);
+
+    // BuildingProvider：tile0 HouseCount=2, BuildingCost=100；其余缺省 0
+    TSharedPtr<FBuildingProviderSpy> BuildSpy = MakeShared<FBuildingProviderSpy>();
+    BuildSpy->HouseCountByTile.Add(0, 2);
+    BuildSpy->BuildingCostByTile.Add(0, 100);
+
+    // EconomyResolver：RentSequence={30, 50}（tile1 → 30，tile3 → 50；tile2 抵押跳过）
+    TSharedPtr<FEconomyResolverSpy> EconSpy = MakeShared<FEconomyResolverSpy>();
+    EconSpy->RentSequence.Add(30);  // 第1次 CalculateRent → tile1 → 30
+    EconSpy->RentSequence.Add(50);  // 第2次 CalculateRent → tile3 → 50
+
+    Sub->SetOwnershipProvider(OwnerSpy);
+    Sub->SetBuildingProvider(BuildSpy);
+    Sub->SetEconomyResolver(EconSpy);
+
+    // ---- 执行 ----
+    FGameStateSnapshot S = Sub->AssembleSnapshot(AiId);
+
+    // ==== 断言 ====
+
+    // ① Tiles.Num()==4（全盘 4 格）
+    TestEqual(TEXT("TC-2 ①: S.Tiles.Num() 应==4"), S.Tiles.Num(), 4);
+
+    // ② tile0 的 PreaggregatedNlv == 2*(100/2)+100 == 200
+    //    公式：AI 自有未抵押 = HouseCount*(BuildingCost/2) + MortgageValue = 2*50+100 = 200
+    bool bFoundTile0 = false;
+    for (const FTileSnapshotEntry& E : S.Tiles)
+    {
+        if (E.TileIndex == 0)
+        {
+            bFoundTile0 = true;
+            TestEqual(
+                TEXT("TC-2 ②: tile0.PreaggregatedNlv 应==200（AI 自有 HouseCount=2 BuildingCost=100 MV=100）"),
+                E.PreaggregatedNlv, 200);
+            break;
+        }
+    }
+    TestTrue(TEXT("TC-2 ②: 应在 Tiles 中找到 tile0"), bFoundTile0);
+
+    // ③ Rent_top1==50，Rent_top2==30（降序前两高）
+    TestEqual(TEXT("TC-2 ③-a: S.Rent_top1 应==50"), S.Rent_top1, 50);
+    TestEqual(TEXT("TC-2 ③-b: S.Rent_top2 应==30"), S.Rent_top2, 30);
+
+    // ④ GetBoardOwnershipCallCount==1（一次性全盘装配，不逐格 round-trip）
+    TestEqual(
+        TEXT("TC-2 ④: GetBoardOwnershipCallCount 应==1（一次性装配，ADR-0006 IG#3）"),
+        OwnerSpy->GetBoardOwnershipCallCount, 1);
+
+    // ⑤ 值语义冻结：拷贝 Copy=S，改 Copy.Rent_top1=999，S.Rent_top1 仍==50
+    FGameStateSnapshot Copy = S;
+    Copy.Rent_top1 = 999;
+    TestEqual(
+        TEXT("TC-2 ⑤: 改 Copy.Rent_top1=999 后，S.Rent_top1 应仍==50（值语义不受影响）"),
+        S.Rent_top1, 50);
+
+    GssAiHooksTestHelpers::DestroyGameWorld(World);
+    return true;
+}
+
+// =============================================================================
+// TC-4a（AC-4）— RunAiBuyDecision 路由：true→执行购买 / false→不执行
+//
+// 场景1（买）：BuyDecisionToReturn=true，ExecutePurchaseResult=true
+//   断言：R==true，WasLastPurchaseExecuted==true，DecideBuyPropertyCallCount==1，ExecutePurchaseCallCount==1
+// 场景2（不买）：BuyDecisionToReturn=false
+//   断言：R==false，ExecutePurchaseCallCount==0，DecideBuyPropertyCallCount==1
+//
+// 非 vacuous：若框架忽略 DecideBuyProperty 返回值恒执行 → 场景2 ExecutePurchaseCallCount==0 FAIL
+// =============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FGssAiHooks_TC4a_BuyDecisionRouting,
+    "Rento.PlayerTurn.GameStateSnapshotAiHooks.TC4a_BuyDecisionRouting",
+    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FGssAiHooks_TC4a_BuyDecisionRouting::RunTest(const FString& Parameters)
+{
+    // ---- 场景1（买）----
+    {
+        UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC4a_Buy_World"));
+        if (!TestNotNull(TEXT("TC-4a 买: World 应能创建"), World)) return false;
+
+        UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+        if (!TestNotNull(TEXT("TC-4a 买: Subsystem 应能取得"), Sub))
+        {
+            GssAiHooksTestHelpers::DestroyGameWorld(World);
+            return false;
+        }
+
+        Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+        const int32 AiId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+        if (!TestNotEqual(TEXT("TC-4a 买: 应找到先手"), AiId, -1))
+        {
+            GssAiHooksTestHelpers::DestroyGameWorld(World);
+            return false;
+        }
+
+        // 注入 3 spy（AssembleSnapshot 用空 Board，只验路由）
+        TSharedPtr<FOwnershipProviderSpy> OwnerSpy  = MakeShared<FOwnershipProviderSpy>();
+        TSharedPtr<FBuildingProviderSpy>  BuildSpy   = MakeShared<FBuildingProviderSpy>();
+        TSharedPtr<FEconomyResolverSpy>   EconSpy    = MakeShared<FEconomyResolverSpy>();
+        EconSpy->ExecutePurchaseResult = true; // 执行可行
+        Sub->SetOwnershipProvider(OwnerSpy);
+        Sub->SetBuildingProvider(BuildSpy);
+        Sub->SetEconomyResolver(EconSpy);
+
+        // 注入 AI spy：决定买
+        TSharedPtr<FAIDecisionMakerSpy> AiSpy = MakeShared<FAIDecisionMakerSpy>();
+        AiSpy->BuyDecisionToReturn = true;
+        Sub->SetAIDecisionMaker(AiSpy);
+
+        // 执行
+        const bool R = Sub->RunAiBuyDecision(AiId, 5);
+
+        // 断言
+        TestTrue(TEXT("TC-4a 买: R 应==true（决定买且执行可行）"), R);
+        TestTrue(TEXT("TC-4a 买: WasLastPurchaseExecuted 应==true"), Sub->WasLastPurchaseExecuted());
+        TestEqual(TEXT("TC-4a 买: DecideBuyPropertyCallCount 应==1"), AiSpy->DecideBuyPropertyCallCount, 1);
+        TestEqual(TEXT("TC-4a 买: ExecutePurchaseCallCount 应==1"), EconSpy->ExecutePurchaseCallCount, 1);
+
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+    }
+
+    // ---- 场景2（不买）----
+    {
+        UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC4a_NoBuy_World"));
+        if (!TestNotNull(TEXT("TC-4a 不买: World 应能创建"), World)) return false;
+
+        UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+        if (!TestNotNull(TEXT("TC-4a 不买: Subsystem 应能取得"), Sub))
+        {
+            GssAiHooksTestHelpers::DestroyGameWorld(World);
+            return false;
+        }
+
+        Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+        const int32 AiId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+
+        // 注入 3 spy
+        TSharedPtr<FOwnershipProviderSpy> OwnerSpy  = MakeShared<FOwnershipProviderSpy>();
+        TSharedPtr<FBuildingProviderSpy>  BuildSpy   = MakeShared<FBuildingProviderSpy>();
+        TSharedPtr<FEconomyResolverSpy>   EconSpy    = MakeShared<FEconomyResolverSpy>();
+        Sub->SetOwnershipProvider(OwnerSpy);
+        Sub->SetBuildingProvider(BuildSpy);
+        Sub->SetEconomyResolver(EconSpy);
+
+        // 注入 AI spy：决定不买
+        TSharedPtr<FAIDecisionMakerSpy> AiSpy = MakeShared<FAIDecisionMakerSpy>();
+        AiSpy->BuyDecisionToReturn = false;
+        Sub->SetAIDecisionMaker(AiSpy);
+
+        // 执行
+        const bool R = Sub->RunAiBuyDecision(AiId, 5);
+
+        // 断言
+        TestFalse(TEXT("TC-4a 不买: R 应==false（决定不买）"), R);
+        TestEqual(TEXT("TC-4a 不买: ExecutePurchaseCallCount 应==0（决定不买→不调执行）"),
+            EconSpy->ExecutePurchaseCallCount, 0);
+        TestEqual(TEXT("TC-4a 不买: DecideBuyPropertyCallCount 应==1"), AiSpy->DecideBuyPropertyCallCount, 1);
+
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+    }
+
+    return true;
+}
+
+// =============================================================================
+// TC-4b（AC-38b）— 决定买但执行期不可行 → 视同不买
+//
+// GIVEN：BuyDecisionToReturn=true；EconomyResolverSpy.ExecutePurchaseResult=false（模拟 Cash<Price/已被买）
+// WHEN：RunAiBuyDecision(AiId, 5)
+// THEN：
+//   ① R==false（视同不买）
+//   ② WasLastPurchaseExecuted()==false
+//   ③ ExecutePurchaseCallCount==1（委派了执行期校验）
+//   ④ 回合不崩（执行到此即证）
+//
+// 非 vacuous：若框架不校验 ExecutePurchase 结果、把"决定买"当"已买" → R==true FAIL
+// =============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FGssAiHooks_TC4b_BuyInfeasibleTreatedAsNoBuy,
+    "Rento.PlayerTurn.GameStateSnapshotAiHooks.TC4b_BuyInfeasibleTreatedAsNoBuy",
+    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FGssAiHooks_TC4b_BuyInfeasibleTreatedAsNoBuy::RunTest(const FString& Parameters)
+{
+    UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC4b_World"));
+    if (!TestNotNull(TEXT("TC-4b: World 应能创建"), World)) return false;
+
+    UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+    if (!TestNotNull(TEXT("TC-4b: Subsystem 应能取得"), Sub))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+    const int32 AiId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+    if (!TestNotEqual(TEXT("TC-4b: 应找到先手"), AiId, -1))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    // 注入 3 provider spy
+    TSharedPtr<FOwnershipProviderSpy> OwnerSpy  = MakeShared<FOwnershipProviderSpy>();
+    TSharedPtr<FBuildingProviderSpy>  BuildSpy   = MakeShared<FBuildingProviderSpy>();
+    TSharedPtr<FEconomyResolverSpy>   EconSpy    = MakeShared<FEconomyResolverSpy>();
+    EconSpy->ExecutePurchaseResult = false; // 执行期不可行（模拟 Cash<Price 或已被买）
+    Sub->SetOwnershipProvider(OwnerSpy);
+    Sub->SetBuildingProvider(BuildSpy);
+    Sub->SetEconomyResolver(EconSpy);
+
+    // 注入 AI spy：决定买
+    TSharedPtr<FAIDecisionMakerSpy> AiSpy = MakeShared<FAIDecisionMakerSpy>();
+    AiSpy->BuyDecisionToReturn = true;
+    Sub->SetAIDecisionMaker(AiSpy);
+
+    // 执行
+    const bool R = Sub->RunAiBuyDecision(AiId, 5);
+
+    // 断言 ① R==false（视同不买，AC-38b）
+    TestFalse(TEXT("TC-4b ①: R 应==false（执行期不可行视同不买，AC-38b）"), R);
+
+    // 断言 ② WasLastPurchaseExecuted==false
+    TestFalse(TEXT("TC-4b ②: WasLastPurchaseExecuted 应==false（未购买）"), Sub->WasLastPurchaseExecuted());
+
+    // 断言 ③ ExecutePurchaseCallCount==1（委派了执行期校验）
+    TestEqual(
+        TEXT("TC-4b ③: ExecutePurchaseCallCount 应==1（委派了执行期校验，AC-38b）"),
+        EconSpy->ExecutePurchaseCallCount, 1);
+
+    // 断言 ④ 回合不崩（执行到此即证——若崩则测试框架已 FAIL）
+    // （隐式：测试运行到此处说明未崩溃，符合 AC-38b 要求）
+
+    GssAiHooksTestHelpers::DestroyGameWorld(World);
+    return true;
+}
+
+// =============================================================================
+// TC-7（AC-7）— SettleRentOnArrival 算租聚合恰 1 次链 + dice_total PULL
+//
+// GIVEN：2 人对局，StartTurn(PayerId) 使其为当前行动玩家
+//        直接设 PS->CurrentRollContext.Total=8（dice_total PULL 路径）
+//        OwnershipProviderSpy.PerTileToReturn={7: {OwnerId=对手, bIsMortgaged=false}}
+//        BuildingProviderSpy.HouseCountByTile 空 → GetHouseCount(7) 返回缺省 0（AC-49）
+//        EconomyResolverSpy.RentToReturn=75
+// WHEN：SettleRentOnArrival(PayerId, 7)
+// THEN：
+//   ① BuildOwnershipSnapshotCallCount==1 且 LastBuildOwnershipTile==7
+//   ② GetHouseCountCallCount>=1（house_count 读取，缺省 0）
+//   ③ CalculateRentCallCount==1（算租调用恰 1 次）
+//   ④ LastRentInput.HouseCount==0（AC-49 缺省），DiceTotal==8（PULL 正确），TileIndex==7，PayerId==PayerId
+//   ⑤ Rent==75 且 GetLastRentCharged()==75
+//
+// 非 vacuous：
+//   ④ 若 dice_total 未 PULL（留 0）→ DiceTotal==8 FAIL
+//   ③ 若算租调多次 → FAIL
+// =============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FGssAiHooks_TC7_RentAggregation,
+    "Rento.PlayerTurn.GameStateSnapshotAiHooks.TC7_RentAggregation",
+    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FGssAiHooks_TC7_RentAggregation::RunTest(const FString& Parameters)
+{
+    UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC7_World"));
+    if (!TestNotNull(TEXT("TC-7: World 应能创建"), World)) return false;
+
+    UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+    if (!TestNotNull(TEXT("TC-7: Subsystem 应能取得"), Sub))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const bool bInit = Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+    if (!TestTrue(TEXT("TC-7: InitializeFromConfig(P=2) 应成功"), bInit))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    // 找付租方（先手玩家）
+    const int32 PayerId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+    if (!TestNotEqual(TEXT("TC-7: 应找到先手 PayerId"), PayerId, -1))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    // StartTurn 使 PayerId 成为当前行动玩家（CurrentActivePlayerId = PayerId）
+    URentoPlayerState* PS = Sub->FindPlayerById(PayerId);
+    if (PS) { PS->bIsInJail = false; PS->ConsecutiveDoubles = 0; }
+    Sub->StartTurn(PayerId);
+
+    // 直接设 CurrentRollContext.Total=8（dice_total PULL 最简路径，brief TC-7 指定）
+    if (PS)
+    {
+        PS->CurrentRollContext.Total = 8;
+    }
+
+    // 确认 PayerId == GetCurrentActivePlayerId（GetCurrentRollTotal PULL 的前提）
+    TestEqual(TEXT("TC-7: 前提—CurrentActivePlayerId 应==PayerId"),
+        Sub->GetCurrentActivePlayerId(), PayerId);
+
+    // 注入 3 provider spy
+    TSharedPtr<FOwnershipProviderSpy> OwnerSpy  = MakeShared<FOwnershipProviderSpy>();
+    TSharedPtr<FBuildingProviderSpy>  BuildSpy   = MakeShared<FBuildingProviderSpy>();
+    TSharedPtr<FEconomyResolverSpy>   EconSpy    = MakeShared<FEconomyResolverSpy>();
+
+    // OwnershipProviderSpy.PerTileToReturn={7: 对手未抵押}
+    const int32 OpponentId = 88;
+    FOwnershipSnapshot OS7;
+    OS7.TileIndex    = 7;
+    OS7.OwnerId      = OpponentId;
+    OS7.bIsMortgaged = false;
+    OwnerSpy->PerTileToReturn.Add(7, OS7);
+
+    // BuildingProvider：HouseCountByTile 空 → tile7 返回缺省 0（AC-49）
+    // （不需要额外设置）
+
+    // EconomyResolver：固定返回 75
+    EconSpy->RentToReturn = 75;
+
+    Sub->SetOwnershipProvider(OwnerSpy);
+    Sub->SetBuildingProvider(BuildSpy);
+    Sub->SetEconomyResolver(EconSpy);
+
+    // 执行
+    const int32 Rent = Sub->SettleRentOnArrival(PayerId, 7);
+
+    // ==== 断言 ====
+
+    // ① BuildOwnershipSnapshotCallCount==1 且 LastBuildOwnershipTile==7
+    TestEqual(
+        TEXT("TC-7 ①-a: BuildOwnershipSnapshotCallCount 应==1（恰 1 次，CR-3.2 ①）"),
+        OwnerSpy->BuildOwnershipSnapshotCallCount, 1);
+    TestEqual(
+        TEXT("TC-7 ①-b: LastBuildOwnershipTile 应==7"),
+        OwnerSpy->LastBuildOwnershipTile, 7);
+
+    // ② GetHouseCountCallCount>=1（house_count 读取）
+    TestTrue(
+        TEXT("TC-7 ②: GetHouseCountCallCount 应>=1（house_count 读取，AC-49 缺省 0）"),
+        BuildSpy->GetHouseCountCallCount >= 1);
+
+    // ③ CalculateRentCallCount==1（算租调用恰 1 次，CR-3.2 ③）
+    TestEqual(
+        TEXT("TC-7 ③: CalculateRentCallCount 应==1（算租恰 1 次，CR-3.2 ③）"),
+        EconSpy->CalculateRentCallCount, 1);
+
+    // ④ LastRentInput 参数验证
+    TestEqual(
+        TEXT("TC-7 ④-a: LastRentInput.HouseCount 应==0（AC-49 缺省）"),
+        EconSpy->LastRentInput.HouseCount, 0);
+    TestEqual(
+        TEXT("TC-7 ④-b: LastRentInput.DiceTotal 应==8（PULL 当前程正确，CR-3.1）"),
+        EconSpy->LastRentInput.DiceTotal, 8);
+    TestEqual(
+        TEXT("TC-7 ④-c: LastRentInput.TileIndex 应==7"),
+        EconSpy->LastRentInput.TileIndex, 7);
+    TestEqual(
+        TEXT("TC-7 ④-d: LastRentInput.PayerId 应==PayerId"),
+        EconSpy->LastRentInput.PayerId, PayerId);
+
+    // ⑤ Rent==75 且 GetLastRentCharged()==75
+    TestEqual(TEXT("TC-7 ⑤-a: Rent 应==75"), Rent, 75);
+    TestEqual(TEXT("TC-7 ⑤-b: GetLastRentCharged() 应==75"), Sub->GetLastRentCharged(), 75);
+
+    GssAiHooksTestHelpers::DestroyGameWorld(World);
     return true;
 }
 

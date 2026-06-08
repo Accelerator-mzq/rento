@@ -71,6 +71,7 @@
 #include "AIDecisionMakerInterface.h"    // IAIDecisionMaker + FTurnAction（story-007 AI 决策 DI 接缝）
 #include "ActionValidatorInterface.h"   // IActionValidator（story-007 AC-6 / AC-42 逐动作可行性重校验 DI 接缝）
 #include "GameStateSnapshot.h"           // FGameStateSnapshot（story-007 AI 只读快照）
+#include "RuleProviderInterfaces.h"      // IOwnershipProvider/IBuildingProvider/IEconomyResolver（story-007 簇C1 规则接缝）
 #include "PlayerTurnSubsystem.generated.h"
 
 // 前向声明：DiceRngService（防循环 include，仅在 .cpp 完整 include）
@@ -496,6 +497,98 @@ public:
     void RunAiPostRollActions(int32 AiPlayerId, const FGameStateSnapshot& Snapshot);
 
     // =========================================================================
+    // pt-007 簇 C1：规则接缝 DI + AssembleSnapshot + RunAiBuyDecision + SettleRentOnArrival
+    // =========================================================================
+
+    /**
+     * 注入 IOwnershipProvider（所有权6 注入，pt-007 AC-2/4/7）。
+     *
+     * 仿 SetAIDecisionMaker 纯 C++ TSharedPtr DI 模式。
+     * nullptr = 清除注入；AssembleSnapshot/SettleRentOnArrival 降级返回最小 snapshot/0。
+     *
+     * @param Provider TSharedPtr 持有的注入实现（nullptr = 清除注入）
+     */
+    void SetOwnershipProvider(TSharedPtr<IOwnershipProvider> Provider);
+
+    /**
+     * 注入 IBuildingProvider（建房8 注入，pt-007 AC-2/4/7）。
+     *
+     * 8 未实现时 mock 返回缺省 0（GDD AC-49）。
+     *
+     * @param Provider TSharedPtr 持有的注入实现（nullptr = 清除注入）
+     */
+    void SetBuildingProvider(TSharedPtr<IBuildingProvider> Provider);
+
+    /**
+     * 注入 IEconomyResolver（经济5 注入，pt-007 AC-2/4/7）。
+     *
+     * nullptr = 清除注入；运行时若未注入则降级不执行购买/算租。
+     *
+     * @param Resolver TSharedPtr 持有的注入实现（nullptr = 清除注入）
+     */
+    void SetEconomyResolver(TSharedPtr<IEconomyResolver> Resolver);
+
+    /**
+     * 获取上次 SettleRentOnArrival 算租结果（AC-7 oracle）。
+     *
+     * @return 上次算租返回值；未算过时为 0
+     */
+    int32 GetLastRentCharged() const { return LastRentCharged; }
+
+    /**
+     * 获取上次 RunAiBuyDecision 是否真实执行购买（AC-4 oracle）。
+     *
+     * @return true = ExecutePurchase 返回 true 且已购买；false = 未购买
+     */
+    bool WasLastPurchaseExecuted() const { return bLastPurchaseExecuted; }
+
+    /**
+     * 装配 AI 只读快照（AC-2，ADR-0006 IG#1/#2/#3）。
+     *
+     * 一次性调 GetBoardOwnership + 逐格 GetHouseCount/GetBuildingCost，
+     * 派生 PreaggregatedNlv（AI 自有格清算贡献）和 Rent_top1/top2（对手前两高潜在租金）。
+     *
+     * 缺 provider 降级（ADR-0006 IG#7）：未全注入 → 返回最小 snapshot + UE_LOG Warning。
+     *
+     * const 函数（只读，不改任何成员状态）。
+     *
+     * @param AiPlayerId 决策主体玩家 ID
+     * @return 装配完的只读快照
+     */
+    FGameStateSnapshot AssembleSnapshot(int32 AiPlayerId) const;
+
+    /**
+     * AI 买地决策执行路径（AC-4，GDD AC-38/AC-38b）。
+     *
+     * 执行流程：
+     *   ① 装配只读快照（AssembleSnapshot）
+     *   ② 调 AIDecisionMaker->DecideBuyProperty(S, TileIndex) 取 AI 买地决策
+     *   ③ 决定不买 → 返回 false（框架不调经济5）
+     *   ④ 决定买 → 委派 EconomyResolver->ExecutePurchase 执行期可行性校验+执行（AC-38b）
+     *      ExecutePurchase=false → 视同不买（不扣负/地产未变/不崩，AC-38b）
+     *      ExecutePurchase=true  → 购买成功
+     *
+     * @param AiPlayerId 决策主体玩家 ID
+     * @param TileIndex  目标地产格子 index
+     * @return true = 已购买；false = 不买或不可行
+     */
+    bool RunAiBuyDecision(int32 AiPlayerId, int32 TileIndex);
+
+    /**
+     * 到达结算收租（AC-7，GDD AC-48/AC-49 / CR-3.2）。
+     *
+     * 调用链（恰 N 次）：
+     *   ① BuildOwnershipSnapshot 1 次（CR-3.2 ①）
+     *   ② GetHouseCount 1 次（CR-3.2 ②，AC-49 缺省 0）
+     *   ③ CalculateRent 1 次，传入 dice_total PULL（CR-3.1/CR-3.2 ③）
+     *
+     * @param PayerId   付租方玩家 ID
+     * @param TileIndex 落地格子 index
+     * @return 应付租金；provider 未注入返回 0
+     */
+    int32 SettleRentOnArrival(int32 PayerId, int32 TileIndex);
+
+    // =========================================================================
     // pt-007 簇 B：IActionValidator DI + RunAiJailAction + ResolveAuctionBid
     // =========================================================================
 
@@ -810,6 +903,40 @@ private:
      * ⚠ 简单值数组，无 GC 需求（FTurnAction 是普通 USTRUCT，非 UObject 引用）。
      */
     TArray<FTurnAction> LastExecutedActions;
+
+    /**
+     * IOwnershipProvider DI 注入（story-007 簇C1 AC-2/4/7 所有权6 接缝）。
+     *
+     * 纯 C++ TSharedPtr（非 UObject，GC 不追踪）：
+     *   - AssembleSnapshot/SettleRentOnArrival 经此拉取归属快照
+     *   - nullptr 时降级返回最小 snapshot/0 + UE_LOG Warning（ADR-0006 IG#7）
+     */
+    TSharedPtr<IOwnershipProvider> OwnershipProvider;
+
+    /**
+     * IBuildingProvider DI 注入（story-007 簇C1 AC-2/4/7 建房8 接缝）。
+     *
+     * 纯 C++ TSharedPtr（非 UObject，GC 不追踪）：
+     *   - AssembleSnapshot/SettleRentOnArrival 经此拉取 house_count/building_cost
+     *   - 8 未实现时 mock 返回缺省 0（GDD AC-49）
+     */
+    TSharedPtr<IBuildingProvider> BuildingProvider;
+
+    /**
+     * IEconomyResolver DI 注入（story-007 簇C1 AC-2/4/7 经济5 接缝）。
+     *
+     * 纯 C++ TSharedPtr（非 UObject，GC 不追踪）：
+     *   - AssembleSnapshot 经此 CalculateRent 派生 Rent_top1/top2
+     *   - RunAiBuyDecision 经此 ExecutePurchase 执行购买
+     *   - SettleRentOnArrival 经此 CalculateRent 算租
+     */
+    TSharedPtr<IEconomyResolver> EconomyResolver;
+
+    /** 上次 SettleRentOnArrival 算租结果（AC-7 oracle）。 */
+    int32 LastRentCharged = 0;
+
+    /** 上次 RunAiBuyDecision 是否真实执行购买（AC-4 oracle）。 */
+    bool bLastPurchaseExecuted = false;
 
     // =========================================================================
     // pt-006 私有成员

@@ -1818,3 +1818,229 @@ int32 UPlayerTurnSubsystem::ResolveAuctionBid(
     // 违反任一值域条件 → 放弃（0）
     return 0;
 }
+
+// ===========================================================================
+// pt-007 簇 C1：SetOwnershipProvider / SetBuildingProvider / SetEconomyResolver
+// ===========================================================================
+
+/**
+ * 注入 IOwnershipProvider（所有权6 接缝 DI，pt-007 AC-2/4/7）。
+ * 仿 SetActionValidator 赋值 + UE_LOG 模式。
+ */
+void UPlayerTurnSubsystem::SetOwnershipProvider(TSharedPtr<IOwnershipProvider> Provider)
+{
+    OwnershipProvider = Provider;
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::SetOwnershipProvider — "
+             "IOwnershipProvider %s。"),
+        OwnershipProvider.IsValid() ? TEXT("已注入") : TEXT("已清除（nullptr）"));
+}
+
+/**
+ * 注入 IBuildingProvider（建房8 接缝 DI，pt-007 AC-2/4/7）。
+ * 仿 SetActionValidator 赋值 + UE_LOG 模式。
+ */
+void UPlayerTurnSubsystem::SetBuildingProvider(TSharedPtr<IBuildingProvider> Provider)
+{
+    BuildingProvider = Provider;
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::SetBuildingProvider — "
+             "IBuildingProvider %s。"),
+        BuildingProvider.IsValid() ? TEXT("已注入") : TEXT("已清除（nullptr）"));
+}
+
+/**
+ * 注入 IEconomyResolver（经济5 接缝 DI，pt-007 AC-2/4/7）。
+ * 仿 SetActionValidator 赋值 + UE_LOG 模式。
+ */
+void UPlayerTurnSubsystem::SetEconomyResolver(TSharedPtr<IEconomyResolver> Resolver)
+{
+    EconomyResolver = Resolver;
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::SetEconomyResolver — "
+             "IEconomyResolver %s。"),
+        EconomyResolver.IsValid() ? TEXT("已注入") : TEXT("已清除（nullptr）"));
+}
+
+// ===========================================================================
+// pt-007 簇 C1：AssembleSnapshot — 装配 AI 只读快照（AC-2，ADR-0006 IG#1/#2/#3）
+//
+// 设计决策（写进注释供 code-review 核，ADR-0006 Key Interfaces）：
+//   PreaggregatedNlv 语义 = per-tile 清算贡献（AI 自有未抵押格：MV；AI 自有建筑：house_count * BuildingCost/2）。
+//   FGameStateSnapshot 无 top-level nlv 字段，AI 求全组合 nlv 时对自身格 PreaggregatedNlv 求和——
+//   纯求 snapshot 标量、零 provider 访问，不破"AI 不自算 MV/house"的 5→8 反向环纪律。
+//   C2 破产 NLV（AC-9）用相同公式但作单一聚合值传 is_insolvent（不存 snapshot），口径一致。
+// ===========================================================================
+
+FGameStateSnapshot UPlayerTurnSubsystem::AssembleSnapshot(int32 AiPlayerId) const
+{
+    FGameStateSnapshot S;
+
+    // —— 决策主体自身 ——（FindPlayerById 已 const）
+    const URentoPlayerState* PS = FindPlayerById(AiPlayerId);
+    S.SelfPlayerId    = AiPlayerId;
+    S.SelfCash        = PS ? PS->Cash : 0;
+    S.JailTurnsServed = PS ? PS->JailTurnsServed : 0;
+    // 全局常量保留 struct 默认（StartingCash=1500/BoardTileCountClassic=40/JailBailAmount=50/MaxJailTurns=3）。
+    // bHasJailCard：owner=事件格7，C1 无 seam → 保留默认 false（jail card 注入归事件7，Out of Scope）。
+
+    // 缺 provider 降级（ADR-0006 IG#7）：未全注入 → 返回最小 snapshot + UE_LOG Warning（hook 端会降保守默认）
+    if (!OwnershipProvider.IsValid() || !BuildingProvider.IsValid() || !EconomyResolver.IsValid())
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("UPlayerTurnSubsystem::AssembleSnapshot — provider 未全注入（O=%d B=%d E=%d），"
+                 "返回最小 snapshot（缺字段降级，ADR-0006 IG#7）。"),
+            OwnershipProvider.IsValid(), BuildingProvider.IsValid(), EconomyResolver.IsValid());
+        return S;
+    }
+
+    // ① 全盘 per-tile 明细：一次 GetBoardOwnership + 逐格 GetHouseCount/GetBuildingCost
+    //    per-tile PreaggregatedNlv = 该格清算贡献（AI 自身格才计；防 5→8 反向环：MV/cost 装配期取，AI 不自算）
+    const TArray<FOwnershipSnapshot> Board = OwnershipProvider->GetBoardOwnership(AiPlayerId);
+    for (const FOwnershipSnapshot& OS : Board)
+    {
+        FTileSnapshotEntry E;
+        E.TileIndex      = OS.TileIndex;
+        E.OwnerId        = OS.OwnerId;
+        E.HouseCount     = BuildingProvider->GetHouseCount(OS.TileIndex);
+        E.bIsMortgaged   = OS.bIsMortgaged;
+        E.bIsMonopoly    = OS.bIsMonopoly;
+        E.ColorGroup     = OS.ColorGroup;
+        E.PurchasePrice  = OS.PurchasePrice;
+        E.MortgageValue  = OS.MortgageValue;
+        E.BuildingCost   = BuildingProvider->GetBuildingCost(OS.TileIndex);
+        E.UnmortgageCost = OS.MortgageValue + FMath::CeilToInt(OS.MortgageValue / 10.0f); // economy5 口径 MV+ceil(MV/10)
+        // per-tile 清算贡献（AI 拥有的格才贡献；抵押地 MV 不计，建筑半价回收）
+        E.PreaggregatedNlv = (OS.OwnerId == AiPlayerId)
+            ? (E.HouseCount * (E.BuildingCost / 2) + (OS.bIsMortgaged ? 0 : OS.MortgageValue))
+            : 0;
+        S.Tiles.Add(E);
+    }
+
+    // ② Rent_top1/top2 派生（ADR-0006 IG#2）：遍历全盘对手未抵押地产，调经济算租取前两高
+    //    （口径单一交经济5 CalculateRent，回合2 不重定义租金公式）
+    TArray<int32> OpponentRents;
+    for (const FOwnershipSnapshot& OS : Board)
+    {
+        if (OS.OwnerId != AiPlayerId && OS.OwnerId != INDEX_NONE && !OS.bIsMortgaged)
+        {
+            FRentInput RI;
+            RI.PayerId    = AiPlayerId;
+            RI.TileIndex  = OS.TileIndex;
+            RI.Ownership  = OS;
+            RI.HouseCount = BuildingProvider->GetHouseCount(OS.TileIndex);
+            RI.DiceTotal  = 0; // Rent_top 是"潜在单次租金"派生量，无当前程 dice 上下文，置 0（economy F-4 Utility 退化）
+            OpponentRents.Add(EconomyResolver->CalculateRent(RI));
+        }
+    }
+    OpponentRents.Sort([](const int32& A, const int32& B){ return A > B; }); // 降序
+    S.Rent_top1 = OpponentRents.Num() >= 1 ? OpponentRents[0] : 0;
+    S.Rent_top2 = OpponentRents.Num() >= 2 ? OpponentRents[1] : 0;
+
+    return S;
+}
+
+// ===========================================================================
+// pt-007 簇 C1：RunAiBuyDecision — AI 买地决策执行路径（AC-4，GDD AC-38/AC-38b）
+//
+// 执行流程：
+//   ① oracle 重置 + AIDecisionMaker 未注入兜底（降保守默认不买）
+//   ② 装配只读快照（AssembleSnapshot，AC-2）
+//   ③ 调 AIDecisionMaker->DecideBuyProperty(S, TileIndex) 取 AI 决策
+//   ④ 决定不买 → false（不触发购买，AC-38）
+//   ⑤ 决定买 → 委派 EconomyResolver->ExecutePurchase 执行期可行性校验+执行（AC-38b）
+//      ExecutePurchase=false → 视同不买（不扣负/地产未变/不崩，AC-38b）
+// ===========================================================================
+
+bool UPlayerTurnSubsystem::RunAiBuyDecision(int32 AiPlayerId, int32 TileIndex)
+{
+    bLastPurchaseExecuted = false; // 重置 oracle
+
+    // AI hook 未注入兜底（ADR-0006 IG#7：降保守默认 false=不买）
+    if (!AIDecisionMaker.IsValid())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::RunAiBuyDecision — AIDecisionMaker 未注入，降保守默认不买。"));
+        return false;
+    }
+
+    // ① 装配只读快照（AC-2）→ ② 调 AI 买地 hook（AI 经 const& 只读消费，不写状态）
+    const FGameStateSnapshot S = AssembleSnapshot(AiPlayerId);
+    const bool bWantBuy = AIDecisionMaker->DecideBuyProperty(S, TileIndex);
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::RunAiBuyDecision — PlayerId=%d TileIndex=%d DecideBuyProperty=%d。"),
+        AiPlayerId, TileIndex, bWantBuy ? 1 : 0);
+
+    if (!bWantBuy)
+    {
+        return false; // AI 决定不买（AC-38：按返回值不触发购买）
+    }
+
+    // ③ 决定买 → 委派经济5/所有权6 执行期可行性校验+执行（AC-38b）
+    if (!EconomyResolver.IsValid())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::RunAiBuyDecision — EconomyResolver 未注入，无法执行购买，视同不买。"));
+        return false;
+    }
+    const bool bExecuted = EconomyResolver->ExecutePurchase(AiPlayerId, TileIndex);
+    if (!bExecuted)
+    {
+        // 不可行（Cash<Price / 地产已被买）→ 视同 false：不扣负（框架从不写 Cash）、地产未变更、回合不崩（AC-38b）
+        UE_LOG(LogTemp, Warning,
+            TEXT("UPlayerTurnSubsystem::RunAiBuyDecision — PlayerId=%d 决定买但执行期不可行，"
+                 "视同不买（AC-38b：不扣负/地产未变/不崩）。"),
+            AiPlayerId);
+        return false;
+    }
+
+    bLastPurchaseExecuted = true;
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::RunAiBuyDecision — PlayerId=%d 购买成功（TileIndex=%d）。"),
+        AiPlayerId, TileIndex);
+    return true;
+}
+
+// ===========================================================================
+// pt-007 簇 C1：SettleRentOnArrival — 到达结算收租（AC-7，GDD AC-48/AC-49 / CR-3.2）
+//
+// 调用链（恰 N 次，供 TC-7 断言）：
+//   ① BuildOwnershipSnapshot 恰 1 次（CR-3.2 ①）
+//   ② GetHouseCount 恰 1 次（CR-3.2 ②，AC-49 缺省 0）
+//   ③ CalculateRent 恰 1 次，传入 dice_total PULL（CR-3.1/CR-3.2 ③）
+// ===========================================================================
+
+int32 UPlayerTurnSubsystem::SettleRentOnArrival(int32 PayerId, int32 TileIndex)
+{
+    LastRentCharged = 0; // 重置 oracle
+
+    if (!OwnershipProvider.IsValid() || !BuildingProvider.IsValid() || !EconomyResolver.IsValid())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::SettleRentOnArrival — provider 未全注入，跳过算租。"));
+        return 0;
+    }
+
+    // ① 调所有权6 BuildOwnershipSnapshot 恰 1 次（CR-3.2 ①）
+    const FOwnershipSnapshot OS = OwnershipProvider->BuildOwnershipSnapshot(PayerId, TileIndex);
+
+    // ② 读建房8 house_count（8 未实现 mock 返回缺省 0，GDD AC-49；CR-3.2 ②）
+    const int32 HouseCount = BuildingProvider->GetHouseCount(TileIndex);
+
+    // ③ 拼装算租输入 + 当前程 dice_total PULL（CR-3.1：读当前行动玩家 CurrentRollContext.Total）
+    FRentInput RI;
+    RI.PayerId    = PayerId;
+    RI.TileIndex  = TileIndex;
+    RI.Ownership  = OS;
+    RI.HouseCount = HouseCount;
+    RI.DiceTotal  = GetCurrentRollTotal(); // PULL 当前程总点（CR-3.1）
+
+    // 调经济5 算租入口恰 1 次（CR-3.2 ③），参数与上游一致
+    LastRentCharged = EconomyResolver->CalculateRent(RI);
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::SettleRentOnArrival — PayerId=%d TileIndex=%d house_count=%d "
+             "dice_total=%d → rent=%d。"),
+        PayerId, TileIndex, HouseCount, RI.DiceTotal, LastRentCharged);
+    return LastRentCharged;
+}
