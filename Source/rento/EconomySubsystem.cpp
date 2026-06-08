@@ -407,6 +407,67 @@ int32 UEconomySubsystem::ComputeUtilityRent(int32 UtilityCount, int32 DiceTotal,
 }
 
 // =============================================================================
+// GetUnmortgageCostForDisplay —— 赎回价 F-6（纯函数，整数 ceil，单一口径）
+// =============================================================================
+int32 UEconomySubsystem::GetUnmortgageCostForDisplay(int32 MortgageValue) const
+{
+    // MV 防御（board 应保 1..PurchasePrice）：≤0 = 无效数据 → 0 + dev log（防负 cost）。
+    if (MortgageValue <= 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::GetUnmortgageCostForDisplay: MortgageValue=%d <= 0 -- cost 0 (invalid board data?)"),
+            MortgageValue);
+        return 0;
+    }
+
+    // fee_den 防御（对抗 review CONCERN-2）：den≤0 = 配置异常 → 退化为零 fee（cost=MV），避免除零崩溃。
+    //   meta ClampMin 仅约束 editor，code/data-asset 仍可置 0，故 runtime guard 必需。
+    if (UnmortgageFeeDen <= 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::GetUnmortgageCostForDisplay: UnmortgageFeeDen=%d <= 0 -- zero-fee fallback (config bug)"),
+            UnmortgageFeeDen);
+        return MortgageValue;                          // 零 fee 退化（不崩、不返负）
+    }
+
+    // 整数 ceil（ADR-0014，零 float）：fee = ceil(MV × num/den) = (MV×num + den−1)/den。
+    //   fee 恒≥1（MV≥1 且 fee_num/den=1/10 默认时；fee_num=0 零 fee 是合法 House Rules 调参 GDD Tuning）。
+    //   溢出境界（CONCERN-1）：MV≤PurchasePrice（board 校验，经典≤400）× num（ClampMax 束缚）< INT32_MAX。
+    const int32 Fee = (MortgageValue * UnmortgageFeeNum + UnmortgageFeeDen - 1) / UnmortgageFeeDen;
+    return MortgageValue + Fee;
+}
+
+// =============================================================================
+// MortgagePayout —— 抵押放款现金腿 F-5（被地产6 调，6→5）
+// =============================================================================
+bool UEconomySubsystem::MortgagePayout(int32 PlayerId, int32 MortgageValue)
+{
+    // F-5：payout = MortgageValue（Credit，reason=Mortgage）。前置归6/决策点，非此处（AC-20）。
+    return Credit(PlayerId, MortgageValue, EChangeReason::Mortgage);
+}
+
+// =============================================================================
+// UnmortgagePayment —— 赎回现金腿 F-6（被地产6 调，6→5）
+// =============================================================================
+bool UEconomySubsystem::UnmortgagePayment(int32 PlayerId, int32 MortgageValue)
+{
+    const int32 Cost = GetUnmortgageCostForDisplay(MortgageValue);
+    if (Cost <= 0)
+    {
+        return false;                                  // 无效 MV（已 log）
+    }
+
+    // AC-22：赎回是自愿行为，现金不足 → 不可用（不 Debit、不广播、return false）。
+    //   显式 pre-check 避免 Debit 内 OnInsufficientFunds 误触发 raising-funds（raising-funds 仅强制扣款 rent/tax 才入）。
+    if (GetCash(PlayerId) < Cost)
+    {
+        return false;                                  // 地保持抵押（6 不解除标记）
+    }
+
+    return Debit(PlayerId, Cost, EChangeReason::Unmortgage);
+}
+
+// =============================================================================
 // GiveStartingCash —— 数据驱动起始资金（reason=Salary：起始资金=入账 faucet 语境）
 // =============================================================================
 void UEconomySubsystem::GiveStartingCash(int32 PlayerId)

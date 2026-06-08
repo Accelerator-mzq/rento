@@ -71,11 +71,11 @@ stories:
     name: "抵押/赎回现金腿 F-5/F-6 + 显示读接口 + 无套利"
     file: "production/epics/economy-cash/story-006-mortgage-legs-f5-f6.md"
     priority: must-have
-    status: ready-for-dev
+    status: done
     owner: "unreal-specialist"
     estimate_days: 0.75
     blocker: ""
-    completed: ""
+    completed: "2026-06-09"
   - id: "econ-007"
     name: "缴税 F-7 + 买地现金腿 CR-4"
     file: "production/epics/economy-cash/story-007-tax-buy-legs.md"

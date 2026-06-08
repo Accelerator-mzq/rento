@@ -174,6 +174,40 @@ public:
     UFUNCTION(BlueprintCallable, Category="Economy|Rent")
     int32 ComputeUtilityRent(int32 UtilityCount, int32 DiceTotal, const TArray<int32>& DiceMultiplierTable) const;
 
+    // =========================================================================
+    // 抵押/赎回现金腿（econ-006 F-5/F-6，被地产6 事务调用 6→5，ADR-0014 整数 ceil）
+    // =========================================================================
+
+    /**
+     * 赎回价（F-6 纯函数，赎回价口径单一来源；CR-5）：unmortgage_cost = MV + ceil(MV×fee_num/fee_den)。
+     *   整数 ceil（ADR-0014，零 float）；fee 恒≥1（MV≥1，堵免费赎回退化）。
+     *   **纯函数无副作用**：不改状态、不触事件、不读归属、不反调6（地产卡 UI #17 调此显示赎回价，不自算 ceil）。
+     *   MV≤0（board 应保 1..PurchasePrice）→ 0 + dev log（防负 cost）。
+     * @return unmortgage_cost > MortgageValue（MV>0 时）；MV≤0 → 0。
+     */
+    UFUNCTION(BlueprintPure, Category="Economy|Mortgage")
+    int32 GetUnmortgageCostForDisplay(int32 MortgageValue) const;
+
+    /**
+     * 抵押放款现金腿（F-5；被地产6 Mortgage() 事务调用，6→5）：payout = MortgageValue（Credit，reason=Mortgage）。
+     *   economy 只执行 Credit，**不标记/不通知6**（bIsMortgaged 由6自置，保无环）；
+     *   **前置（未抵押/无房）由6/决策点保证，非此处校验**（AC-20；Credit 通用入账读不到抵押标记/房数）。
+     * @return Credit 结果（玩家存在且 MV≥0 时 true）。
+     */
+    UFUNCTION(BlueprintCallable, Category="Economy|Mortgage")
+    bool MortgagePayout(int32 PlayerId, int32 MortgageValue);
+
+    /**
+     * 赎回现金腿（F-6；被地产6 Unmortgage() 事务调用，6→5）：Debit(owner, unmortgage_cost, Unmortgage)。
+     *   赎回是**自愿行为**：现金不足 → 赎回不可用、不 Debit、不广播、return false（AC-22）；
+     *     **显式 pre-check（GetCash≥cost）避免 Debit 内 OnInsufficientFunds 误触发 raising-funds**
+     *     （raising-funds 仅强制扣款 rent/tax 才入，CR-5/CR-7）。
+     *   成功 → Debit 广播 OnCashChanged(reason=Unmortgage)；6 自行解除抵押标记（economy 不通知6）。
+     * @return true=已扣赎回价；false=现金不足/无效 MV/玩家不存在（地保持抵押）。
+     */
+    UFUNCTION(BlueprintCallable, Category="Economy|Mortgage")
+    bool UnmortgagePayment(int32 PlayerId, int32 MortgageValue);
+
     /**
      * 发放起始资金（数据驱动 Tuning Knob StartingCash，经 Credit 入账，reason=Salary 入账 faucet）。
      * @param PlayerId 玩家 ID
@@ -192,6 +226,14 @@ public:
     /** 垄断无房地租翻倍系数（GDD：本系统拥有，MVP 锁定 2；跨系统旋钮，改动须协同所有权6/建房8）。 */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Economy|Tuning")
     int32 MonopolyRentMultiplier = 2;
+
+    /** 赎回费率分子（GDD Tuning unmortgage_fee=1/10 经典 10%；num=0=零 fee 合法 House Rules；
+     *  ClampMax 束缚防 num×MV 溢出 int32，对抗 review CONCERN-1）。 */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Economy|Tuning", meta=(ClampMin="0", ClampMax="100"))
+    int32 UnmortgageFeeNum = 1;
+    /** 赎回费率分母（必 ≥1 防除零，ClampMin 约束 editor + runtime guard 兜底 code/data-asset）。 */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Economy|Tuning", meta=(ClampMin="1", ClampMax="1000"))
+    int32 UnmortgageFeeDen = 10;
 
     // =========================================================================
     // 事件（econ-002，owner-held DYNAMIC_MULTICAST_DELEGATE，payload USTRUCT，ADR-0003）

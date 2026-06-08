@@ -1,7 +1,7 @@
 # Story 006: 抵押/赎回现金腿 F-5/F-6 + 显示读接口 + 无套利
 
 > **Epic**: 经济与现金 Economy & Cash
-> **Status**: Ready
+> **Status**: Complete
 > **Layer**: Core
 > **Type**: Logic
 > **Estimate**: [TBD]
@@ -29,11 +29,11 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-19** `payout==MortgageValue`（F-5）：MV=100 → Credit 额==100。
-- [ ] **AC-20** [Advisory·code-review] 抵押前置不归 economy：`Credit` 实现内**无** `is_mortgaged`/`house_count` 读取或拒绝分支（前置归地产6 `Mortgage()`/决策点）。
-- [ ] **AC-21** [整数 ceil] `unmortgage_cost = MV + ceil(MV×fee_num/fee_den)`：MV=100, fee=1/10 → 110；MV=75 → fee=ceil(7.5)=8 → **83**（非 82.5/82）；MV=1 → fee=1 → **2**（fee 恒≥1）。
-- [ ] **AC-22** 赎回现金不足：Cash < unmortgage_cost → 赎回不可用、不 Debit、地保持抵押。
-- [ ] **AC-42** [Logic·可数学验证] 抵押无套利：对任意 `MV>0` 与 `fee_rate≥0`，一抵一赎净现金 == `−fee_rate×MV ≤ 0`（恒非正）。MV=100,fee=1/10 → 净 −10；MV=60 → 净 −6。
+- [x] **AC-19** `payout==MortgageValue`（F-5）：MV=100 → Credit 额==100。
+- [x] **AC-20** [Advisory·code-review] 抵押前置不归 economy：`Credit` 实现内**无** `is_mortgaged`/`house_count` 读取或拒绝分支（前置归地产6 `Mortgage()`/决策点）。
+- [x] **AC-21** [整数 ceil] `unmortgage_cost = MV + ceil(MV×fee_num/fee_den)`：MV=100, fee=1/10 → 110；MV=75 → fee=ceil(7.5)=8 → **83**（非 82.5/82）；MV=1 → fee=1 → **2**（fee 恒≥1）。
+- [x] **AC-22** 赎回现金不足：Cash < unmortgage_cost → 赎回不可用、不 Debit、地保持抵押。
+- [x] **AC-42** [Logic·可数学验证] 抵押无套利：对任意 `MV>0` 与 `fee_rate≥0`，一抵一赎净现金 == `−fee_rate×MV ≤ 0`（恒非正）。MV=100,fee=1/10 → 净 −10；MV=60 → 净 −6。
 
 ---
 
@@ -70,8 +70,38 @@
 ## Test Evidence
 
 **Story Type**: Logic
-**Required evidence**: `tests/unit/economy-cash/mortgage_legs_test.cpp`（类目 `Rento.Economy.MortgageLegs`）— 存在且通过。
-**Status**: [ ] Not yet created
+**Required evidence**: `tests/unit/economy-cash/mortgage_legs_test.cpp`（物理 `Source/rentoTests/Private/MortgageLegsTest.cpp`，类目 `Rento.Economy.MortgageLegs`）— 存在且通过。
+**Status**: [x] 6 TC 全通过（TC1 放款/TC2 ceil赎回价+纯函数/TC3 MV≤0防御/TC4 不足不可用/TC5 无套利+赎回成功/TC6 除零防御）
+
+---
+
+## Completion Notes（2026-06-09，mode-A 主会话亲写）
+
+**实现**（3 方法，承 econ-003~005 caller-injected）：
+- `GetUnmortgageCostForDisplay(MV)` BlueprintPure 纯函数 = `MV + ceil(MV×num/den)`（整数 ceil ADR-0014，赎回价**单一口径** #17 显示+赎回腿同源，CR-5/OQ-PC-8）。AC-21。
+- `MortgagePayout(player, MV)` F-5 腿 = `Credit(player, MV, Mortgage)`（薄 wrapper，AC-19）。
+- `UnmortgagePayment(player, MV)` F-6 腿 = cost 计算 → **pre-check GetCash≥cost** → Debit(Unmortgage)。AC-22。
+- `UnmortgageFeeNum/Den=1/10` data-driven UPROPERTY（+ ClampMin/Max meta）。
+
+**🔴 关键语义裁定（主会话）**：**UnmortgagePayment 自愿行为** —— 现金不足时**显式 pre-check** return false（不 Debit、不广播、**不触 OnInsufficientFunds**），区别于 rent/tax 的 Debit 不足走 raising-funds（CR-5/CR-7：raising-funds 仅强制扣款入，赎回是玩家自愿可不做的行为）。变异坐实（去 pre-check→Debit 走 InsufficientFunds→TC4 FAIL）。
+
+**整数 ceil 验算**：`fee=(MV×num+den−1)/den`；MV=100→fee=10→cost=110；MV=75→fee=ceil(7.5)=8→cost=83（非 floor 82）；MV=1→fee=1→cost=2（fee≥1 MV≥1 自动）。**AC-42 无套利**：抵一赎净=+MV−(MV+fee)=−fee≤0 恒非正（MV=100 净−10/MV=60 净−6）。
+
+**对抗 review（unreal-specialist）= APPROVED-WITH-CONCERNS**（无 blocker，逐行验证 ceil/无套利/自愿语义/AC-20）。采纳：
+- **CONCERN-2**（UnmortgageFeeDen=0 除零崩溃）→ runtime guard `den≤0→零 fee 退化(cost=MV)+dev log`（meta 仅约束 editor，code/data-asset 仍可置 0 故 runtime 必需）+ TC6。
+- **CONCERN-1**（FeeNum×MV 溢出）→ UPROPERTY 加 ClampMin/Max meta + 溢出境界注释（MV≤PurchasePrice board 校验）。
+- **CONCERN-3 不采纳**：FeeNum=0 零 fee 是**合法 House Rules 调参**（GDD Tuning unmortgage_fee 范围 0/1–2/10），「fee 恒≥1」仅 default 1/10 下的丸め退化防止，非绝对不变式。
+- **AC-20 grep 核实**：Credit 函数体内零 is_mortgaged/house_count/bIsMortgaged 命中（前置归地产6/决策点）。
+
+**全证（主会话亲跑，铁律）**：
+- Build Succeeded；全量 **304/304**（298 基线 + 6 MortgageLegs，0 Fail/0 notRun/EXIT 0，零回归，`Saved/TestReport_econ006_hardened`）。
+- **变异坐实非 vacuous**：变异A（ceil→floor）→ **仅 TC2 FAIL**（MV=75/1 非整数检出，`mutA`）；变异B（去 UnmortgagePayment pre-check）→ **仅 TC4 FAIL**（自愿语义 OnInsufficientFunds 不变式，`mutB`）；均还原复绿。
+- 权威纯净 grep：economy 零随机 + AC-20 Credit 内零抵押/房数读取。
+
+**协调债 / propagate**：
+- 地产6 的 Mortgage()/Unmortgage() 事务调本系统 MortgagePayout/UnmortgagePayment（6→5）+ 自置/解除 bIsMortgaged（property epic）；house_count==0 抵押前置归决策点/地产6（economy 读不到，AC-20）。
+- 地产卡 UI #17 调 GetUnmortgageCostForDisplay 显示赎回价（presentation，CR-5/OQ-PC-8）。
+- **解锁 econ-009**（凑钱状态机用 Mortgage 现金腿 + 赎回费口径）。
 
 ---
 
