@@ -24,6 +24,9 @@ public:
     UPROPERTY() int32 LastOldCash = -1;
     UPROPERTY() int32 LastNewCash = -1;
     UPROPERTY() EChangeReason LastReason = EChangeReason::Salary;
+    /** 每次 OnCashChanged 的 reason 逐条记录（对抗 review C-2：LastReason 上写仅留末腿，
+     *  转移两腿独立断言须查全序列）。 */
+    UPROPERTY() TArray<EChangeReason> CashChangedReasons;
 
     // —— OnRentPaid ——
     UPROPERTY() int32 RentPaidCount = 0;
@@ -50,6 +53,7 @@ public:
         LastOldCash  = Info.OldCash;
         LastNewCash  = Info.NewCash;
         LastReason   = Info.Reason;
+        CashChangedReasons.Add(Info.Reason);          // 逐腿记录（C-2 两腿独立断言）
     }
 
     UFUNCTION()

@@ -221,6 +221,8 @@ namespace
     //   1000×SalaryAmount 溢出 int32（仅 clamp passed_go 不足以保证不溢出，需两因子均有界）。
     //   2,000,000 × 1000 = 2e9 < INT32_MAX。
     constexpr int32 SALARY_AMOUNT_SAFE_MAX = 2000000;
+    // 地产房屋档位上界（econ-004 F-2）：0=无房 .. 5=酒店；clamp 防建房8 越界。
+    constexpr int32 PROPERTY_HOUSE_MAX = 5;
 }
 
 // =============================================================================
@@ -263,6 +265,76 @@ bool UEconomySubsystem::PaySalary(int32 PlayerId, int32 PassedGo, int32 SalaryAm
 
     // 经 Credit 入账（reason=Salary）；Credit 内保 amount≥0/玩家存在/广播 OnCashChanged。
     return Credit(PlayerId, Salary, EChangeReason::Salary);
+}
+
+// =============================================================================
+// ComputePropertyRent —— 地产租金 F-2 piecewise（纯函数，RentTable 注入）
+// =============================================================================
+int32 UEconomySubsystem::ComputePropertyRent(bool bIsMortgaged, bool bIsMonopoly, int32 HouseCount, const TArray<int32>& RentTable) const
+{
+    // ① 短路抵押先于表查找（CR-3/AC-9）：抵押地不收租。
+    if (bIsMortgaged)
+    {
+        return 0;
+    }
+
+    // RentTable 空表防御（board 数据 bug）：无法查找 → 0 + dev log。
+    if (RentTable.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::ComputePropertyRent: RentTable empty -- rent 0"));
+        return 0;
+    }
+
+    // ② house_count 越界 dev 信号（替 ensure，G2+决定性，AC-13）：正常 0..5，越界暴露建房8 bug。
+    if (HouseCount < 0 || HouseCount > PROPERTY_HOUSE_MAX)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::ComputePropertyRent: house_count=%d out of range [0,%d] -- clamped"),
+            HouseCount, PROPERTY_HOUSE_MAX);
+    }
+
+    // ③ 垄断翻倍仅作用无房 base（raw house==0，AC-10）；酒店/有房 raw≠0 落 else 不翻倍（AC-11）。
+    //   溢出境界（N-1）：RentTable[0]（board base，加载期校验）× MonopolyRentMultiplier（MVP 锁定 2）
+    //   = 经典值远 < INT32_MAX；两因子均静态数据（board RentTable + editor 配置），非 runtime abuse 输入。
+    if (bIsMonopoly && HouseCount == 0)
+    {
+        return RentTable[0] * MonopolyRentMultiplier;
+    }
+
+    // ④ 否则按房数查表，index 双重 clamp（[0,5] ∩ [0,Num-1]，防 RentTable 短于 6 越界）。
+    const int32 MaxIndex     = FMath::Min(PROPERTY_HOUSE_MAX, RentTable.Num() - 1);
+    const int32 ClampedHouse = FMath::Clamp(HouseCount, 0, MaxIndex);
+    return RentTable[ClampedHouse];
+}
+
+// =============================================================================
+// SettleRent —— 收租结算（共有 F-2/F-3/F-4）：原子转移 + OnRentPaid
+// =============================================================================
+bool UEconomySubsystem::SettleRent(int32 PayerId, int32 PayeeId, int32 RentAmount, int32 TileIndex)
+{
+    // rent≤0（抵押/自有/无主）→ 不转移、不广播（AC-5/37）。
+    //   不变式（N-2）：ComputePropertyRent 恒返 ≥0；负值不可达，<0 与零额合流静默 false 兜底。
+    if (RentAmount <= 0)
+    {
+        return false;
+    }
+
+    // 原子转移（CR-8）：reason=Rent（两腿 OnCashChanged=Rent，AC-37）；
+    //   付方不足额 → TransferCash 内广播 OnInsufficientFunds + 返回 false → 不广播 OnRentPaid（未真收租）。
+    if (!TransferCash(PayerId, PayeeId, RentAmount, EChangeReason::Rent))
+    {
+        return false;
+    }
+
+    // 收租成功 → 广播 OnRentPaid（4 字段，AC-34；TileIndex=地产格非 Payee 所在格）。
+    FRentPaidInfo Info;
+    Info.PayerId   = PayerId;
+    Info.PayeeId   = PayeeId;
+    Info.Amount    = RentAmount;
+    Info.TileIndex = TileIndex;
+    OnRentPaid.Broadcast(Info);
+    return true;
 }
 
 // =============================================================================

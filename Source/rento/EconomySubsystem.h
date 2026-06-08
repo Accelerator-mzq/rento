@@ -122,6 +122,38 @@ public:
     UFUNCTION(BlueprintCallable, Category="Economy|Cash")
     bool PaySalary(int32 PlayerId, int32 PassedGo, int32 SalaryAmount);
 
+    // =========================================================================
+    // 租金（econ-004 F-2 / econ-005 F-3/F-4，ADR-0014 整数纯净 / ADR-0006 快照输入）
+    // =========================================================================
+
+    /**
+     * 地产租金 F-2 piecewise（纯函数，RentTable 由调用方注入；CR-3）：
+     *   is_mortgaged                      → 0（短路先于表查找，AC-9）
+     *   is_monopoly ∧ house_count==0      → RentTable[0] × MonopolyRentMultiplier（仅无房 base，AC-10）
+     *   else                              → RentTable[clamp(house_count,0,5)]（AC-12；酒店 house==5 绝不翻倍 AC-11）
+     * ×2 用 raw house_count==0 判定（越界 raw≠0 落 else，AC-13：house=−1→RentTable[0]、house=6→RentTable[5]）。
+     * house_count 越界（<0 ∨ >5，建房8 bug）→ UE_LOG(Error) 暴露 + clamp 兜底（不崩，AC-13）。
+     * is_mortgaged/is_monopoly 来自地产6 快照、house_count 来自建房8，经回合2 ResolvePhase 聚合传入
+     *   （economy 不直读 6/8，防环 ADR-0006）。
+     *
+     * @return 应付租金 ≥0（抵押/空表→0）。
+     */
+    UFUNCTION(BlueprintCallable, Category="Economy|Rent")
+    int32 ComputePropertyRent(bool bIsMortgaged, bool bIsMonopoly, int32 HouseCount, const TArray<int32>& RentTable) const;
+
+    /**
+     * 收租结算（共有，F-2/F-3/F-4；CR-3/CR-8）：原子转移 payer→payee + 广播 OnRentPaid。
+     *   RentAmount≤0（抵押/自有/无主）→ 不转移、不广播、return false（AC-5/37）。
+     *   RentAmount>0 → TransferCash(payer,payee,rent,Rent)（两腿 OnCashChanged=Rent）；
+     *     付方不足额 → TransferCash 内广播 OnInsufficientFunds + return false → 本函数不广播 OnRentPaid
+     *       （未真收租，转 Raising Funds story-009）。成功 → OnRentPaid.Broadcast（AC-34）。
+     *
+     * @param TileIndex 地产格序号（OnRentPaid payload；非 Payee 所在格）。
+     * @return true=收租完成并广播 OnRentPaid；false=零额/付方不足/玩家不存在。
+     */
+    UFUNCTION(BlueprintCallable, Category="Economy|Rent")
+    bool SettleRent(int32 PayerId, int32 PayeeId, int32 RentAmount, int32 TileIndex);
+
     /**
      * 发放起始资金（数据驱动 Tuning Knob StartingCash，经 Credit 入账，reason=Salary 入账 faucet）。
      * @param PlayerId 玩家 ID
@@ -136,6 +168,10 @@ public:
     /** 每玩家起始现金（GDD Tuning：经典 1500；快速档 750 由上游配置覆盖）。 */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Economy|Tuning")
     int32 StartingCash = 1500;
+
+    /** 垄断无房地租翻倍系数（GDD：本系统拥有，MVP 锁定 2；跨系统旋钮，改动须协同所有权6/建房8）。 */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Economy|Tuning")
+    int32 MonopolyRentMultiplier = 2;
 
     // =========================================================================
     // 事件（econ-002，owner-held DYNAMIC_MULTICAST_DELEGATE，payload USTRUCT，ADR-0003）
