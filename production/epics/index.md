@@ -1,6 +1,6 @@
 # Epics Index
 
-Last Updated: 2026-06-06
+Last Updated: 2026-06-08
 Engine: Unreal Engine 5.7
 Manifest Version: 2026-06-06
 
@@ -20,7 +20,18 @@ Manifest Version: 2026-06-06
 
 ## Core Layer
 
-> 尚未创建。Foundation 接近完成后运行 `/create-epics layer:core`（依赖设计可能演化，不提前创建）。
+> 创建 2026-06-08（Foundation 32/32 全闭后）。依赖序：economy(bottleneck)→movement→property→tile-events。
+
+| Epic | System | GDD | Governing ADRs | Engine Risk | TR 覆盖 | Stories | Status |
+|------|--------|-----|----------------|-------------|---------|---------|--------|
+| [economy-cash](economy-cash/EPIC.md) | #5 经济与现金 ⚠bottleneck | economy-cash.md | ADR-0007/0003/0006/0005/0002/0001 | LOW | 12C/4P/**2 Gap** | Not yet created | Ready |
+| [movement](movement/EPIC.md) | #4 移动 | movement.md | ADR-0002/0003/0001/0005/0007 | LOW | 7C/8P/**3 Gap** | Not yet created | Ready |
+| [property-ownership](property-ownership/EPIC.md) | #6 地产所有权 | property-ownership.md | ADR-0007/0003/0006/0005/0002/0001 | LOW | 8C/4P/**3 Gap** | Not yet created | Ready |
+| [tile-events](tile-events/EPIC.md) | #7 事件格 | tile-events.md | ADR-0004/0003/0005/0001/0002/0007 | LOW | 4C/5P/**2 Gap** | Not yet created | Ready |
+
+> **Core 4 epic 共 62 TR**（econ18+move18+prop15+event11），**10 Gap TR**（无 ADR/不完整 9 条 + prop-001 ADR 不完整）= 架构 review 已知 25 Gap carryover 子集。每个 epic 的 untraced TR 在 `/create-stories` 时其 story 标 **Blocked** 直到补 ADR：
+> - econ-014/015（整数确定性/溢出防护）· move-010/017（Utility PULL/溢出告警；move-013=Full Vision defer）· prop-001/002/012（OQ-Prop-1 owner map 生命周期 ADR）· event-009/010（跨档接口：建房聚合/holder PULL）
+> - **下一步**：`/create-stories economy-cash`（bottleneck 先行）或先 `/architecture-decision` 补 OQ-Prop-1/econ 数据校验等 ADR。
 
 ## Feature Layer
 
