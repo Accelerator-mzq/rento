@@ -284,3 +284,34 @@ struct RENTO_API FBuildingAnnouncedInfo
     /** 执行建房的玩家 PlayerId（取当前回合上下文，方案②） */
     UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") int32 ActingPlayerId = INDEX_NONE;
 };
+
+// =============================================================================
+// 枚举 append-only 编译期门（pt-008 / AC-5 / TR-turn-014 / ADR-0005 IG#9）
+//
+// 整数索引钉死——重排破坏旧存档（序列化按整数值，G7 全量序列化更须守）。
+// 改动只能尾部 append（新值递增），绝不删除/重排已有值。
+// 草稿值（如 ETurnPhase 历史 AIPlaybackGating）在任何引擎资产使用前删除，不违反 append-only。
+// 此 static_assert 是 BLOCKING 编译期门（违反即编译失败）；TC-5 是运行期见证。
+// =============================================================================
+static_assert(static_cast<uint8>(ETurnPhase::TurnStart)      == 0, "ETurnPhase append-only: TurnStart 必须 == 0（破坏旧存档）");
+static_assert(static_cast<uint8>(ETurnPhase::RollPhase)      == 1, "ETurnPhase append-only: RollPhase 必须 == 1");
+static_assert(static_cast<uint8>(ETurnPhase::MovePhase)      == 2, "ETurnPhase append-only: MovePhase 必须 == 2");
+static_assert(static_cast<uint8>(ETurnPhase::ResolvePhase)   == 3, "ETurnPhase append-only: ResolvePhase 必须 == 3");
+static_assert(static_cast<uint8>(ETurnPhase::PostRollAction) == 4, "ETurnPhase append-only: PostRollAction 必须 == 4");
+static_assert(static_cast<uint8>(ETurnPhase::TurnEnd)        == 5, "ETurnPhase append-only: TurnEnd 必须 == 5");
+static_assert(static_cast<uint8>(ETurnPhase::JailTurn)       == 6, "ETurnPhase append-only: JailTurn 必须 == 6（当前合法值=7 个）");
+
+static_assert(static_cast<uint8>(EPlayerColor::None)   == 0, "EPlayerColor append-only: None 必须 == 0");
+static_assert(static_cast<uint8>(EPlayerColor::Red)    == 1, "EPlayerColor append-only: Red 必须 == 1");
+static_assert(static_cast<uint8>(EPlayerColor::Blue)   == 2, "EPlayerColor append-only: Blue 必须 == 2");
+static_assert(static_cast<uint8>(EPlayerColor::Green)  == 3, "EPlayerColor append-only: Green 必须 == 3");
+static_assert(static_cast<uint8>(EPlayerColor::Yellow) == 4, "EPlayerColor append-only: Yellow 必须 == 4");
+static_assert(static_cast<uint8>(EPlayerColor::Purple) == 5, "EPlayerColor append-only: Purple 必须 == 5");
+static_assert(static_cast<uint8>(EPlayerColor::Orange) == 6, "EPlayerColor append-only: Orange 必须 == 6");
+static_assert(static_cast<uint8>(EPlayerColor::Cyan)   == 7, "EPlayerColor append-only: Cyan 必须 == 7");
+static_assert(static_cast<uint8>(EPlayerColor::Pink)   == 8, "EPlayerColor append-only: Pink 必须 == 8");
+
+static_assert(static_cast<uint8>(EAIDifficulty::None)   == 0, "EAIDifficulty append-only: None 必须 == 0");
+static_assert(static_cast<uint8>(EAIDifficulty::Casual) == 1, "EAIDifficulty append-only: Casual 必须 == 1");
+static_assert(static_cast<uint8>(EAIDifficulty::Normal) == 2, "EAIDifficulty append-only: Normal 必须 == 2");
+static_assert(static_cast<uint8>(EAIDifficulty::Sharp)  == 3, "EAIDifficulty append-only: Sharp 必须 == 3");

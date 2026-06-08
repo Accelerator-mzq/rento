@@ -2300,3 +2300,128 @@ void UPlayerTurnSubsystem::HandleBuildingChanged(int32 TileIndex, int32 NewHouse
         TEXT("UPlayerTurnSubsystem::HandleBuildingChanged — 通告 tile=%d house=%d actor=%d。"),
         TileIndex, NewHouseCount, CurrentActivePlayerId);
 }
+
+// ===========================================================================
+// pt-008：读档序列化 round-trip + delegate 重绑拓扑序 + 可存档点查询
+// ===========================================================================
+
+UPlayerTurnSaveData* UPlayerTurnSubsystem::CaptureSaveData() const
+{
+    // NewObject 于 transient package（存档对象与 World 无关；调用方防 GC）
+    UPlayerTurnSaveData* Save = NewObject<UPlayerTurnSaveData>(GetTransientPackage());
+    check(Save);
+
+    // 顶层回合2 字段
+    Save->CurrentPhase          = CurrentPhase;
+    Save->CurrentActivePlayerId = CurrentActivePlayerId;
+    Save->DoublesJailThreshold  = DoublesJailThreshold;
+
+    // 逐玩家装记录（DV-1 值记录；DV-2 roll-context per-player 进记录）
+    Save->PlayerRecords.Reserve(PlayerStates.Num());
+    for (const TObjectPtr<URentoPlayerState>& PS : PlayerStates)
+    {
+        if (!PS) { continue; }
+        FPlayerStateRecord R;
+        R.PlayerId           = PS->PlayerId;
+        R.DisplayName        = PS->DisplayName;
+        R.TokenColor         = PS->TokenColor;
+        R.bIsAI              = PS->bIsAI;
+        R.AIDifficulty       = PS->AIDifficulty;
+        R.CurrentTileIndex   = PS->CurrentTileIndex;
+        R.Cash               = PS->Cash;
+        R.bIsInJail          = PS->bIsInJail;
+        R.JailTurnsServed    = PS->JailTurnsServed;
+        R.bIsBankrupt        = PS->bIsBankrupt;
+        R.TurnOrderIndex     = PS->TurnOrderIndex;
+        R.ConsecutiveDoubles = PS->ConsecutiveDoubles;
+        R.CurrentRollContext = PS->CurrentRollContext;
+        Save->PlayerRecords.Add(R);
+    }
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::CaptureSaveData — 采集 %d 玩家，阶段=%d，活跃玩家=%d。"),
+        Save->PlayerRecords.Num(), static_cast<int32>(Save->CurrentPhase), Save->CurrentActivePlayerId);
+
+    return Save;
+}
+
+void UPlayerTurnSubsystem::RestoreFromSaveData(const UPlayerTurnSaveData* SaveData)
+{
+    if (!SaveData)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::RestoreFromSaveData — SaveData 为 nullptr，恢复跳过。"));
+        return;
+    }
+
+    // ── 读档恢复第①步（AC-4 回合2 腿）：反序列化全字段，NewObject 重建 PlayerStates ──
+    // 拓扑序：DA→经济/地产/建房/牌堆→【回合2 此处】→骰子 SetSeed→重绑→switch。
+    // 跨系统上游腿（DA/经济/…）由存档21 编排（OoS）；本方法只重建回合2 字段。
+    PlayerStates.Empty();
+    PlayerStates.Reserve(SaveData->PlayerRecords.Num());
+    for (const FPlayerStateRecord& R : SaveData->PlayerRecords)
+    {
+        URentoPlayerState* PS = NewObject<URentoPlayerState>(this);
+        check(PS);
+        PS->PlayerId           = R.PlayerId;
+        PS->DisplayName        = R.DisplayName;
+        PS->TokenColor         = R.TokenColor;
+        PS->bIsAI              = R.bIsAI;
+        PS->AIDifficulty       = R.AIDifficulty;
+        PS->CurrentTileIndex   = R.CurrentTileIndex;
+        PS->Cash               = R.Cash;
+        PS->bIsInJail          = R.bIsInJail;
+        PS->JailTurnsServed    = R.JailTurnsServed;
+        PS->bIsBankrupt        = R.bIsBankrupt;
+        PS->TurnOrderIndex     = R.TurnOrderIndex;
+        PS->ConsecutiveDoubles = R.ConsecutiveDoubles;
+        PS->CurrentRollContext = R.CurrentRollContext;
+        PlayerStates.Add(PS);
+    }
+
+    // ── 直写枚举/标量字段（禁经 SetPhase——SetPhase 广播，下游未重绑→丢失，AC-3/L401）──
+    CurrentPhase          = SaveData->CurrentPhase;
+    CurrentActivePlayerId = SaveData->CurrentActivePlayerId;
+    DoublesJailThreshold  = SaveData->DoublesJailThreshold;
+
+    // 瞬态非序列化字段复位（invocation list 不序列化；bLastRollWasDouble/送监狱标记不入存档）
+    bLastRollWasDouble = false;
+    bSentToJailThisTurnInternal = false;
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::RestoreFromSaveData — 还原 %d 玩家，精确阶段=%d，活跃玩家=%d（静默，未广播）。"),
+        PlayerStates.Num(), static_cast<int32>(CurrentPhase), CurrentActivePlayerId);
+}
+
+void UPlayerTurnSubsystem::ResumeFromLoadedState()
+{
+    // ── 读档恢复第③步（AC-3/4）：字段已 Restore（①）+ 下游已重绑（②），此处才广播 ──
+    // switch(CurrentPhase) 重入：FSM 禁 Latent（ADR-0001），无等待态恢复，各阶段 = 同阶段重广播，
+    // 让重绑监听者同步到精确阶段；玩家/AI 从精确阶段续行。
+    switch (CurrentPhase)
+    {
+    case ETurnPhase::TurnStart:
+    case ETurnPhase::RollPhase:
+    case ETurnPhase::MovePhase:
+    case ETurnPhase::ResolvePhase:
+    case ETurnPhase::PostRollAction:
+    case ETurnPhase::TurnEnd:
+    case ETurnPhase::JailTurn:
+        // 经 SetPhase 同阶段重广播（OldPhase==NewPhase==CurrentPhase，CD 取活跃玩家）
+        SetPhase(CurrentPhase);
+        break;
+    default:
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::ResumeFromLoadedState — 非法 CurrentPhase=%d，无法重入。"),
+            static_cast<int32>(CurrentPhase));
+        break;
+    }
+}
+
+bool UPlayerTurnSubsystem::CanSaveNow() const
+{
+    // AC-6 / ADR-0005 CR-4：定序进行中/未开局禁存；进入首个 TurnStart 后可存。
+    // 定序是 InitializeFromConfig 内同步完成（非持久 Latent 阶段），故外部可查询的"不安全"态
+    // = 首个 TurnStart 尚未启动（CurrentActivePlayerId==-1）。enable-not-own：回合2 报告，存档21 GIVEN。
+    return PlayerStates.Num() >= 2 && CurrentActivePlayerId != INDEX_NONE;
+}

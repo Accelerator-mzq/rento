@@ -72,6 +72,7 @@
 #include "ActionValidatorInterface.h"   // IActionValidator（story-007 AC-6 / AC-42 逐动作可行性重校验 DI 接缝）
 #include "GameStateSnapshot.h"           // FGameStateSnapshot（story-007 AI 只读快照）
 #include "RuleProviderInterfaces.h"      // IOwnershipProvider/IBuildingProvider/IEconomyResolver（story-007 簇C1 规则接缝）
+#include "PlayerTurnSaveData.h"          // UPlayerTurnSaveData + FPlayerStateRecord（story-008 序列化容器）
 #include "PlayerTurnSubsystem.generated.h"
 
 // 前向声明：DiceRngService（防循环 include，仅在 .cpp 完整 include）
@@ -848,6 +849,59 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category="PlayerTurn|StateMachine")
     int32 GetCurrentActivePlayerId() const;
+
+    // =========================================================================
+    // pt-008：读档序列化 round-trip + delegate 重绑拓扑序 + 可存档点查询
+    // =========================================================================
+
+    /**
+     * 采集当前回合2 切片到新 UPlayerTurnSaveData（AC-1/2，const 不改状态）。
+     *
+     * 装 PlayerStates 全字段（FPlayerStateRecord 值记录，DV-1）+ CurrentPhase
+     * + CurrentActivePlayerId + DoublesJailThreshold。roll-context per-player 进记录（DV-2）。
+     * NewObject 于 GetTransientPackage()，调用方负责防 GC（测试 AddToRoot/RemoveFromRoot）。
+     *
+     * @return 装配完的存档对象（含全部回合2 序列化字段）
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|Save")
+    UPlayerTurnSaveData* CaptureSaveData() const;
+
+    /**
+     * 从存档对象重建回合2 状态（AC-3/4，读档恢复第①②步：反序列化字段，静默）。
+     *
+     * 拓扑序回合2 腿：NewObject 重建 PlayerStates 全字段 → 直写 CurrentPhase/
+     * CurrentActivePlayerId/DoublesJailThreshold。**直写枚举字段，绝不经 SetPhase**
+     * （SetPhase 会广播 OnPhaseChanged，此时下游未重绑→广播丢失，GDD L401 / AC-3 hazard）。
+     * 广播留给 ResumeFromLoadedState（第③步）。瞬态非序列化字段（bLastRollWasDouble 等）复位。
+     *
+     * @param SaveData 读档反序列化得到的存档对象（nullptr → UE_LOG Error + return）
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|Save")
+    void RestoreFromSaveData(const UPlayerTurnSaveData* SaveData);
+
+    /**
+     * 读档恢复第③步：switch(CurrentPhase) 重入 + 广播（AC-3/4）。
+     *
+     * 前置：RestoreFromSaveData 已写回字段（①）+ 下游已重绑 delegate（②，存档21 发
+     * OnGameLoaded 后呈现层各自 Unbind→Bind）。此处才广播——让重绑监听者同步到精确阶段。
+     * FSM 禁 Latent（ADR-0001），无等待态需恢复，switch 各阶段 = 经 SetPhase 同阶段重广播；
+     * 玩家/AI 从精确阶段续行（如 PostRollAction 续发 EndTurn）。
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|Save")
+    void ResumeFromLoadedState();
+
+    /**
+     * 可存档点查询（AC-6 / ADR-0005 CR-4 / IG#8，签名冻结，enable-not-own）。
+     *
+     * 回合2 自定义"合法可存档点"，存档21 以此为 GIVEN（本系统不自裁，存档21 不复制阶段语义）。
+     * 规则（GDD Edge L399）：开局定序进行中（瞬态）禁存；进入首个 TurnStart 后可存。
+     * 定序是 InitializeFromConfig 内同步完成（非持久 Latent 阶段，ADR-0001），故外部可查询的
+     * "不安全"态 = 首个 TurnStart 尚未启动（CurrentActivePlayerId==-1）；StartTurn 设其后方合法。
+     *
+     * @return true = 合法可存档点（已开局 + 首回合已启动）；false = 定序进行中/未开局
+     */
+    UFUNCTION(BlueprintCallable, Category="PlayerTurn|Save")
+    bool CanSaveNow() const;
 
     // =========================================================================
     // OnPhaseChanged 事件（最小 seam，pt-002；story-004 在此 enrich）

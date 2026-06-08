@@ -1,6 +1,6 @@
 ---
 Epic: player-turn
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: L
@@ -78,3 +78,25 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（PlayerState 11 字段）、story-002（状态机 `switch(CurrentPhase)` 重入 + 禁 Latent）、story-004（各事件 delegate 重绑）、story-006（`FDiceRollResult` 完整序列化）。
 - **Unlocks**: save-load epic（消费本系统被序列化字段 + 可存档点查询 + 读档重建拓扑序契约）。
+
+---
+
+## Completion Notes（2026-06-08，mode-A workflow wf_8896c638-fa2 + 主会话独立复跑）
+
+**Status: Complete。6/6 AC 覆盖（TC1-6 全绿）。全量 237/237 Success, 0 Fail, 0 notRun, EXIT 0**
+（基线 231 + 6，零回归；主会话独立全证 `Saved/TestReport_pt008_revert` 2026.06.08-06.14.20）。
+
+### 交付（4 文件改 + 2 新建）
+- **新建 `Source/rento/PlayerTurnSaveData.h`**：`FPlayerStateRecord`（GDD CR-1 全 11 字段 + ConsecutiveDoubles + per-player CurrentRollContext 共 13 字段值记录）+ `UPlayerTurnSaveData`（`USaveGame` 子类：PlayerRecords/CurrentPhase/CurrentActivePlayerId/DoublesJailThreshold）。全字段标 `UPROPERTY(SaveGame)`。
+- **`Source/rento/PlayerTurnTypes.h`**：尾部追加 20 条 `static_assert`（ETurnPhase 7 值 0..6 + EPlayerColor 0..8 + EAIDifficulty 0..3 整数索引钉死）= AC-5 append-only **编译期 BLOCKING 门**。
+- **`Source/rento/PlayerTurnSubsystem.h/.cpp`**：`CaptureSaveData`（const 采集）/ `RestoreFromSaveData`（拓扑序回合2 腿：NewObject 重建 PlayerStates 全字段 + **直写 CurrentPhase 不经 SetPhase**，静默）/ `ResumeFromLoadedState`（第③步 switch(CurrentPhase) 重广播）/ `CanSaveNow`（AC-6 可存档点查询，签名冻结）。
+- **新建测试 `Source/rentoTests/Private/SaveSerializationDelegateRebindTest.cpp`**：6 TC（round-trip / 11 字段 / 重绑静默 / 拓扑序 / 枚举 / 可存档点）。
+
+### 关键裁定与机制
+- **🔴 G7 引擎实证（亲读 UE5.7 源码坐实，证伪 ADR-0005）**：内置 `SaveGameToMemory`/`SaveGameToSlot` **不按 `UPROPERTY(SaveGame)` 过滤**（全量序列化）——`GameplayStatics.cpp:2371` 无 ArIsSaveGame=true / `Archive.h:620` Epic 注释 "not true for any of the built in save methods" / `Property.cpp:1034`。**ADR-0005 §VR② + control-manifest "SaveGameToSlot 自动过滤 SaveGame 标记属性" = 假**。用户裁定方案A：round-trip 走 `SaveGameToMemory`/`LoadGameFromMemory`（in-memory 无磁盘产物），只断言 round-trip 恒等，字段仍标 SaveGame（产品路径对齐）。
+- **AC-3 hazard 守卫（GDD L401）**：`RestoreFromSaveData` 直写 `CurrentPhase=` **不经 SetPhase**（SetPhase 会广播，restore 期下游未重绑→广播丢失）；广播只在 `ResumeFromLoadedState`。TC-3 变异坐实非 vacuous（改成 SetPhase → TC-3「restore 静默」精确 FAIL，TC-4 亦 FAIL，主会话独立复跑确认 `Saved/TestReport_pt008_mutation`）。
+- **设计偏离登记**：DV-1 `URentoPlayerState` 是 UObject（story-001 选）→ 序列化用 `FPlayerStateRecord` 值记录绕开 UObject 指针；DV-2 roll-context holder per-player（story-005/006）→ `FDiceRollResult` 进每条记录（非 ADR 设想的回合2 单顶层）。信息等价。
+
+### Follow-up（producer propagate，非 BLOCKING）
+- **OQ-Save propagate**：ADR-0005 §Verification-Required② + control-manifest "SaveGameToSlot 自动过滤 SaveGame 标记属性" 经引擎源码实证为**假**（内置 save 不过滤）→ producer 更新 ADR-0005/control-manifest 措辞（不在本 story 范围内改 ADR 正文）。
+- **save-load epic 集成债**：跨系统读档拓扑序 DA→经济/地产/建房/牌堆→回合2→骰子 SetSeed→重绑→switch 的**上游腿**（DA/经济/…）由存档21 编排；本 story 提供回合2 腿 + Capture/Restore/Resume/CanSaveNow 契约 + 读档重建时序。完整跨系统集成测试归 save-load epic。
