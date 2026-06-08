@@ -154,7 +154,7 @@
 |---|---|---|---|
 | `house_count` | int32 | [0,32] 经典 | **全盘累计普通房数**=建房8 `GetTotalHouseCount`(档1-4,酒店折档5不计;≠economy F-2 单地产 [0,5] 口径,接口已区分,OQ-Event-3 ✅ RESOLVED → registry `total_house_count`) |
 | `hotel_count` | int32 | [0,8] 经典 | 全盘酒店数=建房8 `GetTotalHotelCount`(档5;registry `total_hotel_count`) |
-| `per_house_fee`/`per_hotel_fee` | int32 | ≥0(牌面数据) | 典型 25/100(⚠prov,owner 待 producer 裁定 → 棋盘1/事件牌 CardData DA,*非*建房8;见 OQ-Event-3 注 / Tuning) |
+| `per_house_fee`/`per_hotel_fee` | int32 | ≥0(牌面数据) | 典型 25/100(owner=**事件牌 CardData DA**,✅ 2026-06-08 producer 裁定;*非*建房8〔F-7 不拥有数值真值〕;见 Tuning) |
 
 **Output Range**: [0, 经典上界 32×25+8×100=1600],int32 安全。无房无酒店→0(合法退化)。⚠ **上界 1600 > 起始现金 1500(快速档 750)**——RepairFee 作 sink 的量级/触发频率(全盘建房密度高时对建房激进者惩罚重、形成隐性翻盘)须经经济平衡 pass 评估翻盘效果是否符合意图(economy finding-5,并入 OQ-Event-3)。
 **Example**: 3房1酒店,25/100 → 3×25+1×100=175 → `Debit(self,175)`。
@@ -180,7 +180,7 @@
 
 **不变式**: `JailTurnsServed∈[0,2]`(用 `≥` 守门防越级到3);任何出狱路径(卡/保释/双点/强制)后 `bIsInJail=false`。
 
-> **新常量(Phase 5 注册 registry)**: `JAIL_BAIL_AMOUNT=50`(**source=事件格7**,非经济5——监狱规则参数;经济只执行 Debit,平衡合理性是经济 Advisory)、`MAX_JAIL_TURNS=3`、`CHANCE_DECK_SIZE`/`CHEST_DECK_SIZE=16`、`per_house_fee`/`per_hotel_fee`(provisional,**owner 待 producer 裁定**)。⚠ **owner 真空(logged_decision propagate 债,非 BLOCKING)**:RepairFee *单价* 25/100 现仅作散文典型值,**无任一档声明为权威真值**——建房(8) F-7 仅供聚合接口、明确不拥有数值真值(building-upgrade「本系统不拥有数值真值」);故非"待8"可闭。建议归**棋盘1 / 事件牌 CardData DA**(费率属牌面数据,非建筑成本),producer 裁定 owner 后 registry 去 provisional。数值不冲突,仅 owner 悬置。
+> **新常量(Phase 5 注册 registry)**: `JAIL_BAIL_AMOUNT=50`(**source=事件格7**,非经济5——监狱规则参数;经济只执行 Debit,平衡合理性是经济 Advisory)、`MAX_JAIL_TURNS=3`、`CHANCE_DECK_SIZE`/`CHEST_DECK_SIZE=16`、`per_house_fee`/`per_hotel_fee`(owner=**事件牌 CardData DA**,✅ 2026-06-08 producer 裁定)。✅ **RESOLVED(2026-06-08)**:RepairFee 单价 25/100 owner=事件牌 CardData DA(费率属牌面数据,非建筑成本;建房8 F-7 不拥有数值真值);registry 去 provisional,25/100 为 CardData DA 权威真值。
 
 ## Edge Cases
 
@@ -242,8 +242,8 @@
 > **⚠ 须 producer propagate 核实的接缝(本 GDD 新引入,登记 Open Questions)**:
 > - **监狱态所有权 vs player-turn(OQ-Event-1 ✅ RESOLVED 2026-06-03)**:已核实 player-turn(已 Approved L84/L85/L200)**持监狱态字段 `bIsInJail`/`JailTurnsServed` + 据7裁决机械计数**;本档已对齐为"字段存 player-turn、7 拥规则 + 经受控写改 `bIsInJail`"(CR-7)。**残留低成本 propagate(producer)**:player-turn 须为监狱态显式命名受控写接口(现 L89 仅举 `SetPosition` 例)。
 > - **多债权人破产(OQ-Event-4 ✅ 收口,非 propagate 债)**:逐笔执行使每笔触发破产时债权人单一(economy F-11 路径清晰);不对称清算是经典忠实、非零和违反(见 F-1 / Edge Cases)。无须 economy/破产9 propagate。
-> - **新 registry 常量(OQ-Event-5 ✅ 已注册)**:`JAIL_BAIL_AMOUNT=50`(source=7)/`MAX_JAIL_TURNS=3`/牌堆 size/收付公式 已于 authoring Phase 5b 注册;`per_house_fee`/`per_hotel_fee` owner **待 producer 裁定(prov)**——非"待8":建房(8) F-7 不拥有数值真值,建议归棋盘1/事件牌 CardData DA(见下 propagate)。
-> - **残留 propagate**:① OQ-Event-1 的 player-turn 受控写接口命名(低成本,producer)。② **RepairFee 单价 `per_house_fee`/`per_hotel_fee` owner 真空(logged_decision,非 BLOCKING)**:25/100 仅散文典型值,无 owner 档声明权威真值(建房8 F-7 不拥有数值真值);producer 裁定归棋盘1/事件牌 CardData DA 后 registry 去 provisional。数值不冲突、仅 owner 悬置。
+> - **新 registry 常量(OQ-Event-5 ✅ 已注册)**:`JAIL_BAIL_AMOUNT=50`(source=7)/`MAX_JAIL_TURNS=3`/牌堆 size/收付公式 已于 authoring Phase 5b 注册;`per_house_fee`/`per_hotel_fee` owner **✅ RESOLVED(2026-06-08 producer 裁定=事件牌 CardData DA)**——非"待8":建房(8) F-7 不拥有数值真值;费率属牌面数据(经典 Street/General Repairs 卡费率印在牌上),归事件格(7) CardData DA。
+> - **残留 propagate**:① OQ-Event-1 的 player-turn 受控写接口命名(低成本,producer)。② **RepairFee 单价 `per_house_fee`/`per_hotel_fee` owner ✅ RESOLVED(2026-06-08)**:producer 裁定 owner=**事件牌 CardData DA**(费率属牌面数据,非建筑成本;建房8 F-7 不拥有数值真值);registry 去 provisional。25/100 为 CardData DA 权威真值。
 
 ## Tuning Knobs
 
@@ -253,7 +253,7 @@
 | `MAX_JAIL_TURNS` | 最长服刑回合 | 默认 **3**;[1,5] | 过高→困狱拖沓(伤支柱④);=1→监狱几无威慑 | **事件格(7)** |
 | `CHANCE_DECK_SIZE` / `CHEST_DECK_SIZE` | 各牌堆张数 | 默认 **16**;[8,24] | 过小→同张牌频繁复现、惊喜衰减;过大→牌效果稀释、记忆点弱 | **事件格(7)**(牌内容归棋盘1 CardData) |
 | 牌组 faucet:sink 构成 | `BankCredit` vs `BankDebit` 张数/金额比 | 经典约 **2~2.5:1**(起草期建议,**待经济平衡 pass 校验**) | faucet 过多→通胀冲刺、绕圈碰牌优于投资;过少→现金枯竭加速淘汰(伤支柱②/④) | **数据/平衡 pass**(CardData,非本 GDD 焊死) |
-| `per_house_fee` / `per_hotel_fee` ⚠prov | RepairFee 牌单价 | 典型 **25 / 100** | 过高→建房惩罚劝退建设;过低→无意义 | **棋盘1 / 事件牌 CardData DA(owner 待 producer 裁定)** —— *非*建房8(F-7 不拥有数值真值);25/100 仅典型值,logged_decision propagate 债 |
+| `per_house_fee` / `per_hotel_fee` | RepairFee 牌单价 | 典型 **25 / 100** | 过高→建房惩罚劝退建设;过低→无意义 | **事件牌 CardData DA(✅ 2026-06-08 producer 裁定)** —— *非*建房8(F-7 不拥有数值真值);费率属牌面数据,25/100 为 CardData DA 权威真值 |
 
 > **不在本系统的旋钮(指向真值源,不重复定义)**:
 > - 税额 `TaxAmount`(所得税 200 / 奢侈税 100)→ 棋盘(1)字段 / 经济(5) F-7 平衡。
@@ -369,7 +369,7 @@
 ### L. 确定性 / 接口稳定性
 - **AC-59** [Logic] `IsInJail(playerId)` 标 `UFUNCTION(BlueprintCallable)` ∧ bIsInJail==true→true / false→false ∧ 编译通过。
 - **AC-60** [Logic] F-3 整数纯净:house=3,hotel=1,25/100 → 两次冷启动/跨 Debug-Shipping 位级一致 ==175(无 float,对齐 economy AC-32)。
-- **AC-61** [Advisory·smoke] Config/Data smoke:`JAIL_BAIL_AMOUNT=50`/`MAX_JAIL_TURNS=3`/`CHANCE_DECK_SIZE=16`/`CHEST_DECK_SIZE=16` 从数据源正确加载、非硬编码;`per_house_fee`/`per_hotel_fee` 从 CardData 加载(prov)。
+- **AC-61** [Advisory·smoke] Config/Data smoke:`JAIL_BAIL_AMOUNT=50`/`MAX_JAIL_TURNS=3`/`CHANCE_DECK_SIZE=16`/`CHEST_DECK_SIZE=16` 从数据源正确加载、非硬编码;`per_house_fee`/`per_hotel_fee` 从事件牌 CardData DA 加载(owner ✅ 2026-06-08 裁定=CardData DA)。
 
 ### M. 非法决策降级 + 序列化(承接 player-turn CR-8#4/AC-39b;B-12 / R-9)
 - **AC-62** [Logic] DecideJailAction 非法 PayBail 降级:GIVEN bIsInJail=true ∧ mock Cash<JAIL_BAIL_AMOUNT,WHEN DecideJailAction 返回 PayBail,THEN 不执行 Debit ∧ 7 裁定留狱(player-turn 计 JailTurnsServed+1)∧ 经受控写 bIsInJail 仍 true ∧ dev `ensure`+log(Development build 捕获)。(承接 player-turn CR-8#4/AC-39b,B-12。)
@@ -388,6 +388,6 @@
 | **OQ-Event-2 ✅ CLOSED** | 所得税 MVP flat 200 已由 **economy F-7 锁定**(已 Approved);"净资产% vs 固定二选一"变体归 **economy OQ-Econ-7(Alpha)**,非本档开放项(消假性不确定,economy finding-6) | ✅ 已闭合(并入 economy F-7/OQ-Econ-7) |
 | **OQ-Event-3 ✅ RESOLVED**(2026-06-04) | `RepairFee` 的全盘 `house_count`/`hotel_count` 接口已由建房(8) F-7 提供具名 `GetTotalHouseCount`/`GetTotalHotelCount`,与 economy F-2 单地产 [0,5] 口径明确区分(registry total_house_count/total_hotel_count);本轮 `/consistency-check` 揪出名称重载并关闭。RepairFee 条件门 AC(21/32/33/34)据其自述升回 [Logic] | ✅ 建房(8) F-7 已落 |
 | **OQ-Event-4 ✅ 降为说明性 note(非 propagate 债)** | `PayToEach` 逐笔执行使每笔触发破产时债权人单一(economy F-11 路径清晰);"先收款者得 amount、触发破产者继承债务人剩余资产"的不对称是经典忠实、**非零和违反、非 F-11 缺口**(见 F-1 零和澄清 / Edge Cases)。**无须 economy/破产9 propagate**;AI(10) 估值须知此性质 | ✅ 收口(说明性) |
-| **OQ-Event-5 ✅ RESOLVED** | 新常量已注册 registry(authoring Phase 5b):`JAIL_BAIL_AMOUNT=50`(source=7)、`MAX_JAIL_TURNS=3`、`CHANCE_DECK_SIZE`/`CHEST_DECK_SIZE=16` + 公式 `collect/pay_to_each_total`;`per_house_fee`/`per_hotel_fee` 待建房8(prov) | ✅ 已注册 |
+| **OQ-Event-5 ✅ RESOLVED** | 新常量已注册 registry(authoring Phase 5b):`JAIL_BAIL_AMOUNT=50`(source=7)、`MAX_JAIL_TURNS=3`、`CHANCE_DECK_SIZE`/`CHEST_DECK_SIZE=16` + 公式 `collect/pay_to_each_total`;`per_house_fee`/`per_hotel_fee` owner=事件牌 CardData DA(✅ 2026-06-08 裁定,*非*建房8) | ✅ 已注册 |
 | **OQ-Event-7 ⚠ ADR(R2 新增,engine)** | UE 实现层,待生命周期/引擎 ADR:① 程间非重入机制(deferred 队列 vs `bIsResolvingTileEvent` 守门,unreal Issue-1);② 牌堆宿主 UObject 型(`UGameInstanceSubsystem` vs `UWorldSubsystem`,与 player-turn PlayerState 的读写接缝,unreal Issue-4);③ Fisher-Yates 洗牌 + `FRandomStream` 种子序列化细节(unreal Issue-5);④ `ECardEffectType` 10 类 dispatch 归 C++(BP 大 switch 保守性,unreal Issue-6)。容器 model B / enum uint8 已在正文焊死,此 OQ 仅留实现细节 | 下游实现/`/architecture-decision` |
 | **OQ-Event-6 ⚠Rento核查** | 监狱出狱规则(保释 50 / 3 回合 / 双点免费出狱)是经典大富翁;本作 Rento 复刻,须对照 Rento Fortune 实测(类 OQ-Prop-5) | MVP 设计冻结前核查 |

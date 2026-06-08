@@ -404,7 +404,7 @@ PostRollAction：
 
 #### 已知跨档接缝（架构期需裁定，不阻 MVP 开工）
 
-1. **破产事件接缝 OQ-VFX-13 / OQ-Audio-2**：`OnBankruptcyDeclared`（经济5，2字段）vs `OnPlayerBankrupt`（破产9，3字段）并存。**当前一致裁定**：HUD16 / VFX19 / Audio22 **全订经济5 `OnBankruptcyDeclared`**（与已 Approved 姊妹档对齐）；`OnPlayerBankrupt` 供需 reason/creditor 的出局 juice。这是**待 ADR-0003 收口的双事件源**——ADR 须明确各事件职责切分（现金完成 vs 编排完成），避免误订双发。
+1. **破产事件接缝 OQ-VFX-13 / OQ-Audio-2 ✅ RESOLVED（2026-06-08，ADR-0003 §3 收口）**：`OnBankruptcyDeclared`（经济5，2字段）vs `OnPlayerBankrupt`（破产9，3字段）并存。**producer 裁定**：HUD16 / VFX19 / Audio22 **统一订经济5 `OnBankruptcyDeclared`**（现金侧时机=破产 juice/音效语义锚点；与已 Approved 姊妹档对齐）；破产9 `OnPlayerBankrupt` 不被呈现层订阅（防误订双发）。职责切分=现金完成（呈现层订）vs 编排完成（不订）。
 2. **掷骰意图事件来源 OQ-VFX-16**：「点击掷骰后」的意图事件 owner 待定（骰子3 / 回合2），MVP fallback `OnPhaseChanged(RollPhase)` 已具名。
 3. **`OnOwnershipChanged` 复用为破产清算事件源**：破产逐格易主**不引入新事件**，复用所有权6 的逐格 `OnOwnershipChanged`；同帧级联多格须节流（`T_sfx_min_retrigger=0.06`）防爆音/爆 juice。
 
@@ -902,10 +902,10 @@ Sprint 1+（相关系统建前，依赖 Foundation）
 
 | OQ | 内容 | 状态 |
 |----|------|------|
-| **OQ-VFX-13** | 破产事件接缝 reconcile across bankruptcy9/economy5/HUD16/VFX19/audio22（当前一致裁定订经济5 `OnBankruptcyDeclared`，与已 Approved 姊妹档一致；producer 改订时同步全消费方） | 外置 producer 债，不阻开工 |
-| **OQ-VFX-7** | #2/#6/#1 depended-on-by 应含 #19 + line 83 回链 AC 补全 | pending（VFX19 R-8 Approved 后留） |
-| **OQ-Audio-2** | 各 owner GDD「事件供 UI/VFX 订阅」措辞平行补「音频(22)」消费方 + `PlayUISound` 在 UI 屏 GDD 登记被调义务 | pending |
-| **RepairFee 单价 owner 真空（OQ-Event-5）** | `per_house_fee`/`per_hotel_fee`（RepairFee 单价）尚未落 owner 档——未归入任何模块 Owns，待 producer 裁定归棋盘1/CardData DA | 真空，待 producer 裁定 |
+| **OQ-VFX-13** | 破产事件接缝 reconcile across bankruptcy9/economy5/HUD16/VFX19/audio22 | ✅ **RESOLVED 2026-06-08**（producer 裁定=呈现层统一订经济5 `OnBankruptcyDeclared`，破产9 `OnPlayerBankrupt` 不被呈现层订阅防双发；ADR-0003 §3 收口） |
+| **OQ-VFX-7** | #2/#6/#1 depended-on-by 应含 #19 + 回链 AC 补全 | ✅ **RESOLVED 2026-06-08**（fresh-grep 实证已兑现：board/player-turn/property 下游表均含 VFX(19) 行；继承义务表 VFX(19) 回链 AC=AC-55/56/CR-4，vfx R-8 Approved；原 line 83/pending 为 stale） |
+| **OQ-Audio-2** | 各 owner GDD 措辞补「音频(22)」消费方 + `PlayUISound` 在 UI 屏 GDD 登记被调义务 + 破产接缝 | ① ✅ **RESOLVED 2026-06-08**（owner GDD 已含音频22，fresh-grep 核实）② ⏸ **DEFERRED**（PlayUISound→UI 屏 GDD #16/#20/#23 多 Not Started，待撰写时落实）③ ✅ **RESOLVED**（=OQ-VFX-13 订经济5） |
+| **RepairFee 单价 owner（OQ-Event-5）** | `per_house_fee`/`per_hotel_fee`（RepairFee 单价 25/100）owner 归属 | ✅ **RESOLVED 2026-06-08**（producer 裁定 owner=**事件牌 CardData DA**，费率属牌面数据非建筑成本；*非*建房8〔F-7 不拥有数值真值〕；tile-events registry 去 provisional） |
 | **ADR-0007 AC 升格 propagate 债** | ADR-0007（2026-06-06 Accepted）裁定 AI 决策/RNG/经济/状态机落 C++ + 权威模块「无 BP 类」目录级断言 + C++ grep 禁全局 RNG 硬门。下游后果：hud（AC-47/AC-36c）、ai-opponent（AC-44）、property-card-ui（相关 RNG/绑定软约束 AC）中**逻辑已落 C++ 的部分**可由「BP 软约束 [Advisory·code-review]」升格为「C++ 硬门 [Logic]」（`static_assert`/`constexpr`/grep 兑现）；仍在 BP 的纯呈现部分维持 [Advisory]。**本次仅登记，不改三档 GDD**——升格落档归 producer，留 `/architecture-review` 阶段处理（执行时须对各档 fresh-grep 全集核对，旧行号仅作线索） | 登记，留 /architecture-review |
 
 ---

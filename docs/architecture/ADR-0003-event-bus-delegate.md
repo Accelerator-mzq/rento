@@ -54,7 +54,7 @@ msc（用户）+ Technical Director（起草）— 2026-06-06 Accepted
 
 1. **拓扑**：是引入一个集中式 Event Bus 注册表对象（所有事件经它中转）还是各 owner 系统直接持有自己的 multicast delegate（呈现层直接订阅 owner）？这决定耦合方向、可测性、读档重绑的复杂度。
 2. **规范**：12+ 事件的宏类型、payload 容器、命名、方向语义若不统一，会出现双触发（同一语义两个事件源）、payload 裸 `TArray` 编译失败、消费方各自臆测方向等问题。
-3. **破产双事件源收口**：`OnBankruptcyDeclared`（经济5）与 `OnPlayerBankrupt`（破产9）并存，下游若误订双发会导致破产 juice/音效播两次。这是 OQ-VFX-13 / OQ-Audio-2 登记的待裁接缝。
+3. **破产双事件源收口（✅ RESOLVED 2026-06-08 producer 裁定）**：`OnBankruptcyDeclared`（经济5，2 字段，现金侧时机）与 `OnPlayerBankrupt`（破产9，3 字段，全4步清算末）并存，下游若误订双发会导致破产 juice/音效播两次。**裁定：呈现层（VFX19/HUD16/audio22）统一订经济5 `OnBankruptcyDeclared`**（现金侧触发=破产 juice/音效语义锚点；放弃 reason 字段，现金侧 juice 不需要）；破产9 `OnPlayerBankrupt` 不被呈现层订阅（避免双发）。OQ-VFX-13 / OQ-Audio-2③ 据此闭合。
 
 **不决定的代价**：呈现层 story 无法开工（不知订哪个事件、订几次）；读档重绑无统一纪律会留野指针（EC-8 双订阅）；破产双发是已知 bug 温床。
 
@@ -310,7 +310,7 @@ void RebindPresentationDelegates(/* owner refs */);  // 由宿主 Initialize / O
 | `design/gdd/player-turn.md` | 回合2 | `OnPhaseChanged`/`OnTurnStarted`/`OnTurnEnded`/`OnTurnOrderResolved`/`OnGameWon`/`OnAIActionExecuted` | `OnTurnOrderResolved` 须 USTRUCT（裸 TArray 编译失败）；OnGameWon/OnAIActionExecuted 单一事件源裁定 |
 | `docs/architecture/architecture.md` | Foundation ②Event Bus | 「非全局 event aggregator，delegate 归各 owner 持有」 | 本 ADR 正式化为去中心化拓扑 + 纪律层定位，与总纲 D.2 一致 |
 
-> 同时覆盖架构总纲 §8 列入 ADR-0003 的待裁项：OQ-VFX-13（破产双事件源，方案1 收口）、OQ-VFX-16 / OQ-Audio-2（掷骰意图，登记 fallback）、`OnAIActionExecuted` 广播者归属（回合2）。Event 域 33 TR 经本 ADR + D.2 事件表背书。
+> 同时覆盖架构总纲 §8 列入 ADR-0003 的待裁项：OQ-VFX-13（破产双事件源，**✅ RESOLVED 2026-06-08=呈现层统一订经济5 `OnBankruptcyDeclared`，见 §3**）、OQ-VFX-16 / OQ-Audio-2（掷骰意图，登记 fallback）、`OnAIActionExecuted` 广播者归属（回合2）。Event 域 33 TR 经本 ADR + D.2 事件表背书。
 
 ## Related
 

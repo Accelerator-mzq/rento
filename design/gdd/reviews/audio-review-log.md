@@ -24,7 +24,7 @@ Blocking items(verified): **0** | Deflated: 1(幻象枚举机制) | Logged decis
 
 ### Followups(不阻开工)
 - **OQ-Audio-1**:动态音乐分层 / 自适应配乐 / 动态 ducking / 3D 空间化音源全降 Alpha(MVP 只做核心循环 SFX + 1–2 条 BGM + 三路混音总线 + BGM duck 音量阶跃简化)。
-- **OQ-Audio-2**(propagate 债,producer `/propagate-design-change`):① 各 owner GDD(骰子3/回合2/移动4/经济5/地产6/建房8)「事件供 UI/VFX 订阅」措辞平行补「音频(22)」为消费方之一(VFX19 已在 systems-index 继承义务表 line 86 登记,#22 平行补登);② `PlayUISound(EUISoundId)` 接口需在 UI 屏 GDD(#16 HUD / #20 主菜单 / #23 设置,多数 Not Started)登记被调义务,待下游 UI GDD 撰写时落实;③ 破产事件接缝 OQ-VFX-13(`OnBankruptcyDeclared` 经济5 2 字段 vs `OnPlayerBankrupt` 破产9 3 字段)——#22 与 VFX19/HUD16 作同样选择(订经济5)维持一致([[10px-floor-consistent-with-approved-sibling]]);producer 裁定改订 `OnPlayerBankrupt` 时 #22 随同步改订。
+- **OQ-Audio-2**(propagate 债,producer):**① ✅ RESOLVED 2026-06-08**——各 owner GDD 已含音频(22)消费方(economy L117/118、property L24、building L224、player-turn L268;dice 经 systems-index 脚注♫;fresh-grep 核实已兑现);**② ⏸ DEFERRED**——`PlayUISound(EUISoundId)` 在 UI 屏 GDD(#16/#20/#23 多 Not Started)登记被调义务,待下游 UI 屏 GDD 撰写时落实(阻塞,无法提前);**③ ✅ RESOLVED 2026-06-08**——破产事件接缝 OQ-VFX-13 producer 裁定=呈现层统一订经济5 `OnBankruptcyDeclared`(ADR-0003 §3);#22 与 VFX19/HUD16 一致,破产9 `OnPlayerBankrupt` 不被呈现层订阅(防双发)。
 - **Flags**:📌 Asset-Spec(art-bible approved 后 `/asset-spec system:audio` 生成逐资产音效 WAV 48kHz/16bit spec);非 UI 屏,无 UX-spec flag(音量设置 UI 复用 #23 设置屏/主菜单,本系统只供混音总线参数语义)。
 
 ### Convergence signal

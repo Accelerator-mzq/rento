@@ -225,8 +225,8 @@ bgm_target_gain(state) =
 > **双向一致性核验**：
 > ① **事件格(7)** L109/L112 已显式列「音频(22)」为 `OnCardDrawn`/`OnTileEventResolved`/`OnPlayerJailed`/`OnPlayerReleased` 订阅方——上游已声明，本 GDD 对齐，无反向缺口。
 > ② **骰子3/回合2/移动4/经济5/地产6/建房8** 的事件已由 **VFX19（Approved）+ HUD16（Approved）** 作为消费方在各 owner GDD 登记（systems-index 继承义务表 line 86/87）；#22 复用同一组 owner 事件、**各订各播**（声画分离），不新增 owner 侧字段需求 → **无新 propagate 债**（与 VFX19 「双向一致性·已存在无需新 propagate」同理）。
-> ③ **新增 propagate 债（producer，不阻开工）= OQ-Audio-2**：各 owner GDD 的「事件供 UI/VFX 订阅」措辞应补「音频(22)」为消费方之一（VFX19 已在 line 86 登记，#22 平行补登）；以及 `PlayUISound` 接口需在 UI 屏 GDD（#16/#20/#23，多数 Not Started）登记被调义务——待下游 UI GDD 撰写时落实。
-> ④ **破产事件接缝继承**：`OnBankruptcyDeclared`（经济5，2 字段）vs `OnPlayerBankrupt`（破产9，3 字段）的 OQ-VFX-13 跨档接缝——#22 与 **VFX19 / HUD16（均订经济5 `OnBankruptcyDeclared`）作同样选择**（订经济5），维持一致（[[10px-floor-consistent-with-approved-sibling]]）；若 producer 裁定改订 `OnPlayerBankrupt`，#22 随 OQ-VFX-13 同步改订（登记 OQ-Audio-2）。
+> ③ **propagate 债 = OQ-Audio-2（producer）**：① ✅ **RESOLVED 2026-06-08**：各 owner GDD「事件供 UI/VFX 订阅」措辞已含「音频(22)」消费方（economy/property/building/player-turn，fresh-grep 核实）；② ⏸ **DEFERRED（阻塞）**：`PlayUISound` 接口需在 UI 屏 GDD（#16/#20/#23 多数 Not Started）登记被调义务——待下游 UI 屏 GDD 撰写时落实，无法提前。
+> ④ **破产事件接缝继承（✅ RESOLVED 2026-06-08 producer 裁定）**：`OnBankruptcyDeclared`（经济5，2 字段）vs `OnPlayerBankrupt`（破产9，3 字段）的 OQ-VFX-13 跨档接缝——**producer 裁定呈现层统一订经济5 `OnBankruptcyDeclared`**（ADR-0003 §3 收口）；#22 与 VFX19 / HUD16 一致订经济5，维持一致（[[10px-floor-consistent-with-approved-sibling]]）。破产9 `OnPlayerBankrupt` 不被呈现层订阅（防双发）。
 
 ---
 
@@ -300,7 +300,7 @@ bgm_target_gain(state) =
 > 均为 Alpha / 架构期 / Pre-Production 标定，**不阻 MVP 开工**。
 
 - **OQ-Audio-1（Alpha）动态音乐 / 自适应配乐 / 真 ducking**：BGM 按局势紧张度分层切换、按回合阶段切段、sidechain 实时 ducking（关键 SFX 压 BGM 包络）。MVP 用简单 crossfade + 阶跃 duck（CR-12/CR-13/F-4）。Alpha 评估 MetaSound 动态参数 / Quartz 节拍同步。
-- **OQ-Audio-2（producer，跨档 propagate，不阻）**：① 各 owner GDD（骰子3/回合2/移动4/经济5/地产6/建房8）「事件供 UI/VFX 订阅」措辞补「音频(22)」为消费方（VFX19 已 line 86 登记，#22 平行补）；② `PlayUISound` 被调义务登记到 UI 屏 GDD（#16/#20/#23，多 Not Started）；③ 破产事件接缝 OQ-VFX-13 裁定后 #22 随 VFX19/HUD16 同步订阅源。
+- **OQ-Audio-2（producer，跨档 propagate）**：① **✅ RESOLVED 2026-06-08**：各 owner GDD（骰子3/回合2/移动4/经济5/地产6/建房8）「事件供 UI/VFX 订阅」措辞已补「音频(22)」为消费方（与 VFX19 平行）；② **⏸ DEFERRED（阻塞）**：`PlayUISound` 被调义务登记到 UI 屏 GDD（#16/#20/#23 多 Not Started）——待下游 UI 屏 GDD 撰写时落实，无法提前登记；③ **✅ RESOLVED 2026-06-08**：破产事件接缝 OQ-VFX-13 裁定=呈现层统一订经济5 `OnBankruptcyDeclared`（ADR-0003 §3），#22 随 VFX19/HUD16 一致。
 - **OQ-Audio-3（Alpha / Pre-Production）按金额缩放音频反馈**：`OnRentPaid.Amount` / `OnCashChanged` delta 映射到 pitch/volume/层数（大额收租更"爽"）。MVP 固定音不缩放（CR-4），Alpha 评估。
 - **OQ-Audio-4（架构期 ADR）BP vs C++ 边界 + 音频中间件**：#22 用纯 UE5.7 原生（Sound Cue / MetaSound / Submix）还是引入 Wwise/FMOD 中间件？事件订阅在 C++ 框架层还是 Blueprint？`FRandomStream` 封装位置（同 VFX19 OQ-VFX-2 / ai OQ-AI-3b 模式）。LLM 知识截至 ~5.3，UE5.7 MetaSound/Submix API 变更须架构期对照 docs。
 - **OQ-Audio-5（架构期）非阻塞追赶的声音生命周期**：过期声音"丢弃 vs 淡出"、抢占"静默停止 vs 短淡出"在 MVP 取静默简化（CR-8），Pre-Production playtest 评估是否需短淡出避免咔哒切断（pop noise）。
