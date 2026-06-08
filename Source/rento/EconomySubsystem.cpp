@@ -207,6 +207,65 @@ bool UEconomySubsystem::TransferCash(int32 PayerId, int32 PayeeId, int32 Amount,
 }
 
 // =============================================================================
+// 发薪 F-1 常量（economy 内部锁定，ADR-0014）
+// =============================================================================
+namespace
+{
+    // 溢出硬防护：clamp 上界 1000 × SalaryAmount≤2,000,000(board 加载期 fatal，propagate 债)
+    //   = 2e9 < INT32_MAX(2,147,483,647)。真运行时 clamp（Shipping 亦生效）。
+    constexpr int32 PASSED_GO_SAFE_MAX = 1000;
+    // dev 暴露阈值：正常 passed_go ∈ -2..+2；>12 = 上游(移动/传送链)异常，UE_LOG(Error) 暴露。
+    constexpr int32 PASSED_GO_ENSURE_MAX = 12;
+    // SalaryAmount 溢出防护上界（ADR-0014 硬防护，economy 侧独立防线，对抗 review CONCERN-1）：
+    //   board 加载期 fatal(≤2e6) 是首要防线(propagate 债)；此处 economy 自保——防 board 债未解期间
+    //   1000×SalaryAmount 溢出 int32（仅 clamp passed_go 不足以保证不溢出，需两因子均有界）。
+    //   2,000,000 × 1000 = 2e9 < INT32_MAX。
+    constexpr int32 SALARY_AMOUNT_SAFE_MAX = 2000000;
+}
+
+// =============================================================================
+// PaySalary —— 发薪（F-1 / CR-2）
+//   salary = clamp(max(passed_go,0),0,PASSED_GO_SAFE_MAX) × SalaryAmount；gate 在 passed_go。
+//   AC-8「dev ensure」逸脱为 UE_LOG(Error)（G2 + 决定性，见 econ-003-LOCKED-brief §2）：
+//     ensure once-only 顺序依赖且本仓库无 AddExpectedError 捕获 ensure 先例；硬保证=runtime clamp。
+// =============================================================================
+bool UEconomySubsystem::PaySalary(int32 PlayerId, int32 PassedGo, int32 SalaryAmount)
+{
+    // gate 在 passed_go（CR-2 防双重发薪）：passed_go≤0 一律不发、不广播。
+    if (PassedGo <= 0)
+    {
+        return false;
+    }
+
+    // SalaryAmount 防御（economy 侧独立防线，CONCERN-1）：base 应为正（经典 200）且不超溢出上界。
+    //   board 加载期 fatal(≤2e6) 是首要防线（propagate 债）；此处自保防 board 债未解期 1000×SalaryAmount UB。
+    //   非正/超界 → dev log + 不发（refuse-not-clamp：拒绝算潜在溢出的薪资，暴露数据 bug，非静默错付）。
+    if (SalaryAmount <= 0 || SalaryAmount > SALARY_AMOUNT_SAFE_MAX)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::PaySalary: SalaryAmount out of safe range [1,%d] (got %d, PlayerId=%d) -- no-op"),
+            SALARY_AMOUNT_SAFE_MAX, SalaryAmount, PlayerId);
+        return false;
+    }
+
+    // dev 信号（替 ensure，G2+决定性）：passed_go 异常大暴露上游 bug，不阻断、不替代 clamp。
+    if (PassedGo > PASSED_GO_ENSURE_MAX)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::PaySalary: passed_go=%d abnormally large (>%d) -- upstream movement/teleport bug; clamped"),
+            PassedGo, PASSED_GO_ENSURE_MAX);
+    }
+
+    // F-1 真运行时 clamp（Shipping 亦生效）：clamp(max(passed_go,0),0,1000) × SalaryAmount。
+    //   max 保 F-1 形式（gate 已保 >0）；clamp 上界 1000 防 int32 溢出（AC-8：10⁷→1000）。
+    const int32 ClampedPassedGo = FMath::Clamp(FMath::Max(PassedGo, 0), 0, PASSED_GO_SAFE_MAX);
+    const int32 Salary = ClampedPassedGo * SalaryAmount;
+
+    // 经 Credit 入账（reason=Salary）；Credit 内保 amount≥0/玩家存在/广播 OnCashChanged。
+    return Credit(PlayerId, Salary, EChangeReason::Salary);
+}
+
+// =============================================================================
 // GiveStartingCash —— 数据驱动起始资金（reason=Salary：起始资金=入账 faucet 语境）
 // =============================================================================
 void UEconomySubsystem::GiveStartingCash(int32 PlayerId)

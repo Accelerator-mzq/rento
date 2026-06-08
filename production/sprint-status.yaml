@@ -44,11 +44,11 @@ stories:
     name: "发薪 F-1 (clamp + 溢出 guard + gate)"
     file: "production/epics/economy-cash/story-003-salary-f1.md"
     priority: must-have
-    status: ready-for-dev
+    status: done
     owner: "unreal-specialist"
     estimate_days: 0.5
     blocker: ""
-    completed: ""
+    completed: "2026-06-09"
   - id: "econ-004"
     name: "地产租金 F-2 (piecewise)"
     file: "production/epics/economy-cash/story-004-property-rent-f2.md"

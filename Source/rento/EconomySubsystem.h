@@ -104,6 +104,25 @@ public:
     bool TransferCash(int32 PayerId, int32 PayeeId, int32 Amount, EChangeReason Reason);
 
     /**
+     * 发薪（F-1，CR-2）：salary = clamp(max(passed_go, 0), 0, PASSED_GO_SAFE_MAX) × SalaryAmount。
+     *
+     * gate 在 passed_go（防双重发薪，CR-2）：仅 passed_go>0 才 Credit(player, salary, Salary)；
+     *   passed_go≤0（未过/逆向穿越）一律不发、不广播、early-return false。
+     * 真运行时 clamp（Shipping 亦生效，非仅 dev）防 int32 溢出；passed_go>12（异常大，
+     *   后退牌/传送循环 abuse）经 UE_LOG(Error) 暴露上游 bug（dev 信号，不阻断、不替代 clamp）。
+     * SalaryAmount 由调用方（移动4 经棋盘 GetTileData(0).SalaryAmount base）注入（caller-injected）；
+     *   非正（≤0）或超溢出上界（>2,000,000，economy 侧独立防线 CONCERN-1）→ dev log + 不发。
+     * CollectSalary SpecialAction 仅 UI 标记，不经本接口构成第二次发薪（gate 唯一在 passed_go）。
+     *
+     * @param PlayerId     收薪玩家 ID
+     * @param PassedGo     本次移动过 GO 次数（移动4 经 AdvanceIndex 算出；正常 -2..+2）
+     * @param SalaryAmount 棋盘 Go 格 base 薪额（经典 200；调用方注入）
+     * @return true=已发薪并广播 OnCashChanged(reason=Salary)；false=passed_go≤0/SalaryAmount≤0/玩家不存在。
+     */
+    UFUNCTION(BlueprintCallable, Category="Economy|Cash")
+    bool PaySalary(int32 PlayerId, int32 PassedGo, int32 SalaryAmount);
+
+    /**
      * 发放起始资金（数据驱动 Tuning Knob StartingCash，经 Credit 入账，reason=Salary 入账 faucet）。
      * @param PlayerId 玩家 ID
      */
