@@ -1,11 +1,11 @@
 ---
 Epic: dice-rng
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: M
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-08
 ---
 
 # Story 007 — 流隔离 + CI 禁全局 RNG 静态扫描硬门 + Sprint0 引擎验证
@@ -102,3 +102,12 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（DiceService 宿主 + `UDiceRngService::RandomRange` 唯一入口，CI 白名单锚点）须 DONE。**Sprint0 引擎验证 ①–④ 建议最先执行**（开工首步），其结论门控 story-004（③默构 0）/ story-006（①`RandHelper` 浮点基线）。
 - **Unlocks**: 下游 AI(10)/移动(4) 实现（ADR-0004 Blocks 列：移动/AI 实现开工依赖流隔离 + 禁旁路硬门生效）；ai AC-61a/61b 权威流 spy（归 AI epic）。
+
+## Completion Notes
+**Completed**: 2026-06-08
+**Criteria**: 5/5 COVERED（[CI 硬门]/AC-20-C++ 自动化 PR-gate + AC-19/20-BP/流隔离/Sprint0①–④ 审查/cross-ref）
+**Deviations**: None。纠正记录：盘点中亲读 pt-009 源码发现拟建 `Rento.Dice.CiAuthorityGate` 会冗余重复 `TurnModuleNoBpDerivedCiTest.cpp` TC1 对 UDiceRngService 的 CLASS_Native 断言 → 未建测试（避免假覆盖）。
+**Test Evidence**: Integration — `production/qa/evidence/dice-stream-isolation-review.md`（documented review，全 sign-off msc 2026-06-08）+ pt-009 既有 CI 自动化门（`tools/ci/check-authoritative-purity.sh` 实跑三门绿 EXIT 0 + `Rento.PlayerTurn.CiAuthorityGate` TC1/TC2 覆盖 UDiceRngService）。零 src/CI 改动；全量基线不变 269/269。
+**Code Review**: N/A — 无新代码；依赖的 CI 脚本/测试已在 pt-009 `/code-review` APPROVED。
+**实现要点（主会话直接驱动，非 mode-A）**：DR-007 重活（CI 硬门 + 引擎验证）已被 **pt-009**（`check-authoritative-purity.sh` Gate A 随机硬门 `AUTH_SRC=Source/rento` 含 RNG + Gate B 目录断言 `AUTH_CLASSES` 含 DiceRngService + `authoritative-purity.yml` 云端 + `TurnModuleNoBpDerivedCiTest` TC1 L56 显式断言 UDiceRngService CLASS_Native）与 **2026-06-06 Sprint0 spike**（ADR-0004 ①③④ verified+回填）完成。本 story = evidence/承接 doc + 实跑门抓 PASS 证据。白名单实证：DiceRngService 经 `AuthoritativeStream.RandRange`（FRandomStream 受准原语，cpp L202）未被门误报，Source/rento 零 FMath::Rand 旁路。
+**下游移交（evidence doc §6 登记，非 tech-debt）**：VFX/Audio/HUD/AI 各自独立非权威流实现归各下游 epic；误接由 ai AC-61b 权威流 spy 硬门兜底（AI epic）。
