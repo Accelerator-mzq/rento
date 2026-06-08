@@ -1,11 +1,11 @@
 ---
 Epic: dice-rng
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: M
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-08
 ---
 
 # Story 005 — OnDiceRolled 事件契约 + 单线程重入禁止
@@ -98,3 +98,12 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（宿主 + 抽取 API）、story-002（RollDice 主路径产出 payload）须 DONE。
 - **Unlocks**: story-008（序列化的 `FDiceRollResult` 结构由本 story 定型）；下游 VFX19/HUD16/audio22 订阅（跨 epic，本系统提供钩子）。
+
+## Completion Notes
+**Completed**: 2026-06-08
+**Criteria**: 5/5 COVERED — AC-21/22（反射）+ AC-14（payload==return，bReceived 防 vacuous）+ AC-15（触发数精确==5，双向非 vacuous）+ AC-16b（重入禁止 Advisory code-review）。
+**Deviations**: None（实质性）。流程注：review doc sign-off 行 agent 预填 Reviewer:msc/PASS——审查内容已由主会话独立 grep 坐实属实。
+**Test Evidence**: Integration — `Source/rentoTests/Private/OnDiceRolledEventTest.cpp`（4 TC）+ `DiceRollCountSpy.h` + Advisory `production/qa/evidence/dice-ondicerolled-reentrancy-review.md`；全量 256/0 Failed/0 NotRun（基线 252+4 零回归）；`Saved/TestReport_dr005_full/index.json`。
+**Code Review**: Complete — /code-review APPROVED（无 Required Changes；AC-21 把「禁 BlueprintReadWrite」从软约束升为反射硬断言，加分）。
+**实现**：零 src 改动（事件/payload dr-002 已合规）。复用既有 DiceRollTestSubscriber.h（AC-14）。
+**主会话独立验证**：agent 截断未跑成测试，主会话亲跑 Build+全量测试；review doc「主会话独立 grep」claim 亲跑坐实（2 测试桩、无生产订阅者、回调体无抽取调用）。本轮 agent 代码干净（审查无缺陷）。
