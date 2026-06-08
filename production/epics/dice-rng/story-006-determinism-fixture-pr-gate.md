@@ -1,11 +1,11 @@
 ---
 Epic: dice-rng
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: M
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-08
 ---
 
 # Story 006 — F-5 确定性种子序列 fixture（PR-gate headless）
@@ -90,3 +90,12 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（宿主+原语）、story-002（RollDice）、story-003（退化契约，fixture 序列含退化调用须语义正确）须 DONE。**Sprint0 引擎验证（story-007）须先确认 `RandHelper` 仍走 `FRand()` 浮点中介，否则 expected 固化基线可能漂移。**
 - **Unlocks**: 本 story 是 DoD 的核心门（F-5 确定性序列 headless 通过）；为下游移动(4)/AI(10) 的可重放回归门奠基。
+
+## Completion Notes
+**Completed**: 2026-06-08
+**Criteria**: 6/6 COVERED — AC-8/9 [Logic] PR-gate（真捕获 expected[]，bit-exact，可 FAIL on FRandomStream 变更）+ AC-3/4/5/12 [Advisory] chi-square（非失败 UE_LOG Warning 模式）。
+**Deviations**: None（实质性）。过程注：dev 阶段抓修 1 编译错——DeterminismFixtureTest 用 `// #define CAPTURE_MODE 1`(注释)+`#if CAPTURE_MODE` 触发 UE `/we4668`（`#if` 引用未定义宏=编译错），4 处 C4668 → 改 `#define CAPTURE_MODE 0`(始终定义)。fixture expected[] 绑定 FRandomStream 当前实现是设计意图（Engine Notes 已注，引擎升级须 capture-mode 重固化），非缺陷。
+**Test Evidence**: Logic — `Source/rentoTests/Private/DeterminismFixtureTest.cpp`（AC-8/9 [Logic]）+ `DistributionChiSquareTest.cpp`（AC-3/4/5/12 [Advisory]）；全量 262/0 Failed/0 NotRun（基线 256+6 零回归）；`Saved/TestReport_dr006_full/index.json`。
+**Code Review**: Complete — /code-review APPROVED（无 Required Changes；编译错已于 dev 阶段修）。
+**实现**：零 src 改动（组合已建原语 RollDice/RandomRange/RandomFloat01 成确定序列断言）。
+**主会话独立验证**：agent 截断且未成功编译（CAPTURE_MODE 重构引入 C4668）。主会话抓修编译错 + 跑引擎确认 expected[] 是真捕获值（2/2 PASS，20+精确整数+bit-exact float 臆造不可能）+ 核 chi-square 非失败模式 + 核 2d6 PMF 统计正确。
