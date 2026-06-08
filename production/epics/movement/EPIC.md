@@ -4,7 +4,7 @@
 > **GDD**: design/gdd/movement.md
 > **Architecture Module**: 棋子推进（architecture §2.3）
 > **Status**: Ready
-> **Stories**: Not yet created — run `/create-stories movement`
+> **Stories**: 5 stories created (2026-06-08) — see ## Stories
 
 ## Overview
 
@@ -51,6 +51,19 @@
 > ✅ **move-010/017 已解除（ADR-0015 Accepted，2026-06-08）**：TR-move-010（dice_total 经回合2 holder PULL，移动不投递）/ TR-move-017（越界告警不静默吞冒泡 + 数值兜底委托 ADR-0014）。机制 pt-005/006/007 已实现，ADR-0015 固化契约。
 > ⏸ **TR-move-013（联网重放迁移）= Full Vision defer**：ADR-0015 明确不裁、MVP 不开 story（intentional defer 非遗漏，MVP 单线程不触发）。
 
+## Stories
+
+| # | Story | Type | Status | ADR |
+|---|-------|------|--------|-----|
+| 001 | CurrentTileIndex 容器 + SetTileIndex 受控写守界 | Logic | Ready | ADR-0001/0007/0005 |
+| 002 | 事件契约 (OnPawnMoveStarted/OnPawnLanded + EArrivalContext) + 落地移交 | Logic | Ready | ADR-0003 |
+| 003 | Advance 编排 + 发薪 push 门 + Total 不投递 + 越界告警 | Logic | Ready | ADR-0002/0015/0007 |
+| 004 | TeleportTo (paysGo/advanceOnZero/去坐牢 context) | Logic | Ready | ADR-0002/0003 |
+| 005 | 三步有序契约 + 程间非重入 + 接口稳定 | Integration | Ready | ADR-0001/0007 |
+
+> **依赖序**：001 → 002 → {003,004} → 005。4 Logic + 1 Integration，全 Ready（无 Blocked）。
+> **TR 覆盖**：move-001..018 全覆盖；**move-013（联网迁移）= Full Vision defer，不开 story**（ADR-0015）。AC-19（playtest）= Advisory 非 dev story。
+
 ## Definition of Done
 
 This epic is complete when:
@@ -62,4 +75,4 @@ This epic is complete when:
 
 ## Next Step
 
-Run `/create-stories movement` to break this epic into implementable stories.
+5 stories created. Run `/story-readiness production/epics/movement/story-001-tile-index-controlled-write.md` then `/dev-story`. Work in dependency order.

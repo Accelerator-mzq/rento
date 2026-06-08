@@ -4,7 +4,7 @@
 > **GDD**: design/gdd/economy-cash.md
 > **Architecture Module**: 经济现金（architecture §2.3）— 租金/抵押/建房公式发源地
 > **Status**: Ready
-> **Stories**: Not yet created — run `/create-stories economy-cash`
+> **Stories**: 10 stories created (2026-06-08) — see ## Stories
 
 ## Overview
 
@@ -52,6 +52,24 @@
 > ✅ **2 条 Gap TR 已解除（ADR-0014 Accepted，2026-06-08）**：TR-econ-014（整数确定性：num/den+显式取整+逐栋 floor+零 float→位级一致）/ TR-econ-015（溢出防护：passed_go 运行时 clamp[0,1000]+SalaryAmount≤2e6/DICE_MULT_MAX=1e6 加载期 fatal）。详见 `docs/architecture/ADR-0014-economy-integer-determinism-overflow.md`。
 > ⚠ **propagate 债（board-data 已 Approved+实现）**：① SalaryAmount≤2e6 fatal 加载校验 board 现无（仅 >0/==0），须后续 board story 或 `/propagate-design-change` 新增；② RentTable 跨公式包络（OQ-Econ-9，warning，TR-econ-016 仍 Partial）board 现仅自身单调。DiceMult 上界已落 board AC-23j（DICE_MULT_MAX=1e6 对齐其建议初值）。
 
+## Stories
+
+| # | Story | Type | Status | ADR |
+|---|-------|------|--------|-----|
+| 001 | Cash 服务 + Credit/Debit 受控写 + 守恒/不变式 | Logic | Ready | ADR-0001/0007/0014 |
+| 002 | 经济事件契约 (4 delegate + EChangeReason) | Logic | Ready | ADR-0003/0007 |
+| 003 | 发薪 F-1 (clamp + 溢出 guard + gate) | Logic | Ready | ADR-0014/0001 |
+| 004 | 地产租金 F-2 (piecewise, ×2 仅无房 base, 抵押短路) | Logic | Ready | ADR-0014/0006/0007 |
+| 005 | 车站/公用租金 F-3/F-4 (count guards + dice_total PULL) | Logic | Ready | ADR-0015/0014/0006 |
+| 006 | 抵押/赎回现金腿 F-5/F-6 + 显示读接口 + 无套利 | Logic | Ready | ADR-0014/0007 |
+| 007 | 缴税 F-7 + 买地现金腿 CR-4 | Logic | Ready | ADR-0007/0001 |
+| 008 | NLV F-9 + F-10 is_insolvent + F-8 卖回 🔴最高风险 | Logic | Ready | ADR-0014/0006 |
+| 009 | 凑钱状态机 CR-7 + 破产现金侧 F-11 | Integration | Ready | ADR-0001/0014/0003 |
+| 010 | Cash 存档序列化 round-trip | Integration | Ready | ADR-0005/0003 |
+
+> **依赖序**：001 → 002 → {003,004,005,006,007,008 并行} → 009(需 006/008) → 010(需 001/002)。8 Logic + 2 Integration，全 Ready（无 Blocked）。
+> **TR 覆盖**：econ-001..018 全覆盖（econ-016 数据包络=board propagate 债非本 epic story；econ-013 AI snapshot 读经 story-008 暴露 + ADR-0006 装配）。AC-1..43（41 Logic + 3 Advisory：AC-4/40/41）分布于 10 story；AC-40/41 = Advisory 证据（playtest/smoke）非 dev story。
+
 ## Definition of Done
 
 This epic is complete when:
@@ -63,4 +81,4 @@ This epic is complete when:
 
 ## Next Step
 
-Run `/create-stories economy-cash` to break this epic into implementable stories.
+10 stories created. Run `/story-readiness production/epics/economy-cash/story-001-cash-service-controlled-write.md` then `/dev-story` to begin implementation. Work in dependency order (each story's `Depends on:` field gates start).

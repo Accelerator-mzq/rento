@@ -4,7 +4,7 @@
 > **GDD**: design/gdd/property-ownership.md
 > **Architecture Module**: 买地/抵押事务 owner（architecture §2.3）
 > **Status**: Ready
-> **Stories**: Not yet created — run `/create-stories property-ownership`
+> **Stories**: 7 stories created (2026-06-08) — see ## Stories
 
 ## Overview
 
@@ -48,6 +48,21 @@
 
 > ✅ **3 条 Gap TR 已解除（ADR-0013 Accepted，2026-06-08）**：TR-prop-001（owner map 容器=AoS TArray<FTileOwnershipState> 稠密+哨兵+连续前提）/ TR-prop-002（**TArray<bool> bitfield 前提源码核实 REFUTED**；AoS 内含 bool 无独立标记数组）/ TR-prop-012（批量移交全或全无+同格原子清零）。另升级 TR-prop-006（封装→C++ private+只读访问器，AC-3/7/31/32/35 升 [Logic]）+ TR-prop-011（逐格广播+重入锁 RAII 无条件解除）由 Partial→Covered。详见 `docs/architecture/ADR-0013-property-ownership-runtime-container.md`。
 
+## Stories
+
+| # | Story | Type | Status | ADR |
+|---|-------|------|--------|-----|
+| 001 | owner map 容器 (AoS) + 受控写封装 + 事件契约 | Logic | Ready | ADR-0013/0001/0007/0003 |
+| 002 | 买地事务 Buy (前置前置化, 6→5) | Logic | Ready | ADR-0013/0007 |
+| 003 | 抵押/赎回事务 Mortgage/Unmortgage | Logic | Ready | ADR-0013/0007 |
+| 004 | 派生谓词 F-1/F-2/F-3 (垄断+计数) + 确定性无缓存 | Logic | Ready | ADR-0002/0006/0013 |
+| 005 | 归属快照 BuildOwnershipSnapshot (值拷贝, 防漂移) | Logic | Ready | ADR-0006/0001 |
+| 006 | 破产移交 + 批量原子性 + 重入锁 | Integration | Ready | ADR-0013/0003 |
+| 007 | 职责边界 + 接口稳定 + 序列化/读档重绑 | Logic | Ready | ADR-0005/0003/0007 |
+
+> **依赖序**：001 → {002,003,004} → 005(需004) / 006(需001/002/003)；007 汇总。6 Logic + 1 Integration，全 Ready（无 Blocked）。
+> **TR 覆盖**：prop-001..015 全覆盖（prop-001/002/012 经 ADR-0013 解 Gap，prop-006/011 升 Covered）。AC-1..41（44 含 CI-stub→Logic）分布于 7 story。
+
 ## Definition of Done
 
 This epic is complete when:
@@ -59,4 +74,4 @@ This epic is complete when:
 
 ## Next Step
 
-Run `/create-stories property-ownership` to break this epic into implementable stories.
+7 stories created. Run `/story-readiness production/epics/property-ownership/story-001-owner-map-container-events.md` then `/dev-story`. Work in dependency order.

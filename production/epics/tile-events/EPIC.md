@@ -4,7 +4,7 @@
 > **GDD**: design/gdd/tile-events.md
 > **Architecture Module**: 机会/命运/税/监狱/起点 + 牌堆（architecture §2.3）
 > **Status**: Ready
-> **Stories**: Not yet created — run `/create-stories tile-events`
+> **Stories**: 7 stories created (2026-06-08) — see ## Stories
 
 ## Overview
 
@@ -45,6 +45,21 @@
 > ✅ **TR-event-010 已解除（ADR-0015 Accepted，2026-06-08）**：MoveToNearest Utility 额外骰经回合2 SetCurrentRollContext 注入 holder（与 move-010 同源 holder PULL 机制的事件注入端，机制 pt-005 已实现）。
 > ✅ **TR-event-009 评估结论（2026-06-08）= 非架构 Gap，无需新 ADR**：接口契约已在 building8 F-7（`GetTotalHouseCount`/`GetTotalHotelCount`，per-tile vs 全盘口径焊死）+ tile-events F-3 完整规格化（OQ-Event-3 ✅ RESOLVED 2026-06-04）；架构面 = ADR-0007（跨系统只读 accessor）+ ADR-0001（building8 宿主），pull 读非事件。这是对 **Feature 层 building8（未 epic）实现**的跨层依赖，非架构 Gap。RepairFee 经 **mock** `GetTotalHouseCount`（AC-21）现可开 story、不被 Blocked；真实接线待 building8 epic 实现。重分类 Gap→Partial（ADR-0007/0001）。
 
+## Stories
+
+| # | Story | Type | Status | ADR |
+|---|-------|------|--------|-----|
+| 001 | 牌堆容器 + Fisher-Yates 洗牌 + 抽牌机制 | Logic | Ready | ADR-0004/0002/0001 |
+| 002 | 落地路由 ResolveTileEvent + SentToJail 抑制 | Logic | Ready | ADR-0001/0002 |
+| 003 | 牌效果 dispatch (Bank*/Move*/GoToJailCard/GetOutOfJailFree) | Logic | Ready | ADR-0007/0003 |
+| 004 | 零和聚合 F-1 (CollectFromEach/PayToEach) | Logic | Ready | ADR-0003 |
+| 005 | F-2 nearest + MoveToNearest dice_total 注入 + F-3 RepairFee | Logic | Ready | ADR-0015/0002 |
+| 006 | 监狱 SendToJail + 出狱裁决 F-4 + 状态机不变式 + 非法降级 | Integration | Ready | ADR-0001/0003 |
+| 007 | 事件广播 + 接口稳定 + 序列化 + 继承集成 | Integration | Ready | ADR-0003/0005 |
+
+> **依赖序**：001 → 002 → {003,004,005} → 006(需 001/002) → 007(需 001/006)。5 Logic + 2 Integration，全 Ready（无 Blocked）。
+> **TR 覆盖**：event-001..011 全覆盖。**event-009（RepairFee 全盘聚合）经 mock 建房8 接口可开 story（story-005），真实接线待 building8 Feature epic**。AC-1..64（~63 Logic + 4 Advisory）分布于 7 story。
+
 ## Definition of Done
 
 This epic is complete when:
@@ -57,4 +72,4 @@ This epic is complete when:
 
 ## Next Step
 
-Run `/create-stories tile-events` to break this epic into implementable stories.
+7 stories created. Run `/story-readiness production/epics/tile-events/story-001-deck-container-shuffle-draw.md` then `/dev-story`. Work in dependency order.

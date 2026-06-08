@@ -24,14 +24,13 @@ Manifest Version: 2026-06-06
 
 | Epic | System | GDD | Governing ADRs | Engine Risk | TR 覆盖 | Stories | Status |
 |------|--------|-----|----------------|-------------|---------|---------|--------|
-| [economy-cash](economy-cash/EPIC.md) | #5 经济与现金 ⚠bottleneck | economy-cash.md | ADR-0007/0003/0006/0005/0002/0001 | LOW | 12C/4P/**2 Gap** | Not yet created | Ready |
-| [movement](movement/EPIC.md) | #4 移动 | movement.md | ADR-0002/0003/0001/0005/0007 | LOW | 7C/8P/**3 Gap** | Not yet created | Ready |
-| [property-ownership](property-ownership/EPIC.md) | #6 地产所有权 | property-ownership.md | ADR-0007/0003/0006/0005/0002/0001 | LOW | 8C/4P/**3 Gap** | Not yet created | Ready |
-| [tile-events](tile-events/EPIC.md) | #7 事件格 | tile-events.md | ADR-0004/0003/0005/0001/0002/0007 | LOW | 4C/5P/**2 Gap** | Not yet created | Ready |
+| [economy-cash](economy-cash/EPIC.md) | #5 经济与现金 ⚠bottleneck | economy-cash.md | ADR-0014/0007/0003/0006/0005/0002/0001 | LOW | 14C/4P/**0 Gap** | **10 stories** | Ready |
+| [movement](movement/EPIC.md) | #4 移动 | movement.md | ADR-0015/0002/0003/0001/0005/0007 | LOW | 9C/8P/**0 Gap** (move-013 defer) | **5 stories** | Ready |
+| [property-ownership](property-ownership/EPIC.md) | #6 地产所有权 | property-ownership.md | ADR-0013/0007/0003/0006/0005/0002/0001 | LOW | 13C/2P/**0 Gap** | **7 stories** | Ready |
+| [tile-events](tile-events/EPIC.md) | #7 事件格 | tile-events.md | ADR-0015/0004/0003/0005/0001/0002/0007 | LOW | 5C/6P/**0 Gap** (event-009 待 building8) | **7 stories** | Ready |
 
-> **Core 4 epic 共 62 TR**（econ18+move18+prop15+event11），**10 Gap TR**（无 ADR/不完整 9 条 + prop-001 ADR 不完整）= 架构 review 已知 25 Gap carryover 子集。每个 epic 的 untraced TR 在 `/create-stories` 时其 story 标 **Blocked** 直到补 ADR：
-> - econ-014/015（整数确定性/溢出防护）· move-010/017（Utility PULL/溢出告警；move-013=Full Vision defer）· prop-001/002/012（OQ-Prop-1 owner map 生命周期 ADR）· event-009/010（跨档接口：建房聚合/holder PULL）
-> - **下一步**：`/create-stories economy-cash`（bottleneck 先行）或先 `/architecture-decision` 补 OQ-Prop-1/econ 数据校验等 ADR。
+> **Core 4 epic 共 62 TR**（econ18+move18+prop15+event11）。**10 Gap TR 已处置（ADR-0013/0014/0015 Accepted 2026-06-08）**：7 ADR-Covered（econ-014/015=0014 · move-010/017+event-010=0015 · prop-001/002/012=0013）+ 1 评估 Partial（event-009 待 building8 Feature epic）+ 1 Full Vision defer（move-013，不开 story）。详见 `docs/architecture/ADR-0013/0014/0015`。
+> - ✅ **全 4 Core epic 已拆 story（2026-06-08）**：economy-cash 10 + movement 5 + property-ownership 7 + tile-events 7 = **29 story**（全 Ready，无 Blocked）。**下一步**：`/sprint-plan new`（规划 Core 实现 sprint）或 `/story-readiness economy-cash/story-001` → `/dev-story`（bottleneck 先行实现）。building8（#8 Feature 层）epic 待创建后闭合 event-009 真实接线 + SalaryAmount propagate 债。
 
 ## Feature Layer
 
