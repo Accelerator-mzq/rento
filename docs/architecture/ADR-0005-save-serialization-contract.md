@@ -24,6 +24,15 @@ msc（用户）+ Technical Director（主笔）· lead-programmer / engine-progr
 
 《骰子大亨》存档/读档横切层（系统 #21，enable-not-own）需要一份钉死的序列化容器与读档完整性契约，否则任一状态系统字段漏存即造成隐形读档损坏（信任底线崩塌）。本 ADR 裁定：以 `USaveGame` 子类 + `UPROPERTY(SaveGame)` 反射序列化 + `SaveGameToSlot/LoadGameFromSlot` 为载体，前置 magic/version/checksum/manifest 四重读档完整性门，存 DA 引用不存布局，枚举 append-only，MVP 单槽、严格版本相等不迁移，读档后经 `OnGameLoaded` 信号驱动 delegate 重绑。
 
+> **⚠ Implementation Finding（2026-06-08，pt-008 实现期实证修正本 ADR 一处机制描述错误）**
+> 亲读 UE5.7 引擎源码坐实：**内置 `SaveGameToMemory`/`SaveGameToSlot` 路径不按 `UPROPERTY(SaveGame)` 过滤——全量序列化所有非 transient `UPROPERTY`。**
+> - `GameplayStatics.cpp:2371-2388` `SaveGameToMemory` 用 `FObjectAndNameAsStringProxyArchive Ar(MemoryWriter, false)` + `Serialize(Ar)`，**全程不置 `ArIsSaveGame=true`**（第二参 `false`=`bLoadIfFindFails`，非 SaveGame）。`SaveGameToSlot` 只是 `SaveGameToMemory`+磁盘写包装。
+> - `Archive.h:620` Epic 官方注释逐字："This is intended for game-specific archives and **is not true for any of the built in save methods**"。
+> - `Property.cpp:1034` 过滤 `if (!(PropertyFlags & CPF_SaveGame) && Ar.IsSaveGame())`——仅 `IsSaveGame()==true` 才过滤；内置路径恒 false → 不过滤。
+> - 若要真过滤，须**自建** archive 并显式 `Ar.ArIsSaveGame=true`（`Archive.h:2213` public 成员），此时逐字段递归穿透嵌套 USTRUCT（内部字段须各自标 SaveGame）。
+>
+> **对本 ADR 的影响（决策不变，仅修正机制措辞）**：分叉 A=A1（`UPROPERTY(SaveGame)` 反射 + `SaveGameToSlot`）**仍成立**——A1 的真实保证是「`USaveGame` 容器只装 CR-3 清单字段 → 全量 round-trip → 逐字段恒等」，而非「靠 SaveGame 标记过滤排除字段」。字段仍标 `UPROPERTY(SaveGame)`（表意 + 产品路径对齐 + 若未来改自建 archive 则生效），但**正确性依赖「容器只含应存字段」，不依赖 SaveGame 过滤**。F-4 manifest 运行时门仍是漏字段的兜底。VR① 递归序列化已 round-trip 冒烟验证按预期（pt-008 全 237 测试绿）。headless 测试用 `SaveGameToMemory`/`LoadGameFromMemory`（in-memory，== `SaveGameToSlot` 同源字节路径，无磁盘产物）。详见 player-turn story-008 Completion Notes G7 + memory。
+
 ## Engine Compatibility
 
 | Field | Value |
@@ -33,7 +42,7 @@ msc（用户）+ Technical Director（主笔）· lead-programmer / engine-progr
 | **Knowledge Risk** | LOW — `USaveGame` / `UGameplayStatics::SaveGameToSlot` / `LoadGameFromSlot` / `DoesSaveGameExist` 是 pre-5.3 稳定 API，post-cutoff 无破坏性变更（已对照 `docs/engine-reference/unreal/` breaking-changes / deprecated-apis：存档框架不在弃用/迁移清单） |
 | **References Consulted** | `docs/engine-reference/unreal/VERSION.md`、`breaking-changes.md`、`deprecated-apis.md`、`current-best-practices.md`、`modules/`；`design/gdd/save-load.md`（R-1 Approved）；`design/gdd/tile-events.md`（牌堆序列化 CR-3）；`design/gdd/dice.md`（Seed 反射陷阱 L176） |
 | **Post-Cutoff APIs Used** | None — 全部用 pre-5.3 稳定持久化 API。`AsyncSaveGameToSlot`（若选异步形态）自 4.x 即存在，非 post-cutoff |
-| **Verification Required** | ① `UPROPERTY(SaveGame)` 对嵌套 USTRUCT（`FPlayerState`/`FDiceRollResult`/`FCardData`）与 `TArray`/`TMap` 的递归序列化在 5.7 仍按预期工作（写一个 round-trip 冒烟）；② `FArchive` proxy（`FObjectAndNameAsStringProxyArchive`）对 `UPROPERTY(SaveGame)` 过滤行为不变；③ 临时文件→原子替换在 Windows/Steam 目标平台的 `IFileManager::Move` 语义（EC-4/AC-21）；④ `FRandomStream` 经 struct 反射只持久化 `InitialSeed` 而丢当前 `Seed`（dice L176）——MVP 不存 Seed 故不触发，但 Full Vision 须显式 `GetCurrentSeed()`/`SetSeed()` 存取（与 ADR-0004 协同） |
+| **Verification Required** | ① ✅ **已验证（2026-06-08 pt-008）** `UPROPERTY(SaveGame)` 对嵌套 USTRUCT（`FDiceRollResult` 等）与 `TArray` 的递归序列化在 5.7 按预期工作（round-trip 逐字段恒等，237 测试绿）；② ✅ **已验证 + 修正（见上 Implementation Finding）**：内置 `SaveGameToMemory`/`SaveGameToSlot` **不**设 `ArIsSaveGame`，故**不按 `UPROPERTY(SaveGame)` 过滤**——全量序列化非 transient `UPROPERTY`（`Archive.h:620`/`Property.cpp:1034`）；正确性靠「容器只含应存字段」非过滤；③ 临时文件→原子替换在 Windows/Steam 目标平台的 `IFileManager::Move` 语义（EC-4/AC-21，存档21 实现期验）；④ `FRandomStream` 经 struct 反射只持久化 `InitialSeed` 而丢当前 `Seed`（dice L176）——MVP 不存 Seed 故不触发，但 Full Vision 须显式 `GetCurrentSeed()`/`SetSeed()` 存取（与 ADR-0004 协同） |
 
 > **Note**: Knowledge Risk = LOW，但若项目升级引擎版本仍须重跑上述 round-trip 冒烟确认反射序列化行为不变。
 
@@ -84,7 +93,7 @@ save-load.md（R-1 Approved，系统 #21）把多个序列化形态决策显式 
 
 | | A1：`UPROPERTY(SaveGame)` 反射（**推荐**） | A2：手写 `FArchive` `Serialize()` 流 |
 |---|---|---|
-| **做法** | `USaveGame` 子类把全部 CR-3 字段标 `UPROPERTY(SaveGame)`；`SaveGameToSlot` 内部经 `FObjectAndNameAsStringProxyArchive` 自动遍历带 `SaveGame` 标记的属性 | 自定义 `Serialize(FArchive& Ar)` 逐字段 `Ar << Field` 手写读写顺序 |
+| **做法** | `USaveGame` 子类把全部 CR-3 字段标 `UPROPERTY(SaveGame)`；`SaveGameToSlot`（内部 `SaveGameToMemory`）经 `FObjectAndNameAsStringProxyArchive` 序列化全部非 transient `UPROPERTY`（**注：内置路径不按 SaveGame 过滤，见 Implementation Finding；容器只装 CR-3 字段即保证 round-trip 恒等**） | 自定义 `Serialize(FArchive& Ar)` 逐字段 `Ar << Field` 手写读写顺序 |
 | **Correctness** | 字段增删只改属性声明，反射自动覆盖；漏标 `SaveGame` 由 manifest 门兜底（F-4） | 读写顺序须人工严格对齐，错位即静默损坏；无编译期保护 |
 | **Simplicity** | ✅ 高——声明式，BP 也能标记 | ❌ 低——每字段两处手写（写侧 + 读侧）易漂移 |
 | **Maintainability** | ✅ 新字段登记 CR-3 + 标 `UPROPERTY(SaveGame)` 即可，6 个月后可读 | ❌ 手写流是漏存重灾区，正是设计阶段要防的风险 |
@@ -209,7 +218,7 @@ enum class ESaveResult : uint8 { Success, SaveRejected_TransientState, /* EC-5 *
 
 ### Implementation Guidelines
 
-1. **分叉A=A1**：全字段标 `UPROPERTY(SaveGame)`；`SaveGameToSlot` 经 `FObjectAndNameAsStringProxyArchive` 自动过滤 `SaveGame` 标记属性。新增 CR-3 字段必须同步：(a) 标 `UPROPERTY(SaveGame)`；(b) 登记 `FieldManifest`；(c) `CURRENT_SAVE_VERSION += 1`（AC-25 code-review 核对）。
+1. **分叉A=A1**：全字段标 `UPROPERTY(SaveGame)`。⚠ **机制修正（Implementation Finding 2026-06-08）**：内置 `SaveGameToMemory`/`SaveGameToSlot` 经 `FObjectAndNameAsStringProxyArchive` 序列化**全部**非 transient `UPROPERTY`，**不按 SaveGame 过滤**（不设 `ArIsSaveGame`）。故 round-trip 正确性靠「容器（`USaveGame` 子类）只装 CR-3 清单字段」，**非**靠 SaveGame 标记排除字段；SaveGame 标记保留作表意/产品路径对齐/forward-compat。新增 CR-3 字段必须同步：(a) 标 `UPROPERTY(SaveGame)`；(b) 登记 `FieldManifest`；(c) `CURRENT_SAVE_VERSION += 1`（AC-25 code-review 核对）。**勿往 `USaveGame` 容器加不应持久化的 transient 字段**（无 SaveGame 过滤兜底，会被全量序列化）。
 2. **分叉B=B1**：MVP 同步 `SaveGameToSlot`。无论同步异步，**先写临时文件 → CRC32 校验 → `IFileManager::Move` 原子替换** `SLOT_DEFAULT`（EC-4/AC-21）；`Move` 失败不破坏旧档（EC-9/AC-22）。
 3. **分叉C=C1**：`PayloadChecksum = FCrc::MemCrc32(payload_bytes, len)`，header 本身不入 checksum 计算范围（F-3 `payload_bytes` = 不含 header 的主体）。
 4. **完整性门顺序**：magic → version → checksum → manifest，短路求值，任一假即 `ESaveResult` 对应失败码 + **不广播 `OnGameLoaded`**（AC-11/16）+ 当前对局不破坏。
@@ -225,7 +234,7 @@ enum class ESaveResult : uint8 { Success, SaveRejected_TransientState, /* EC-5 *
 
 - **Description**：把对局快照序列化为 JSON 文本文件而非 `USaveGame` 二进制。
 - **Pros**：可人工 diff / 调试期肉眼读；跨工具友好。
-- **Cons**：体积更大；须手写 JSON ↔ struct 映射（绕过反射，回到分叉A的A2 困境）；`FName`/`TObjectPtr` DA 引用的文本序列化须自定义；失去 `UPROPERTY(SaveGame)` 自动过滤。
+- **Cons**：体积更大；须手写 JSON ↔ struct 映射（绕过反射，回到分叉A的A2 困境）；`FName`/`TObjectPtr` DA 引用的文本序列化须自定义；失去 `UPROPERTY` 反射自动序列化（注：内置二进制路径本就不按 SaveGame 过滤，见 Implementation Finding——JSON 失去的是反射遍历本身，非过滤）。
 - **Estimated Effort**：高于 A1（手写映射层）。
 - **Rejection Reason**：违反 Simplicity；可读性收益在「单机单槽、玩家不该手编存档」场景无价值；调试可由 round-trip AC + dev 日志覆盖，无需牺牲序列化健壮性。
 

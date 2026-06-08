@@ -20,7 +20,7 @@ Last Updated: 2026-06-06
 - **Engine**: UE 5.7。Risk: **LOW**（`UPROPERTY(SaveGame)` 嵌套 USTRUCT 递归序列化 pre-5.3 稳定；本 story 不引入新 RNG API）。
 - **Engine Notes**（ADR-0005 / ADR-0004 / dice UE5.7 标注，逐字保真）:
   - `FRandomStream` 无显式"游标计数器",内部状态仅 `InitialSeed` + 当前滚动 `Seed`；序列化当前进度 = 序列化当前 `Seed`。**实现须用公有 accessor `GetCurrentSeed()` 显式存取,勿依赖 `UPROPERTY(SaveGame)` struct 反射**（反射可能只持久化 `InitialSeed` 而丢当前 `Seed`、静默破坏 OQ-2 续算）。
-  - Sprint0 验证 #8（ADR-0005，LOW）：`UPROPERTY(SaveGame)` 嵌套 USTRUCT/`TArray` 递归序列化 round-trip 冒烟；`FObjectAndNameAsStringProxyArchive` 过滤行为。
+  - Sprint0 验证 #8（ADR-0005，LOW）：✅ **已验证（2026-06-08 player-turn pt-008）** `UPROPERTY(SaveGame)` 嵌套 USTRUCT/`TArray` 递归序列化 round-trip 恒等（含 `FDiceRollResult` Die1/Die2/Total/bIsDouble）；`FObjectAndNameAsStringProxyArchive` 过滤行为=**内置 `SaveGameToMemory`/`SaveGameToSlot` 不按 SaveGame 过滤、全量序列化**（修正，见 ADR-0005 Implementation Finding）。本 story 序列化 `FDiceRollResult` 走 player-turn `UPlayerTurnSaveData` 容器（per-player 记录），已 round-trip 验证。
 - **Control Manifest Rules**（Foundation 层，2026-06-06）:
   - **Required**：Seed 序列化——MVP 不序列化 Seed（当前骰由 player-turn 序列化完整 `FDiceRollResult` 保护）；Full Vision 重放经 `GetCurrentSeed()` 显式存取（ADR-0004/0005）。读档重建拓扑序：DA →（经济/地产/建房/事件格牌堆 互不依赖）→ 回合2 → 骰子 SetSeed → 重绑 → `switch(CurrentPhase)`；禁重建 A 时读尚未重建的 B（ADR-0005）。round-trip identity：存档前快照 == 读档后快照，逐字段 identity-check（可证伪，无"调参直到通过"逃逸）（ADR-0005）。序列化字段名须逐字对齐各 owner GDD（ADR-0005）。
   - **Forbidden**：**Never 重复存派生量/`bIsBankrupt`/`bIsInJail`/MVP 骰子 Seed**（ADR-0005）；Never 序列化全量棋盘布局（存 DA 引用不存布局）（ADR-0005）。

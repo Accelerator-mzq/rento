@@ -21,10 +21,10 @@ Last Updated: 2026-06-06
 - **Engine**: Unreal Engine 5.7（Blueprint 为主 + C++ 框架）— **Risk: LOW**（ADR-0005：`USaveGame`/`SaveGameToSlot`/`LoadGameFromSlot` 是 pre-5.3 稳定 API，post-cutoff 无破坏性变更）
 - **Engine Notes（ADR-0005 Engine Compatibility）**:
   - Post-Cutoff APIs Used: **None** — 全部用 pre-5.3 稳定持久化 API。
-  - Verification Required: ① `UPROPERTY(SaveGame)` 对嵌套 USTRUCT（`FPlayerState`/`FDiceRollResult`）与 `TArray`/`TMap` 递归序列化在 5.7 仍按预期工作（写 round-trip 冒烟）；② `FObjectAndNameAsStringProxyArchive` 对 `UPROPERTY(SaveGame)` 过滤行为不变。
+  - Verification Required: ① `UPROPERTY(SaveGame)` 对嵌套 USTRUCT（`FPlayerState`/`FDiceRollResult`）与 `TArray`/`TMap` 递归序列化在 5.7 仍按预期工作（写 round-trip 冒烟）；② `FObjectAndNameAsStringProxyArchive` 对 `UPROPERTY(SaveGame)` 过滤行为不变。**（⚠ 实证修正见下方 Completion Notes G7：内置 save 不按 SaveGame 过滤、全量序列化；正确性靠容器只装应存字段。）**
   - **读档恢复时序陷阱（GDD L401）**：dynamic multicast delegate 绑定列表（invocation list）不序列化——只序列化 `ETurnPhase` 等数据字段，读档后由各下游重新 `AddDynamic`/`AddUniqueDynamic` 重建绑定。关键顺序：① 反序列化所有 PlayerState/阶段字段 → ② 各下游重绑 delegate → ③ 才允许 TurnManager 续行/广播任何事件。若 ② 之前 TurnManager 在 `PostLoad` 即按 `CurrentPhase` 广播 `OnPhaseChanged`，监听者尚未重绑→该次广播丢失。
 - **Control Manifest Rules（Foundation Layer）**:
-  - **Required**: 全字段标 `UPROPERTY(SaveGame)`；`SaveGameToSlot` 经 `FObjectAndNameAsStringProxyArchive` 自动过滤 SaveGame 标记属性（source: ADR-0005）。读档重建拓扑序：DA→(经济/地产/建房/事件格牌堆 互不依赖)→回合2→骰子 SetSeed→重绑→`switch(CurrentPhase)`；禁重建 A 时读尚未重建的 B（source: ADR-0005）。delegate 重绑——存档21 只广播 `OnGameLoaded`，呈现层监听后各自先 Unbind 后 Bind（source: ADR-0005）。读档重绑纪律——`OnGameLoaded` 后先全量解绑呈现层既有订阅（防 EC-8 双订阅），再按权威订阅矩阵重绑（source: ADR-0003）。
+  - **Required**: 全字段标 `UPROPERTY(SaveGame)`；`SaveGameToSlot` 经 `FObjectAndNameAsStringProxyArchive` ~~自动过滤 SaveGame 标记属性~~ **序列化全部非 transient UPROPERTY（⚠ 实证修正见 Completion Notes G7：内置 save 不过滤；正确性靠容器只装应存字段）**（source: ADR-0005）。读档重建拓扑序：DA→(经济/地产/建房/事件格牌堆 互不依赖)→回合2→骰子 SetSeed→重绑→`switch(CurrentPhase)`；禁重建 A 时读尚未重建的 B（source: ADR-0005）。delegate 重绑——存档21 只广播 `OnGameLoaded`，呈现层监听后各自先 Unbind 后 Bind（source: ADR-0005）。读档重绑纪律——`OnGameLoaded` 后先全量解绑呈现层既有订阅（防 EC-8 双订阅），再按权威订阅矩阵重绑（source: ADR-0003）。
   - **Forbidden**: Never 重排枚举整数索引（破坏旧存档兼容）（source: ADR-0005）。Never 重复存派生量/`bIsBankrupt`/`bIsInJail`/MVP 骰子 Seed（source: ADR-0005）。Never 在状态机用 `FTimerHandle`/Latent Action——不可序列化、读档无法 `switch(CurrentPhase)` 重入（source: ADR-0001/0005）。Never 手写 `FArchive Serialize()` 流（读写顺序须人工对齐、错位即静默损坏）（source: ADR-0005）。
   - **Guardrail**: 存档非帧路径，gameplay 16.6ms 帧不受影响；读档反序列化 + 重建 < 1s（source: ADR-0005）。
 
@@ -98,5 +98,5 @@ Last Updated: 2026-06-06
 - **设计偏离登记**：DV-1 `URentoPlayerState` 是 UObject（story-001 选）→ 序列化用 `FPlayerStateRecord` 值记录绕开 UObject 指针；DV-2 roll-context holder per-player（story-005/006）→ `FDiceRollResult` 进每条记录（非 ADR 设想的回合2 单顶层）。信息等价。
 
 ### Follow-up（producer propagate，非 BLOCKING）
-- **OQ-Save propagate**：ADR-0005 §Verification-Required② + control-manifest "SaveGameToSlot 自动过滤 SaveGame 标记属性" 经引擎源码实证为**假**（内置 save 不过滤）→ producer 更新 ADR-0005/control-manifest 措辞（不在本 story 范围内改 ADR 正文）。
+- **OQ-Save propagate ✅ RESOLVED（2026-06-08）**：ADR-0005 §Verification-Required② + control-manifest "SaveGameToSlot 自动过滤 SaveGame 标记属性" 经引擎源码实证为**假**（内置 save 不过滤）→ 已更新 ADR-0005（加 Implementation Finding callout + 改正 VR②/分叉A/IG#1/Alt-1）+ control-manifest（L78/L114/L396）+ dice-rng story-008（验证注）措辞；fresh-grep 全集核实无残留 stale 断言。
 - **save-load epic 集成债**：跨系统读档拓扑序 DA→经济/地产/建房/牌堆→回合2→骰子 SetSeed→重绑→switch 的**上游腿**（DA/经济/…）由存档21 编排；本 story 提供回合2 腿 + Capture/Restore/Resume/CanSaveNow 契约 + 读档重建时序。完整跨系统集成测试归 save-load epic。

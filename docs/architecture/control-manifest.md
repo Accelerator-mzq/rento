@@ -75,7 +75,7 @@ ADR 解释**为什么**,本表告诉你**做什么 / 绝不做什么**。
 - Seed 序列化:MVP 不序列化 Seed(当前骰由 player-turn 序列化完整 `FDiceRollResult` 保护);Full Vision 重放经 `GetCurrentSeed()` 显式存取 — source: ADR-0004/0005
 
 **存档序列化 (ADR-0005)**
-- **全字段标 `UPROPERTY(SaveGame)`**;`SaveGameToSlot` 经 `FObjectAndNameAsStringProxyArchive` 自动过滤 SaveGame 标记属性 — source: ADR-0005
+- **全字段标 `UPROPERTY(SaveGame)`**;`SaveGameToSlot`（内部 `SaveGameToMemory`）经 `FObjectAndNameAsStringProxyArchive` 序列化全部非 transient `UPROPERTY`。⚠ **机制修正(2026-06-08 pt-008 实证)**:内置 save 路径**不按 SaveGame 过滤**(不设 `ArIsSaveGame`,`Archive.h:620`/`Property.cpp:1034`);round-trip 正确性靠「`USaveGame` 容器只装 CR-3 应存字段」非过滤;**勿往容器加不应持久化的 transient 字段**(无过滤兜底,会被全量序列化) — source: ADR-0005
 - **新增 CR-3 字段必须同步**:(a) 标 `UPROPERTY(SaveGame)`;(b) 登记 `FieldManifest`;(c) `CURRENT_SAVE_VERSION += 1`(AC-25 code-review 核对) — source: ADR-0005
 - **读档前置完整性门顺序**:magic → version → checksum → manifest,短路求值,任一假即 `ESaveResult` 失败码 + **不广播 `OnGameLoaded`** + 当前对局不破坏 — source: ADR-0005
 - **写盘原子性**:先写临时文件 → CRC32 校验 → `IFileManager::Move` 原子替换 `SLOT_DEFAULT`;`Move` 失败不破坏旧档 — source: ADR-0005
@@ -111,7 +111,7 @@ ADR 解释**为什么**,本表告诉你**做什么 / 绝不做什么**。
 - **Never 用 `FRandomStream()` 默认构造(种子恒 0)初始化任何流** — 忘 SetSeed 的对局掷出相同确定序列 — source: ADR-0004
 - **Never 在 `Min>Max` 时自动 swap** — swap 静默掩盖参数反向 bug — source: ADR-0004
 - **Never 用 `UBlueprintFunctionLibrary` 作权威流宿主** — 无状态静态、不能持实例流 — source: ADR-0004
-- **Never 用 JSON/文本序列化存档** — 须手写 JSON↔struct 映射,失去 `UPROPERTY(SaveGame)` 自动过滤 — source: ADR-0005
+- **Never 用 JSON/文本序列化存档** — 须手写 JSON↔struct 映射,失去 `UPROPERTY` 反射自动序列化(注:内置二进制路径本不按 SaveGame 过滤,见 ADR-0005 Implementation Finding) — source: ADR-0005
 - **Never 在 MVP 实现完整版本迁移框架** — MVP 单槽,迁移路径本身成 bug 源(save-load F-2 已裁严格相等不迁移) — source: ADR-0005
 - **Never 序列化全量棋盘布局** — 静态布局由 DA 重建;存 DA 引用不存布局 — source: ADR-0005
 - **Never 手写 `FArchive Serialize()` 流** — 读写顺序须人工对齐、错位即静默损坏、无编译期保护 — source: ADR-0005
@@ -393,7 +393,7 @@ ADR 解释**为什么**,本表告诉你**做什么 / 绝不做什么**。
 | 5 | `USoundSubmix` + `PushSoundMixModifier` 是否被新 Audio Modulation/Audio Bus 部分替代(影响三路混音 + `SetBusVolume`);`UAudioComponent::SetFloatParameter(FName,float)` 5.7 签名;MetaSound 在 `-nullrhi` 参数注入可否 mock | ADR-0010 | MEDIUM |
 | 6 | `UAssetManager` 同步/异步加载 Primary DA 的 5.7 API 签名;DataTable CSV 含 `TArray` 列报错二次确认;Blueprint `Floor(float)→int32` 重载类型推导 | ADR-0002 | MEDIUM |
 | 7 | `UWorldSubsystem::Initialize/Deinitialize` 随 PIE World 正确触发;`OnWorldBeginPlay` 在 PIE Stop→Start 重触发;`Deinitialize` `CancelHandle` 后无悬挂回调 | ADR-0001 | LOW |
-| 8 | `UPROPERTY(SaveGame)` 嵌套 USTRUCT/`TArray`/`TMap` 递归序列化 round-trip 冒烟;`FObjectAndNameAsStringProxyArchive` 过滤行为;Windows/Steam `IFileManager::Move` 原子替换语义 | ADR-0005 | LOW |
+| 8 | ✅ **已验证(2026-06-08 pt-008)**:`UPROPERTY(SaveGame)` 嵌套 USTRUCT/`TArray` 递归序列化 round-trip 恒等(237 测试绿);`FObjectAndNameAsStringProxyArchive` 过滤行为=**内置 save 不过滤全量序列化**(修正,见 ADR-0005 Implementation Finding)。剩:Windows/Steam `IFileManager::Move` 原子替换语义(存档21 实现期验) | ADR-0005 | LOW |
 | 9 | Substrate Unlit 节点存在性;Post Process Material 在 5.7 Substrate 体系接口;Inverted Hull 在 Substrate 开启后兼容性;Legacy Unlit 是否 warning-only(确认非 hard break) | ADR-0009 | MEDIUM |
 | 10 | `DYNAMIC_MULTICAST_DELEGATE` 裸 `TArray` 作 BlueprintAssignable 仍编译失败(`OnTurnOrderResolved` 须包 USTRUCT);BP `AddDynamic`/`RemoveDynamic` 读档重绑幂等性 | ADR-0003 | LOW |
 
