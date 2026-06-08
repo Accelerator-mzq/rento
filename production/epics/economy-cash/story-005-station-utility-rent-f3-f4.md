@@ -1,7 +1,7 @@
 # Story 005: 车站/公用租金 F-3/F-4 (count guards + dice_total PULL)
 
 > **Epic**: 经济与现金 Economy & Cash
-> **Status**: Ready
+> **Status**: Complete
 > **Layer**: Core
 > **Type**: Logic
 > **Estimate**: [TBD]
@@ -29,11 +29,11 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-14** `rent=RentTable[station_count−1]`：station=2 → `RentTable[1]`；station=4 → `RentTable[3]`。
-- [ ] **AC-15** [关键 guard] station=0（所有权6 竞态）→ rent==0、不查 `[−1]`、不崩 + dev ensure（`AddExpectedError`）。
-- [ ] **AC-16** `rent=dice_total × DiceMultiplierTable[utility_count−1]`：count=1, dice=7, mult=4 → 28。
-- [ ] **AC-17** [关键 guard] utility_count=0 → rent==0、不查 `[−1]`、不崩 + ensure。
-- [ ] **AC-18** dice_total 是显式参数非缓存：两次传不同 dice_total（7/11，同 count）→ rent 各按传入算（28/44），证明不读缓存骰点（"前进到最近公用"额外骰正确）。
+- [x] **AC-14** `rent=RentTable[station_count−1]`：station=2 → `RentTable[1]`；station=4 → `RentTable[3]`。
+- [x] **AC-15** [关键 guard] station=0（所有权6 竞态）→ rent==0、不查 `[−1]`、不崩 + dev ensure（`AddExpectedError`）。
+- [x] **AC-16** `rent=dice_total × DiceMultiplierTable[utility_count−1]`：count=1, dice=7, mult=4 → 28。
+- [x] **AC-17** [关键 guard] utility_count=0 → rent==0、不查 `[−1]`、不崩 + ensure。
+- [x] **AC-18** dice_total 是显式参数非缓存：两次传不同 dice_total（7/11，同 count）→ rent 各按传入算（28/44），证明不读缓存骰点（"前进到最近公用"额外骰正确）。
 
 ---
 
@@ -70,8 +70,34 @@
 ## Test Evidence
 
 **Story Type**: Logic
-**Required evidence**: `tests/unit/economy-cash/station_utility_rent_test.cpp`（类目 `Rento.Economy.StationUtilityRent`）— 存在且通过。
-**Status**: [ ] Not yet created
+**Required evidence**: `tests/unit/economy-cash/station_utility_rent_test.cpp`（物理 `Source/rentoTests/Private/StationUtilityRentTest.cpp`，类目 `Rento.Economy.StationUtilityRent`）— 存在且通过。
+**Status**: [x] 6 TC 全通过（TC1 车站公式/TC2 车站guard+负值/TC3 公用公式/TC4 公用guard+负值/TC5 dice_total显式非缓存/TC6 dice_total≤0防线）
+
+---
+
+## Completion Notes（2026-06-09，mode-A 主会话亲写）
+
+**实现**（caller-injected，复用 econ-004 模式）：
+- `ComputeRailroadRent(StationCount, RentTable)` — F-3：`RentTable[clamp(station−1,0,3)]`，守 station≥1 否则 0。
+- `ComputeUtilityRent(UtilityCount, DiceTotal, DiceMultiplierTable)` — F-4：`DiceTotal × DiceMultiplierTable[clamp(utility−1,0,1)]`，守 utility≥1 否则 0。
+- 常量 `RAILROAD_STATION_MAX=4`/`UTILITY_COUNT_MAX=2`。**收租転移+广播复用 econ-004 `SettleRent`**（无新 settlement，story L49）。
+
+**AC-18 关键（dice_total 显式非缓存）**：`DiceTotal` 是纯函数参数，economy **无 dice 成员缓存**（grep 核实 header 仅 doc/参数提及，零 UPROPERTY dice 字段）。调用方（player-turn ResolvePhase）经回合2 holder `GetCurrentRollTotal()` PULL 后显式传入（pt-005/006/007 已实现）。TC5 两次不同 dice_total（7/11→28/44）坐实。count<1 dev 信号 **UE_LOG(Error) 替 ensure**（同 econ-003/004 逸脱）。
+
+**对抗 review（unreal-specialist）= APPROVED-WITH-CONCERNS**（无 blocker，逐行验证 RentTable[−1] 回避/dice 非缓存/整数纯净）。采纳：
+- **C-1**（TC1 缺 station=3 中间 index）→ 加 station=3→RentTable[2]==100。
+- **C-2**（TC2/4 缺负值覆盖）→ 加 station=−1/utility=−1（AddExpectedError 升 2）。
+- **C-3**（DiceTotal≤0 无 guard → 负 rent）→ 加 economy 侧独立防线 `DiceTotal≤0→0+dev log`（不返负值，对称 count guard + econ-003 防御姿势）+ TC6。
+- **NIT-1** 注释（空表早返保证 Num≥1）；NIT-2 无动作（补完关系）。
+
+**全证（主会话亲跑，铁律）**：
+- Build Succeeded；全量 **298/298**（292 基线 + 6 StationUtilityRent，0 Fail/0 notRun/EXIT 0，零回归，`Saved/TestReport_econ005_hardened`）。
+- **变异坐实非 vacuous**：变异A（去 station guard）→ **仅 TC2 FAIL**（精密杀，`mutA`）；变异B（公用忽略 DiceTotal 硬编码 7）→ **仅 TC5 FAIL**（dice=11 检出，TC3 dice=7 偶合绿，证 AC-18 精密 live，`mutB`）；均还原复绿。
+- 权威纯净 grep：economy 零随机 + 无 dice_total 成员缓存。
+
+**协调债 / propagate**：
+- **🔴 C-1 追踪债（同 econ-004）**：`IEconomyResolver::CalculateRent(FRentInput)` 的 board 读取 + dispatch（ComputePropertyRent/Railroad/Utility）+ player-turn 注入 仍 defer 到 property6/building8 wiring story（FRentInput 的 station_count/utility_count/dice_total 由回合2 聚合，现 pt-007 mock）。
+- DiceMultiplierTable≤DICE_MULT_MAX=1e6 board 加载 fatal 已落 AC-23j；事件7 "前进到最近公用"额外骰 SetCurrentRollContext 注入 holder 待 tile-events epic（机制已实现）。
 
 ---
 

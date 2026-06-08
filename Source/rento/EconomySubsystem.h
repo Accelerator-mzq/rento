@@ -155,6 +155,26 @@ public:
     bool SettleRent(int32 PayerId, int32 PayeeId, int32 RentAmount, int32 TileIndex);
 
     /**
+     * 车站租金 F-3（纯函数；CR-3）：rent = RentTable[clamp(station_count−1, 0, 3)]。
+     *   守 station_count≥1 否则 0（防 RentTable[−1]，AC-15；count 来自地产6 不假设其正确）。
+     *   station_count 由地产6 快照经回合2 聚合传入（economy 不直读 6，防环 ADR-0006）。
+     * @return 应付租金 ≥0（无站/空表→0）。
+     */
+    UFUNCTION(BlueprintCallable, Category="Economy|Rent")
+    int32 ComputeRailroadRent(int32 StationCount, const TArray<int32>& RentTable) const;
+
+    /**
+     * 公用租金 F-4（纯函数；CR-3 / ADR-0015）：rent = dice_total × DiceMultiplierTable[clamp(utility_count−1, 0, 1)]。
+     *   守 utility_count≥1 否则 0（防 [−1]，AC-17）；dice_total≤0（holder/上游异常）亦置 0（economy 独立防线，不返负值，CONCERN-3）。
+     *   **dice_total 显式参数**（非 economy 缓存，AC-18）：调用方经回合2 holder GetCurrentRollTotal() PULL 当前程骰点后传入
+     *     （"前进到最近公用"额外骰经事件7 SetCurrentRollContext 注入 holder，调用方 PULL 取注入值）。economy 不反读移动、不缓存 dice。
+     *   溢出境界：dice_total∈[2,12]（dice 有界）× DiceMultiplierTable≤1e6（board 加载 fatal AC-23j）= 1.2e7 < INT32_MAX。
+     * @return 应付租金 ≥0（无公用/空表→0）。
+     */
+    UFUNCTION(BlueprintCallable, Category="Economy|Rent")
+    int32 ComputeUtilityRent(int32 UtilityCount, int32 DiceTotal, const TArray<int32>& DiceMultiplierTable) const;
+
+    /**
      * 发放起始资金（数据驱动 Tuning Knob StartingCash，经 Credit 入账，reason=Salary 入账 faucet）。
      * @param PlayerId 玩家 ID
      */

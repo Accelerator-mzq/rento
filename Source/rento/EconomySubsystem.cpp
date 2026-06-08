@@ -223,6 +223,10 @@ namespace
     constexpr int32 SALARY_AMOUNT_SAFE_MAX = 2000000;
     // 地产房屋档位上界（econ-004 F-2）：0=无房 .. 5=酒店；clamp 防建房8 越界。
     constexpr int32 PROPERTY_HOUSE_MAX = 5;
+    // 车站持有数上界（econ-005 F-3）：1..4 站 → index 0..3。
+    constexpr int32 RAILROAD_STATION_MAX = 4;
+    // 公用持有数上界（econ-005 F-4）：1..2 → index 0..1。
+    constexpr int32 UTILITY_COUNT_MAX = 2;
 }
 
 // =============================================================================
@@ -335,6 +339,71 @@ bool UEconomySubsystem::SettleRent(int32 PayerId, int32 PayeeId, int32 RentAmoun
     Info.TileIndex = TileIndex;
     OnRentPaid.Broadcast(Info);
     return true;
+}
+
+// =============================================================================
+// ComputeRailroadRent —— 车站租金 F-3（纯函数）
+// =============================================================================
+int32 UEconomySubsystem::ComputeRailroadRent(int32 StationCount, const TArray<int32>& RentTable) const
+{
+    // 守 station_count≥1（AC-15 关键 guard）：无站置 0，不查 RentTable[−1]，dev 信号暴露地产6 竞态。
+    if (StationCount < 1)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::ComputeRailroadRent: station_count=%d < 1 -- rent 0 (ownership race?)"),
+            StationCount);
+        return 0;
+    }
+
+    if (RentTable.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::ComputeRailroadRent: RentTable empty -- rent 0"));
+        return 0;
+    }
+
+    // index = clamp(station−1, 0, 3) ∩ [0,Num-1]（双重 clamp 防表短越界；station>4 静默兜底）。
+    const int32 MaxIndex = FMath::Min(RAILROAD_STATION_MAX - 1, RentTable.Num() - 1);
+    const int32 Index    = FMath::Clamp(StationCount - 1, 0, MaxIndex);
+    return RentTable[Index];
+}
+
+// =============================================================================
+// ComputeUtilityRent —— 公用租金 F-4（纯函数，dice_total 显式参数 AC-18）
+// =============================================================================
+int32 UEconomySubsystem::ComputeUtilityRent(int32 UtilityCount, int32 DiceTotal, const TArray<int32>& DiceMultiplierTable) const
+{
+    // 守 utility_count≥1（AC-17 关键 guard）：无公用置 0，不查 [−1]，dev 信号暴露地产6 竞态。
+    if (UtilityCount < 1)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::ComputeUtilityRent: utility_count=%d < 1 -- rent 0 (ownership race?)"),
+            UtilityCount);
+        return 0;
+    }
+
+    // dice_total 防御（economy 侧独立防线，对抗 review CONCERN-3）：≤0 = holder/上游异常
+    //   （ADR-0015 holder 应保 dice_total∈[2,12]）；拒绝算负/零租、不返负值，dev log 暴露上游 bug。
+    if (DiceTotal <= 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::ComputeUtilityRent: dice_total=%d <= 0 -- rent 0 (holder/upstream bug)"),
+            DiceTotal);
+        return 0;
+    }
+
+    if (DiceMultiplierTable.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::ComputeUtilityRent: DiceMultiplierTable empty -- rent 0"));
+        return 0;
+    }
+
+    // index = clamp(utility−1, 0, 1) ∩ [0,Num-1]；rent = dice_total（显式参数，不缓存）× 倍率。
+    //   Num()≥1 由上方空表早返保证（NIT-1：MaxIndex 的 Num-1≥0 依赖此顺序）。
+    const int32 MaxIndex = FMath::Min(UTILITY_COUNT_MAX - 1, DiceMultiplierTable.Num() - 1);
+    const int32 Index    = FMath::Clamp(UtilityCount - 1, 0, MaxIndex);
+    return DiceTotal * DiceMultiplierTable[Index];
 }
 
 // =============================================================================
