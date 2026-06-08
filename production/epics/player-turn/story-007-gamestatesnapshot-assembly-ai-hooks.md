@@ -1,6 +1,6 @@
 ---
 Epic: player-turn
-Status: Ready
+Status: Complete
 Layer: Core
 Type: Integration
 Estimate: L
@@ -82,8 +82,23 @@ Last Updated: 2026-06-06
 ## Test Evidence
 
 - **Type**: Integration
-- **Path**: `tests/integration/player-turn/gamestatesnapshot_assembly_ai_hooks_test.cpp`
-- **Status**: 未创建（待 dev-story 实现）
+- **Path**: `Source/rentoTests/Private/GameStateSnapshotAiHooksTest.cpp`（类目 Rento.PlayerTurn.GameStateSnapshotAiHooks）
+- **Status**: ✅ 已实现并通过。全 10 AC 覆盖，全量 Rento. **224/224 Success, 0 Fail, 0 notRun, EXIT 0**（证据 `Saved/TestReport_pt007C2_final/index.json`）。
+
+## Completion Notes（2026-06-08，mode-A workflow-assisted，三簇串行）
+
+本 story 因体量（10 AC + GameStateSnapshot 值语义 + 4 AI hook + 3 规则系统接缝 + 聚合编排）拆 **三簇串行 mode-A** 实现，每簇 implement(unreal-specialist 带逐字代码级 LOCKED brief)→独立 verify(亲跑 Build+Automation+grep)→对抗 review→主会话 human-on-halt 亲跑复核+关键 AC 变异+commit：
+
+- **簇A（AC-1/3/37d）commit 3a2e0ca**：`FGameStateSnapshot`/`FTileSnapshotEntry` 值语义结构（逐字对齐 ADR-0006）+ `IAIDecisionMaker` 纯C++ 4 hook + `RunAiPostRollActions` 执行路径 + `AIDecisionMakerSpy`。
+- **簇B（AC-5/6/10）commit 8e540de**：`IActionValidator` 逐动作执行期重校（不可行静默跳过）+ `RunAiJailAction` 失败降级留狱（PayBail Cash<bail / UseCard 无卡 → JailTurnsServed+1）+ `ResolveAuctionBid` 纯函数 sentinel 值域。
+- **簇C1（AC-2/4/7）commit b7dff06**：`IOwnershipProvider`/`IBuildingProvider`/`IEconomyResolver` 3 纯C++接缝 + `AssembleSnapshot`（const，Rent_top1/2 降序取前二 + per-tile PreaggregatedNlv 装配期算）+ `RunAiBuyDecision`（AI hook + ExecutePurchase + AC-38b 不可行视同不买）+ `SettleRentOnArrival`（BuildOwnershipSnapshot/CalculateRent 各恰1次 + dice_total PULL + house_count 缺省0）。
+- **簇C2（AC-8/9）本次 commit**：3 接缝追加 `Mortgage`/`ForcedSellNextBuilding`/`IsInsolvent` + `RunForcedLiquidation`（CR-3.3 强制清算循环：mortgage-empty-first 止损优先 + 抵押前读 GetHouseCount==0〔AC-50〕 + Cash≥amount_due 早停 + 有界终止）+ `CheckInsolvencyWithNlv`（CR-3.4 破产 NLV 全组合聚合：GetPlayerBuildings 恰1次 + Σ house×floor(cost/2)+Σ MV未抵押地 + IsInsolvent 恰1次 + zero economy→8 反向环）。
+
+**关键 logged decisions**：① DecideBuyProperty(S,TileIndex) 代 ADR 的 (S,FPropertyData)（FPropertyData 未实现）；② `FTileSnapshotEntry.PreaggregatedNlv` 取「per-tile 清算贡献」语义（FGameStateSnapshot 无 top-level nlv 字段，AI 求和零 provider 访问不破反向环纪律）；③ jail card 可行性读 `Snapshot.bHasJailCard`（owner=事件7，未入 PlayerState）；④ 框架从不写 Cash（spy 模拟抬升）；⑤ `OnAIActionExecuted` 不广播（归 story-004）；⑥ ResolveBankruptcy/OnGameWon 不在本 story（pt-003 已 done）。
+
+**主会话独立坐实**：四簇每簇亲跑 Build.bat + 全量 UnrealEditor-Cmd Automation + grep index.json（total 逐簇 211→217→221→224，0 Fail/notRun，EXIT 0）+ 关键 AC 变异坐实非 vacuous（簇B AC-39b 强制 PayBail 恒可行→TC39b1 FAIL；C1 AC-2 Rent_top 降序→升序→TC-2 FAIL；C2 AC-9 NLV 不排除已抵押→TC9 FAIL；均还原复绿）。
+
+**遗留（非本 story 阻塞，下游 epic 履行）**：AI 决策内部逻辑（ai-opponent epic 消费本系统装配的 snapshot）；经济/建房/所有权真实规则实现（各 epic 替换 mock provider）；AssembleSnapshot 全棋盘迭代源（board-data 提供真实 tile 集合，当前经 GetBoardOwnership 注入）；性能 AC-S6/S7（nightly，ADR-0006）。
 
 ## Dependencies
 

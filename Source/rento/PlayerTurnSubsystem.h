@@ -589,6 +589,43 @@ public:
     int32 SettleRentOnArrival(int32 PayerId, int32 TileIndex);
 
     // =========================================================================
+    // pt-007 簇 C2：强制清算 + 破产 NLV 聚合（AC-8 / AC-9）
+    // =========================================================================
+
+    /**
+     * 强制清算循环（AC-8，GDD AC-50/AC-51 / CR-3.3）。
+     *
+     * 执行循环（有界终止，SafetyGuard <= MaxIterations=1000）：
+     *   while (Cash < AmountDue)：
+     *     ① mortgage-empty-first（AC-51 ①）：owner==player ∧ 未抵押 ∧ house==0 → Mortgage（选 MV 最小）
+     *     ② 否则若有建筑（house>0）→ ForcedSellNextBuilding（AC-51 ②，卖房腿）
+     *     ③ 资产耗尽 → CheckInsolvencyWithNlv → return !IsInsolvent
+     *   Cash >= AmountDue → return true（偿付成功早停）
+     *
+     * 框架从不写 Cash（Cash 由 spy 的 Mortgage/ForcedSellNextBuilding 模拟抬升；框架只读 PS->Cash）。
+     *
+     * @param PlayerId  债务玩家 PlayerId
+     * @param AmountDue 应付金额
+     * @return true=偿付成功；false=破产（资不抵债）
+     */
+    bool RunForcedLiquidation(int32 PlayerId, int32 AmountDue);
+
+    /**
+     * 破产 NLV 聚合 + IsInsolvent 判据（AC-9，GDD AC-52 / CR-3.4）。
+     *
+     * 计算公式（恰一次）：
+     *   nlv = Σ house_count × floor(BuildingCost/2) + Σ MortgageValue（未抵押 owned 地）
+     *   调 IsInsolvent(PlayerId, AmountDue, nlv) 恰 1 次（economy 不反向调 8，CR-3.4 ②）
+     *
+     * 同时是 TC-9 直驱入口（绕过完整清算循环，直接验 NLV 聚合）。
+     *
+     * @param PlayerId  债务玩家 PlayerId
+     * @param AmountDue 应付金额
+     * @return true=破产（IsInsolvent 返回 true）；false=尚可偿付
+     */
+    bool CheckInsolvencyWithNlv(int32 PlayerId, int32 AmountDue);
+
+    // =========================================================================
     // pt-007 簇 B：IActionValidator DI + RunAiJailAction + ResolveAuctionBid
     // =========================================================================
 

@@ -10,6 +10,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "RuleProviderInterfaces.h"
+#include "RentoPlayerState.h"   // spy 抬 Cash 需写 PS->Cash（C2 追加）
 
 // 所有权6 spy
 struct FOwnershipProviderSpy final : public IOwnershipProvider
@@ -33,6 +34,26 @@ struct FOwnershipProviderSpy final : public IOwnershipProvider
     {
         ++GetBoardOwnershipCallCount;
         return BoardToReturn;
+    }
+
+    // —— C2 追加 ——
+    int32 MortgageCallCount = 0;
+    int32 LastMortgageTile  = INDEX_NONE;
+    URentoPlayerState* CashTarget = nullptr;    // 抵押后抬其 Cash（模拟经济5 增现金）
+    int32 MortgageCashGain = 0;
+    TArray<FString>* CallLog = nullptr;         // 共享调用序日志（AC-51 顺序断言）
+
+    virtual void Mortgage(int32 TileIndex) override
+    {
+        ++MortgageCallCount;
+        LastMortgageTile = TileIndex;
+        if (CallLog) { CallLog->Add(TEXT("Mortgage")); }
+        // 标记该格已抵押（下次 GetBoardOwnership 返回的板面排除它，避免重复抵押同格）
+        for (FOwnershipSnapshot& OS : BoardToReturn)
+        {
+            if (OS.TileIndex == TileIndex) { OS.bIsMortgaged = true; break; }
+        }
+        if (CashTarget) { CashTarget->Cash += MortgageCashGain; } // 模拟抵押增现金
     }
 };
 
@@ -63,6 +84,20 @@ struct FBuildingProviderSpy final : public IBuildingProvider
         const int32* F = BuildingCostByTile.Find(TileIndex);
         return F ? *F : 0;
     }
+
+    // —— C2 追加 ——
+    int32 ForcedSellCallCount = 0;
+    URentoPlayerState* CashTarget = nullptr;    // 卖房后抬其 Cash
+    int32 SellCashGain = 0;
+    TArray<FString>* CallLog = nullptr;         // 共享调用序日志
+
+    virtual void ForcedSellNextBuilding(int32 /*PlayerId*/) override
+    {
+        ++ForcedSellCallCount;
+        if (CallLog) { CallLog->Add(TEXT("ForcedSell")); }
+        if (CashTarget) { CashTarget->Cash += SellCashGain; } // 模拟卖房增现金
+        // 注：本 spy 不降 house_count（测试用 Cash 抬升早停终止；如需多次卖房测试可扩展）
+    }
 };
 
 // 经济5 spy
@@ -86,5 +121,21 @@ struct FEconomyResolverSpy final : public IEconomyResolver
     {
         ++ExecutePurchaseCallCount;
         return ExecutePurchaseResult;
+    }
+
+    // —— C2 追加 ——
+    bool  IsInsolventResult = false;
+    int32 IsInsolventCallCount = 0;
+    int32 LastInsolvencyPlayerId = INDEX_NONE;
+    int32 LastInsolvencyAmountDue = 0;
+    int32 LastInsolvencyNlv = 0;
+
+    virtual bool IsInsolvent(int32 PlayerId, int32 AmountDue, int32 PreaggregatedNlv) override
+    {
+        ++IsInsolventCallCount;
+        LastInsolvencyPlayerId  = PlayerId;
+        LastInsolvencyAmountDue = AmountDue;
+        LastInsolvencyNlv       = PreaggregatedNlv;
+        return IsInsolventResult;
     }
 };

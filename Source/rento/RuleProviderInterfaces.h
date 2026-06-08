@@ -9,10 +9,10 @@
 //   - 无 economy→8 / economy→6 反向边（CR-3.3/3.4；C2 spy 验证 zero 5→8 calls）
 //
 // 值语义 struct：全 POD，值拷贝跨接缝（property AC-30b：BuildOwnershipSnapshot 值拷贝）。
-// C1 方法集（C2 将追加 Mortgage/ForcedSellNextBuilding/is_insolvent）：
-//   IOwnershipProvider: BuildOwnershipSnapshot / GetBoardOwnership
-//   IBuildingProvider:  GetHouseCount / GetPlayerBuildings / GetBuildingCost
-//   IEconomyResolver:   CalculateRent / ExecutePurchase
+// C1 方法集（C2 已追加 Mortgage/ForcedSellNextBuilding/IsInsolvent）：
+//   IOwnershipProvider: BuildOwnershipSnapshot / GetBoardOwnership / Mortgage
+//   IBuildingProvider:  GetHouseCount / GetPlayerBuildings / GetBuildingCost / ForcedSellNextBuilding
+//   IEconomyResolver:   CalculateRent / ExecutePurchase / IsInsolvent
 // =============================================================================
 #pragma once
 #include "CoreMinimal.h"
@@ -57,6 +57,9 @@ public:
     virtual FOwnershipSnapshot BuildOwnershipSnapshot(int32 ViewerId, int32 TileIndex) = 0;
     /** 全盘归属（一次性，AssembleSnapshot 用，避免逐格 round-trip）。 */
     virtual TArray<FOwnershipSnapshot> GetBoardOwnership(int32 ViewerId) = 0;
+
+    /** 抵押某格（强制清算腿，CR-3.3）。执行扣抵押增现金归经济5/所有权6（mock 模拟）。 */
+    virtual void Mortgage(int32 TileIndex) = 0;
 };
 
 // 建房8 注入接缝
@@ -70,6 +73,9 @@ public:
     virtual TArray<FPlayerBuilding> GetPlayerBuildings(int32 PlayerId) = 0;
     /** 某格建筑成本（NLV 口径 floor(BuildingCost/2)）。 */
     virtual int32 GetBuildingCost(int32 TileIndex) = 0;
+
+    /** 强制卖出玩家最高档建筑一栋（building F-4，CR-3.3 卖房腿）。 */
+    virtual void ForcedSellNextBuilding(int32 PlayerId) = 0;
 };
 
 // 经济5 注入接缝
@@ -82,4 +88,8 @@ public:
     /** 执行购买（经济5 扣款 + 所有权6 转移的执行期校验+执行）。
      *  @return true=已购买；false=不可行（Cash<Price / 地产已被买）→ 框架视同不买（AC-38b）。 */
     virtual bool ExecutePurchase(int32 PlayerId, int32 TileIndex) = 0;
+
+    /** 破产判据：接受外部预聚合 NLV（经济不反向调 8，CR-3.4）。
+     *  @return true=资不抵债（破产）；false=尚可偿付。 */
+    virtual bool IsInsolvent(int32 PlayerId, int32 AmountDue, int32 PreaggregatedNlv) = 0;
 };
