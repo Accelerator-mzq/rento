@@ -190,3 +190,97 @@ enum class ETurnPhase : uint8
 
     // ⚠ 新阶段只能追加到此处（ordinal >= 7），禁止删除/重排以上值（存档序列化依赖整数索引不变）。
 };
+
+// =============================================================================
+// EActionType — AI 可观察行动类型（HUD16 R-2 propagate 落定 OQ-HUD-12，owner=回合2）
+//   append-only（ADR-0003/ADR-0005）：禁删除/重排，尾部追加。
+// =============================================================================
+UENUM(BlueprintType)
+enum class EActionType : uint8
+{
+    None        = 0 UMETA(DisplayName="None"),
+    BuyProperty = 1 UMETA(DisplayName="Buy Property"),
+    BuildHouse  = 2 UMETA(DisplayName="Build House"),
+    Mortgage    = 3 UMETA(DisplayName="Mortgage"),
+    Unmortgage  = 4 UMETA(DisplayName="Unmortgage"),
+    Move        = 5 UMETA(DisplayName="Move"),
+    PayRent     = 6 UMETA(DisplayName="Pay Rent"),
+    Bankrupt    = 7 UMETA(DisplayName="Bankrupt"),
+    // ⚠ 新值尾部追加（ordinal>=8）
+};
+
+// OnPhaseChanged payload（AC-2/AC-3）
+USTRUCT(BlueprintType)
+struct RENTO_API FPhaseChangedInfo
+{
+    GENERATED_BODY()
+    /** 旧阶段 */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") ETurnPhase OldPhase = ETurnPhase::TurnStart;
+    /** 新阶段 */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") ETurnPhase NewPhase = ETurnPhase::TurnStart;
+    /** 当前行动玩家连续双点次数（无活跃玩家时为 0） */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") int32 ConsecutiveDoubles = 0;
+};
+
+// OnTurnStarted payload（AC-2）
+USTRUCT(BlueprintType)
+struct RENTO_API FTurnStartedInfo
+{
+    GENERATED_BODY()
+    /** 行动玩家 PlayerId */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") int32 PlayerId = INDEX_NONE;
+    /** 是否为 AI 玩家 */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") bool  bIsAI    = false;
+};
+
+// OnTurnEnded payload（AC-2/AC-4）
+USTRUCT(BlueprintType)
+struct RENTO_API FTurnEndedInfo
+{
+    GENERATED_BODY()
+    /** 结束回合的玩家 PlayerId（移交前） */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") int32 PlayerId        = INDEX_NONE;
+    /** 是否获得额外回合（双点且未入狱且未破产） */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") bool  bGrantsExtraTurn = false;
+};
+
+// OnTurnOrderResolved payload（AC-2/AC-5；OrderedPlayerIds 包入 struct，禁裸 TArray 作 delegate 参数）
+USTRUCT(BlueprintType)
+struct RENTO_API FTurnOrderResult
+{
+    GENERATED_BODY()
+    /** 按回合序（TurnOrderIndex）排列的 PlayerId 数组 */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") TArray<int32> OrderedPlayerIds;
+    /** 是否经席位升序裁定（达 MaxTiebreakRounds 或 DiceService 不可用） */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") bool bResolvedBySeatTiebreak = false;
+};
+
+// OnAIActionExecuted payload（AC-2/AC-6）
+USTRUCT(BlueprintType)
+struct RENTO_API FAIActionDetails
+{
+    GENERATED_BODY()
+    /** 本次广播动作在已执行序列中的 0-based 索引 */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") int32 ActionIndex     = INDEX_NONE;
+    /** 执行动作的 AI 玩家 PlayerId */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") int32 ActingPlayerId  = INDEX_NONE;
+    /** 目标格索引 */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") int32 TargetTileIndex = INDEX_NONE;
+    /** 金额占位（经济5 层未知，本层为 0） */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") int32 Amount          = 0;
+    /** HUD 可观察行动类型 */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") EActionType ActionType = EActionType::None;
+};
+
+// OnBuildingAnnounced payload（AC-7）
+USTRUCT(BlueprintType)
+struct RENTO_API FBuildingAnnouncedInfo
+{
+    GENERATED_BODY()
+    /** 建房格索引 */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") int32 TileIndex      = INDEX_NONE;
+    /** 新房屋数量 */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") int32 NewHouseCount  = 0;
+    /** 执行建房的玩家 PlayerId（取当前回合上下文，方案②） */
+    UPROPERTY(BlueprintReadOnly, Category="PlayerTurn|Events") int32 ActingPlayerId = INDEX_NONE;
+};

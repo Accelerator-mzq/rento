@@ -90,11 +90,20 @@ void UPlayerTurnSubsystem::SetPhase(ETurnPhase NewPhase)
         static_cast<int32>(NewPhase),
         CurrentActivePlayerId);
 
+    // 捕获旧阶段（story-004 AC-2 payload）
+    const ETurnPhase OldPhase = CurrentPhase;
+
     // 设置枚举字段（禁 Latent，ADR-0001 §4 钉死）
     CurrentPhase = NewPhase;
 
-    // 广播最小 seam delegate（story-004 在此 enrich payload）
-    OnPhaseChanged.Broadcast(NewPhase);
+    // 广播 FPhaseChangedInfo（story-004 AC-2/AC-3）：
+    //   ConsecutiveDoubles 取当前行动玩家（无活跃玩家=0），供 HUD 双点链呈现。
+    const URentoPlayerState* CurPS = FindPlayerById(CurrentActivePlayerId);
+    FPhaseChangedInfo PhaseInfo;
+    PhaseInfo.OldPhase           = OldPhase;
+    PhaseInfo.NewPhase           = NewPhase;
+    PhaseInfo.ConsecutiveDoubles = CurPS ? CurPS->ConsecutiveDoubles : 0;
+    OnPhaseChanged.Broadcast(PhaseInfo);
 }
 
 // ===========================================================================
@@ -233,6 +242,8 @@ bool UPlayerTurnSubsystem::InitializeFromConfig(const FGameSetupConfig& Config)
         {
             PlayerStates[i]->TurnOrderIndex = i;
         }
+        // 退化座位序=席位裁定性质（story-004 AC-5 标志）
+        bLastOrderResolvedBySeatTiebreak = true;
     }
 
     // -------------------------------------------------------------------------
@@ -245,6 +256,24 @@ bool UPlayerTurnSubsystem::InitializeFromConfig(const FGameSetupConfig& Config)
                  "TurnOrderIndex 唯一性校验失败，开局拒绝（AC-5）。"));
         PlayerStates.Empty();
         return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // 6b. 广播 OnTurnOrderResolved（story-004 AC-5：无平手正常定序也广播；席位裁定后也广播）
+    //     OrderedPlayerIds 按 TurnOrderIndex 排布；bResolvedBySeatTiebreak 来自定序函数标志。
+    // -------------------------------------------------------------------------
+    {
+        FTurnOrderResult OrderResult;
+        OrderResult.OrderedPlayerIds.SetNum(PlayerStates.Num());
+        for (const TObjectPtr<URentoPlayerState>& S : PlayerStates)
+        {
+            if (S && OrderResult.OrderedPlayerIds.IsValidIndex(S->TurnOrderIndex))
+            {
+                OrderResult.OrderedPlayerIds[S->TurnOrderIndex] = S->PlayerId;
+            }
+        }
+        OrderResult.bResolvedBySeatTiebreak = bLastOrderResolvedBySeatTiebreak;
+        OnTurnOrderResolved.Broadcast(OrderResult);
     }
 
     // -------------------------------------------------------------------------
@@ -332,6 +361,9 @@ void UPlayerTurnSubsystem::ResolveInitialTurnOrderWithTiebreak(
     {
         return;
     }
+
+    // story-004 AC-5：默认非席位裁定（RNG 定序）；下方席位升序裁定分支置 true
+    bLastOrderResolvedBySeatTiebreak = false;
 
     // -------------------------------------------------------------------------
     // 注入 rolls 游标（测试注入路径：每 P 个值对应一轮所有玩家）
@@ -479,6 +511,8 @@ void UPlayerTurnSubsystem::ResolveInitialTurnOrderWithTiebreak(
         const bool bIsLastRound = (Round == MaxTiebreakRounds - 1);
         if (bIsLastRound)
         {
+            // 经席位裁定（story-004 AC-5 标志 → OnTurnOrderResolved.bResolvedBySeatTiebreak=true）
+            bLastOrderResolvedBySeatTiebreak = true;
             // 席位升序裁定（子组内按席位升序，GDD L376 澄清）
             // 当前仍在 RollSeatPairs 中且尚未分配 rank 的 seat，
             // 按 (roll 降序, seat 升序) 已排好——此时各平手子组内按 seat 升序分配
@@ -628,6 +662,15 @@ void UPlayerTurnSubsystem::StartTurn(int32 PlayerId)
 
     UE_LOG(LogTemp, Log,
         TEXT("UPlayerTurnSubsystem::StartTurn — PlayerId=%d 开始回合。"), PlayerId);
+
+    // 广播 OnTurnStarted（story-004 AC-2，回合级事件先于阶段级 OnPhaseChanged(TurnStart)）
+    {
+        const URentoPlayerState* StartingPS = FindPlayerById(PlayerId);
+        FTurnStartedInfo TSInfo;
+        TSInfo.PlayerId = PlayerId;
+        TSInfo.bIsAI    = StartingPS ? StartingPS->bIsAI : false;
+        OnTurnStarted.Broadcast(TSInfo);
+    }
 
     // TurnStart 阶段广播
     SetPhase(ETurnPhase::TurnStart);
@@ -806,7 +849,18 @@ void UPlayerTurnSubsystem::EndTurn(bool bSentToJailThisTurn)
     //   此处 bLastRollWasDouble 由 ProcessRollResult 设置（仅 RollPhase 分支），
     //   JailTurn 路径不经 ProcessRollResult，故 bLastRollWasDouble=false 自然成立
 
-    if (bLastRollWasDouble && !bEffectiveSentToJail && !bBankrupt)
+    // 计算额外回合判据（story-004 AC-4，命名变量供 OnTurnEnded 广播 + 分支共用；控制流与原 if 等价）
+    const bool bGrantsExtraTurn = bLastRollWasDouble && !bEffectiveSentToJail && !bBankrupt;
+
+    // 广播 OnTurnEnded（PlayerId=回合结束者=移交前 CurrentActivePlayerId，AC-2/AC-4）
+    {
+        FTurnEndedInfo TEInfo;
+        TEInfo.PlayerId         = CurrentActivePlayerId;
+        TEInfo.bGrantsExtraTurn = bGrantsExtraTurn;
+        OnTurnEnded.Broadcast(TEInfo);
+    }
+
+    if (bGrantsExtraTurn)
     {
         // 双点额外回合：同玩家继续，ConsecutiveDoubles 不归零（AC-6）
         UE_LOG(LogTemp, Log,
@@ -1587,9 +1641,23 @@ void UPlayerTurnSubsystem::SetAIDecisionMaker(TSharedPtr<IAIDecisionMaker> Decis
  *      （真实动作执行 + 可行性重校验归簇 B/C，Out of Scope 严守）
  *   ④ 执行完（含空数组 []）→ 调 EndTurn(false) 推进 TurnEnd + 移交下一未破产玩家
  *
- * ⚠ 不广播 OnAIActionExecuted（story-004 Out of Scope，本簇 AC-44 不在 AC 列）。
  * ⚠ AIDecisionMaker 为 nullptr 时 UE_LOG Error + EndTurn 兜底，不崩溃。
+ * （story-004 起：每实际执行动作广播 OnAIActionExecuted，见 loop 内。）
  */
+// EAIActionType（簇A AI 动作）→ EActionType（story-004 HUD 可观察）映射
+static EActionType MapAIActionTypeToActionType(EAIActionType In)
+{
+    switch (In)
+    {
+    case EAIActionType::BuyProperty:        return EActionType::BuyProperty;
+    case EAIActionType::BuildHouse:         return EActionType::BuildHouse;
+    case EAIActionType::MortgageProperty:   return EActionType::Mortgage;
+    case EAIActionType::UnmortgageProperty: return EActionType::Unmortgage;
+    case EAIActionType::None:
+    default:                                return EActionType::None;
+    }
+}
+
 void UPlayerTurnSubsystem::RunAiPostRollActions(int32 AiPlayerId, const FGameStateSnapshot& Snapshot)
 {
     // ① 阶段守卫：仅 PostRollAction 合法（G2：验证型错误路径用 UE_LOG Error，不用 ensure）
@@ -1651,6 +1719,19 @@ void UPlayerTurnSubsystem::RunAiPostRollActions(int32 AiPlayerId, const FGameSta
         // 可行 → 执行（本簇占位执行=记录到 LastExecutedActions + UE_LOG；
         //   真实经济/建房/所有权调用归簇C/规则 epic，本簇严守 Out of Scope 不调任何规则系统）
         LastExecutedActions.Add(Action);
+
+        // story-004 AC-6：每实际执行动作广播 OnAIActionExecuted，ActionIndex 按执行序 0..M-1 自增
+        //   （被跳过的不可行动作走上方 continue，不到此处，故不广播、不占号）
+        {
+            FAIActionDetails Details;
+            Details.ActionIndex     = LastExecutedActions.Num() - 1; // 0-based 执行序
+            Details.ActingPlayerId  = AiPlayerId;
+            Details.TargetTileIndex = Action.TargetTileIndex;
+            Details.Amount          = 0; // 金额归经济5，本层未知（占位 0）
+            Details.ActionType      = MapAIActionTypeToActionType(Action.ActionType);
+            OnAIActionExecuted.Broadcast(Details);
+        }
+
         UE_LOG(LogTemp, Log,
             TEXT("UPlayerTurnSubsystem::RunAiPostRollActions — "
                  "  [%d/%d] ActionType=%d TargetTileIndex=%d 可行，执行（簇B 占位执行=记录）。"),
@@ -2186,4 +2267,36 @@ bool UPlayerTurnSubsystem::RunForcedLiquidation(int32 PlayerId, int32 AmountDue)
         TEXT("UPlayerTurnSubsystem::RunForcedLiquidation — Cash=%d >= AmountDue=%d，偿付成功（早停）。"),
         PS->Cash, AmountDue);
     return true; // Cash >= AmountDue，偿付成功
+}
+
+// ===========================================================================
+// story-004 AC-7：HandleBuildingChanged — 建房通告 beat（CR-3.5）
+//
+// 建房8 在 ResolvePhase/PostRollAction 广播 OnBuildingChanged(tile,newCount)（2 字段 owner 契约）；
+// 本系统据当前回合上下文广播全玩家可见 OnBuildingAnnounced。建房只在这两阶段发生：
+//   TurnStart/TurnEnd 期间收到（异常时机）→ 不广播（时机 guard）。
+// 建筑归属玩家 id 取当前回合上下文 CurrentActivePlayerId（方案②，非事件第3字段）。
+// 信息层事件，不修改任何游戏状态（AC-7 ③）。
+// ===========================================================================
+
+void UPlayerTurnSubsystem::HandleBuildingChanged(int32 TileIndex, int32 NewHouseCount)
+{
+    if (CurrentPhase != ETurnPhase::ResolvePhase && CurrentPhase != ETurnPhase::PostRollAction)
+    {
+        UE_LOG(LogTemp, Verbose,
+            TEXT("UPlayerTurnSubsystem::HandleBuildingChanged — 当前阶段 %d 非 Resolve/PostRoll，"
+                 "不发通告（AC-7 时机 guard）。"),
+            static_cast<int32>(CurrentPhase));
+        return;
+    }
+
+    FBuildingAnnouncedInfo Info;
+    Info.TileIndex      = TileIndex;
+    Info.NewHouseCount  = NewHouseCount;
+    Info.ActingPlayerId = CurrentActivePlayerId; // 方案②：取当前回合上下文
+    OnBuildingAnnounced.Broadcast(Info);
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::HandleBuildingChanged — 通告 tile=%d house=%d actor=%d。"),
+        TileIndex, NewHouseCount, CurrentActivePlayerId);
 }

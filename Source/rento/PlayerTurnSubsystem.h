@@ -86,7 +86,8 @@ class UDiceRngService;
 //
 // ⚠ 字段扩展代价（GDD L274 R5 unreal）：未来 enrich payload 须检查全部下游 BP 图引脚连接。
 // =============================================================================
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTurnPhaseChanged, ETurnPhase, NewPhase);
+// story-004 enrich：payload 由 ETurnPhase 升级为 FPhaseChangedInfo（OldPhase/NewPhase/ConsecutiveDoubles，AC-2/AC-3）。
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTurnPhaseChanged, const FPhaseChangedInfo&, Info);
 
 // =============================================================================
 // OnGameWon 最小 seam delegate 声明（pt-003 / TR-turn-006）
@@ -102,6 +103,21 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTurnPhaseChanged, ETurnPhase, New
 // ⚠ story-004 enrich：完整 delegate 契约声明（USTRUCT payload、字段）归 story-004。
 // =============================================================================
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGameWon, int32, WinnerId);
+
+// =============================================================================
+// story-004 新增 5 回合事件 delegate（AC-1/AC-2，DYNAMIC_MULTICAST + BlueprintAssignable）
+//   payload 均 USTRUCT(BlueprintType)（见 PlayerTurnTypes.h），裸 TArray 包入 struct。
+// =============================================================================
+/** 回合开始（payload FTurnStartedInfo{PlayerId,bIsAI}）。 */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTurnStarted,       const FTurnStartedInfo&,       Info);
+/** 回合结束（payload FTurnEndedInfo{PlayerId,bGrantsExtraTurn}）。 */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTurnEnded,         const FTurnEndedInfo&,         Info);
+/** 定序完成（payload FTurnOrderResult{OrderedPlayerIds,bResolvedBySeatTiebreak}）。 */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTurnOrderResolved, const FTurnOrderResult&,       Result);
+/** AI 实际执行动作（payload FAIActionDetails，ActionIndex 按执行序 0..M-1 自增）。 */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAIActionExecuted,  const FAIActionDetails&,       Details);
+/** 建房通告 beat（payload FBuildingAnnouncedInfo{TileIndex,NewHouseCount,ActingPlayerId}）。 */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnBuildingAnnounced, const FBuildingAnnouncedInfo&, Info);
 
 /**
  * UPlayerTurnSubsystem — 回合系统 per-match 宿主（story pt-001/pt-002）
@@ -751,6 +767,38 @@ public:
     FOnGameWon OnGameWon;
 
     // =========================================================================
+    // story-004 新增 5 回合事件（AC-1/AC-2，BlueprintAssignable，BP+C++ 可订）
+    // =========================================================================
+
+    /** 回合开始事件（StartTurn 广播，AC-2）。 */
+    UPROPERTY(BlueprintAssignable, Category="PlayerTurn|Events")
+    FOnTurnStarted OnTurnStarted;
+
+    /** 回合结束事件（EndTurn 广播，bGrantsExtraTurn 区分额外回合/移交，AC-4）。 */
+    UPROPERTY(BlueprintAssignable, Category="PlayerTurn|Events")
+    FOnTurnEnded OnTurnEnded;
+
+    /** 定序完成事件（InitializeFromConfig 广播，AC-5）。 */
+    UPROPERTY(BlueprintAssignable, Category="PlayerTurn|Events")
+    FOnTurnOrderResolved OnTurnOrderResolved;
+
+    /** AI 实际执行动作事件（RunAiPostRollActions 逐执行动作广播，AC-6）。 */
+    UPROPERTY(BlueprintAssignable, Category="PlayerTurn|Events")
+    FOnAIActionExecuted OnAIActionExecuted;
+
+    /** 建房通告 beat 事件（HandleBuildingChanged 在 ResolvePhase/PostRollAction 广播，AC-7）。 */
+    UPROPERTY(BlueprintAssignable, Category="PlayerTurn|Events")
+    FOnBuildingAnnounced OnBuildingAnnounced;
+
+    /**
+     * 建房8 OnBuildingChanged(tile,newCount) 的消费入口（CR-3.5 通告 beat，AC-7）。
+     * 仅 ResolvePhase/PostRollAction 期间广播 OnBuildingAnnounced；TurnStart/TurnEnd 不广播。
+     * 建筑归属玩家 id 取当前回合上下文 CurrentActivePlayerId（方案②，非事件第3字段）。
+     * 信息层事件，不修改任何游戏状态。building8 落地后可改 UFUNCTION 绑定（本 story 普通方法）。
+     */
+    void HandleBuildingChanged(int32 TileIndex, int32 NewHouseCount);
+
+    // =========================================================================
     // 胜负终态标志（pt-003，边沿触发守卫）
     // =========================================================================
 
@@ -865,6 +913,13 @@ public:
      */
     UPROPERTY()
     bool bSentToJailThisTurnInternal = false;
+
+    /**
+     * 最近一次定序是否经席位裁定（OnTurnOrderResolved.bResolvedBySeatTiebreak 来源，story-004 AC-5）。
+     * ResolveInitialTurnOrderWithTiebreak 设置（席位 fallback=true / RNG 定序=false）；
+     * DiceService 不可用退化座位序路径亦置 true。
+     */
+    bool bLastOrderResolvedBySeatTiebreak = false;
 
 private:
     // =========================================================================

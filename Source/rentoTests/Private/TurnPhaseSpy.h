@@ -47,10 +47,12 @@ public:
     UPROPERTY()
     TArray<ETurnPhase> Recorded;
 
-    /** OnPhaseChanged 绑定 handler：把每次广播的新阶段追加到 Recorded。 */
+    /** OnPhaseChanged 绑定 handler：把每次广播的新阶段追加到 Recorded。
+     *  story-004：payload 升级为 FPhaseChangedInfo，记录 Info.NewPhase（Recorded 类型不变=TArray<ETurnPhase>，
+     *  故 pt-002 TurnPhaseStateMachineTest 断言不受影响）。 */
     UFUNCTION()
-    void HandlePhaseChanged(ETurnPhase NewPhase)
+    void HandlePhaseChanged(const FPhaseChangedInfo& Info)
     {
-        Recorded.Add(NewPhase);
+        Recorded.Add(Info.NewPhase);
     }
 };
