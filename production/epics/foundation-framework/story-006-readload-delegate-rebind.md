@@ -1,11 +1,11 @@
 ---
 Epic: foundation-framework
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: M
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-08
 ---
 
 # Story 006 — Event Bus 读档集中解绑/重绑工具函数（防 EC-8 双订阅）
@@ -78,3 +78,12 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-005（重绑遍历的 owner delegate 集合 + 命名/payload 规范）、story-001（订阅生命周期锚宿主 Init/Deinit）。
 - **Unlocks**: Save epic（ADR-0005 读档拓扑序「重绑」步）；Presentation epic（HUD/VFX/Audio 读档重绑落实，TR-turn-013 功能面）。
+
+## Completion Notes
+**Completed**: 2026-06-08
+**Criteria**: 6/6 COVERED（TC1-5 全 Success）。AC-2 可验部分（拓扑序时机）覆盖，`OnGameLoaded` 广播接线 DEFERRED-to-save-epic。
+**Deviations**: 2 ADVISORY，登记 docs/tech-debt-register.md：① `UnbindAllOwnerDelegates` 硬编码 owner 列表（7+1），economy/building/bankruptcy owner epic 落地新增 delegate 时须同步扩展遍历（ADR-0003 事件表↔代码漂移风险）；② AC-2 OnGameLoaded→RebindPresentationDelegates 接线 defer-to-save-epic。
+**Test Evidence**: Integration — `Source/rentoTests/Private/ReadLoadDelegateRebindTest.cpp`（5 TC）+ `RebindConsumerSpy.h`；全量 252/0 Failed/0 NotRun（基线 247+5 零回归）；`Saved/TestReport_ff006_full/index.json`。
+**Code Review**: Complete — /code-review APPROVED（无 Required Changes；2 INFO suggestion 已转 tech-debt）。
+**实现产出**：新建 `Source/rento/EventBusRebindCoordinator.{h,cpp}`（UEventBusRebindCoordinator:UWorldSubsystem）。架构=用户 2026-06-08 选项①「中央解绑+注册表重绑」，调和 ADR-0003 中央遍历 ↔ ADR-0005 CR-6 消费者自重绑。
+**主会话独立验证**：agent 截断未跑测试（最终消息=Gauntlet 运行问题）；亲跑 Build+全量测试核实，独立审查抓修 2 真缺陷（TC1 Delta3==Delta3 同义反复→真比 ReferenceDelta；TC3 查新建对象天然空假覆盖→直接 UnbindAllOwnerDelegates() 验 Clear 真生效）。两者「测试绿但不真验」，build/run 不暴露，仅人工审查能抓。
