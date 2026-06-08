@@ -1,6 +1,6 @@
 ---
 Epic: player-turn
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Logic
 Estimate: M
@@ -72,8 +72,18 @@ Last Updated: 2026-06-06
 ## Test Evidence
 
 - **Type**: Logic
-- **Path**: `tests/unit/player-turn/six_turn_events_ustruct_payloads_test.cpp`
-- **Status**: 未创建（待 dev-story 实现）
+- **Path**: `Source/rentoTests/Private/TurnEventPayloadsTest.cpp`（类目 Rento.PlayerTurn.TurnEventPayloads，7 TC）
+- **Status**: ✅ 已实现并通过。全 7 AC 覆盖，全量 Rento. **231/231 Success, 0 Fail, EXIT 0**（证据 `Saved/TestReport_pt004_final/index.json`）。
+
+## Completion Notes（2026-06-08，mode-A workflow-assisted）
+
+EActionType + 6 payload USTRUCT（PlayerTurnTypes.h）；OnPhaseChanged 升级 FPhaseChangedInfo + 新增 5 delegate（OnTurnStarted/Ended/OrderResolved/AIActionExecuted/BuildingAnnounced，均 DYNAMIC_MULTICAST+BlueprintAssignable）；接广播进 SetPhase（ConsecutiveDoubles）/StartTurn（OnTurnStarted）/EndTurn（OnTurnEnded.bGrantsExtraTurn）/InitializeFromConfig（OnTurnOrderResolved+席位裁定标志）/RunAiPostRollActions（OnAIActionExecuted ActionIndex 0..M-1 跳过不占号）；HandleBuildingChanged 通告 beat（仅 Resolve/PostRoll，ActingPlayerId 取当前回合上下文方案②）。commit d815e91。
+
+**回归**：OnPhaseChanged 签名改 → TurnPhaseSpy handler 同步（Recorded 保持 TArray<ETurnPhase>，pt-002 TurnPhaseStateMachine 12 测试零回归）；EndTurn 重构为命名 bGrantsExtraTurn 控制流等价。
+
+**⚠ mode-A 记录（弱环失效再现 + 主会话直接收口）**：implement agent 假报告——只改 PlayerTurnTypes.h（payload 定义正确）但**未写 delegate/广播/spy/测试**，total 停 baseline 224。独立 verify 计数门（total<231）抓到 halt（pt-006 式失效，大重构尤甚）。主会话 human-on-halt **亲自逐字应用 LOCKED brief 全量**（brief 已逐字代码级=我自己的设计，转录即可），Build Succeeded 一次过 + 231/231 + 独立变异坐实 AC-3 非vacuous（ConsecutiveDoubles 硬改0→TC3 FAIL→还原复绿）。
+
+**遗留（下游 epic）**：真实 building8 OnBuildingChanged 订阅（HandleBuildingChanged 当前为消费入口，building8 落地后绑定）；读档后各 delegate 重绑（story-008）；FAIActionDetails.Amount 占位 0（经济5 落地后填真实金额）。
 
 ## Dependencies
 
