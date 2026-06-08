@@ -1,11 +1,11 @@
 ---
 Epic: dice-rng
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: S
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-08
 ---
 
 # Story 008 — 当前骰序列化契约（完整 FDiceRollResult，MVP 不存 Seed）
@@ -87,3 +87,11 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（`SetSeed`/`GetInitialSeed`/`GetCurrentSeed` accessor）、story-002（RollDice 产出 `FDiceRollResult`）、story-005（`FDiceRollResult` USTRUCT 结构定型）须 DONE。**跨 epic**：player-turn AC-33/34 完整 `FDiceRollResult` 序列化（OQ-T-Dice-5 RESOLVED）；save-load 存读框架（ADR-0005）。
 - **Unlocks**: 无（叶子序列化契约）；为 Full Vision OQ-2（重放序列化 Seed）预留 `GetCurrentSeed()` 接口。
+
+## Completion Notes
+**Completed**: 2026-06-08
+**Criteria**: 4/4 passing（全 COVERED，0 UNTESTED，0 DEFERRED）
+**Deviations**: None（blocking）。信息性：物理测试路径 `Source/rentoTests/Private/DiceSerializationRoundtripTest.cpp` 与 story 逻辑路径 `tests/integration/dice/...` 差异 = repo UE Automation 惯例，非偏离。
+**Test Evidence**: Integration — `Source/rentoTests/Private/DiceSerializationRoundtripTest.cpp`（4 TC，Automation 类目 `Rento.Dice.Serialization`）。主会话独立全证：Build Succeeded（clang G6 误报忽略，UBT 为准）；4/4 Success；全量 tests 数组 266/266 Success 0 Fail 0 notRun（基线262+4零回归，`Saved/TestReport_dr008_full`）。TC2 变异坐实非-vacuous（S1==S0 → 发散断言精确 FAIL，`Saved/TestReport_dr008_mut`，还原复绿）。
+**Code Review**: Complete — `/code-review` APPROVED（无 Required Changes；ADR-0004/0005 合规）。
+**实现要点**：纯验证型零 src 改动。序列化本体由 pt-008（player-turn story-008，同名异 epic）落地；本 story 专攻骰子侧义务 —— AC-1 反射断言 DiceService 无 `UPROPERTY(SaveGame)` Seed 字段（权威 `FRandomStream` 不序列化）+ FixedSeed 非-vacuous 守卫 + FDiceRollResult 四字段；AC-2 `SetSeed` 非确定值 reseed 契约（不回开局种子 + 序列发散，edge 揭示回 S0 复现的 bug 根因）；AC-3 读档不重掷（restore+resume 期 dice OnDiceRolled 0 次 + Die1/Die2 保留）；AC-4 隔离 `UPlayerTurnSaveData` round-trip 逐字段 identity。读档拓扑序中骰子 SetSeed 真接线属 save-load epic（存档21）跨系统编排腿，OoS。
