@@ -1624,28 +1624,197 @@ void UPlayerTurnSubsystem::RunAiPostRollActions(int32 AiPlayerId, const FGameSta
              "AiPlayerId=%d，DecidePostRollActions 返回 %d 条动作。"),
         AiPlayerId, Actions.Num());
 
-    // ③ 逐 FTurnAction 执行 — 本簇最小占位（簇 A）
-    //    只计数 + UE_LOG，不调经济/建房/所有权接口（Out of Scope 严守）
-    //    真实执行 + 逐动作可行性重校验 = 簇 B/C
+    // ③ 逐 FTurnAction 执行：执行前经 IActionValidator 重校验可行性（AC-6 / GDD CR-8 批处理失败策略）
+    LastExecutedActions.Reset();   // 清空本回合执行记录（AC-42 oracle）
     for (int32 i = 0; i < Actions.Num(); ++i)
     {
         const FTurnAction& Action = Actions[i];
+
+        // 重校验：ActionValidator 未注入时退化为"全部可行"（向后兼容簇A TC-3/TC-37d 无 validator 注入路径）
+        const bool bFeasible = !ActionValidator.IsValid()
+            ? true
+            : ActionValidator->IsActionFeasible(Action);
+
+        if (!bFeasible)
+        {
+            // 不可行 → 静默跳过 + UE_LOG Warning（G2：错误/降级路径用 UE_LOG，不 ensure）+ continue
+            // 被跳过动作不进 LastExecutedActions → 其目标状态未被改变（AC-42①）
+            // 后续合法动作仍继续执行（不中止整批，AC-42②）
+            UE_LOG(LogTemp, Warning,
+                TEXT("UPlayerTurnSubsystem::RunAiPostRollActions — "
+                     "  [%d/%d] ActionType=%d TargetTileIndex=%d 执行期不可行，静默跳过（AC-6）。"),
+                i + 1, Actions.Num(),
+                static_cast<int32>(Action.ActionType), Action.TargetTileIndex);
+            continue;
+        }
+
+        // 可行 → 执行（本簇占位执行=记录到 LastExecutedActions + UE_LOG；
+        //   真实经济/建房/所有权调用归簇C/规则 epic，本簇严守 Out of Scope 不调任何规则系统）
+        LastExecutedActions.Add(Action);
         UE_LOG(LogTemp, Log,
             TEXT("UPlayerTurnSubsystem::RunAiPostRollActions — "
-                 "  [%d/%d] ActionType=%d TargetTileIndex=%d（簇 A 占位，不执行实际经济操作）。"),
+                 "  [%d/%d] ActionType=%d TargetTileIndex=%d 可行，执行（簇B 占位执行=记录）。"),
             i + 1, Actions.Num(),
-            static_cast<int32>(Action.ActionType),
-            Action.TargetTileIndex);
-        // ⚠ 簇 B/C Out of Scope：此处不调 Economy/Building/Ownership 任何接口。
-        // 完整动作执行（可行性重校验 + 经济/建房/所有权调用）归后续 pass。
+            static_cast<int32>(Action.ActionType), Action.TargetTileIndex);
     }
 
     // 空数组 [] → 执行 0 条（AC-37d：仍需走 EndTurn 移交下一玩家）
     // ④ 执行完（含空数组）→ EndTurn 推进 TurnEnd + 移交下一未破产玩家（复用 pt-002/003）
     UE_LOG(LogTemp, Log,
         TEXT("UPlayerTurnSubsystem::RunAiPostRollActions — "
-             "AiPlayerId=%d，共执行 %d 条动作，调 EndTurn 推进 TurnEnd。"),
-        AiPlayerId, Actions.Num());
+             "AiPlayerId=%d，LastExecutedActions.Num()=%d（共 %d 条请求），调 EndTurn 推进 TurnEnd。"),
+        AiPlayerId, LastExecutedActions.Num(), Actions.Num());
 
     EndTurn(/*bSentToJailThisTurn=*/false);
+}
+
+// ===========================================================================
+// pt-007 簇 B：SetActionValidator — DI 注入 IActionValidator（AC-6 / AC-42）
+// ===========================================================================
+
+void UPlayerTurnSubsystem::SetActionValidator(TSharedPtr<IActionValidator> Validator)
+{
+    // TSharedPtr 赋值，自动管理生命周期（非 UObject，GC 不追踪，TSharedPtr 正确释放）
+    ActionValidator = Validator;
+
+    UE_LOG(LogTemp, Log,
+        TEXT("UPlayerTurnSubsystem::SetActionValidator — "
+             "ActionValidator %s。"),
+        ActionValidator.IsValid() ? TEXT("已注入") : TEXT("已清除（nullptr）"));
+}
+
+// ===========================================================================
+// pt-007 簇 B：RunAiJailAction — AI 出狱决策执行路径（AC-5 / AC-39 / AC-39b）
+//
+// 可行性判据单一来源 = Snapshot（决策视图，满足 AC-39b fixture 可替换 mock 前提）。
+// 实际扣款/消卡/掷骰归下游 epic（Out of Scope 严守）。
+//
+// 关键不变式：AiPlayerId 须 == CurrentActivePlayerId（AdvanceFromJailTurn 内部用此 ID）。
+// ===========================================================================
+
+void UPlayerTurnSubsystem::RunAiJailAction(int32 AiPlayerId, const FGameStateSnapshot& Snapshot)
+{
+    // ① 阶段守卫：仅 JailTurn 合法（G2：验证型错误路径用 UE_LOG Error，不 ensure）
+    if (CurrentPhase != ETurnPhase::JailTurn)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::RunAiJailAction — "
+                 "非法调用：当前阶段 %d 非 JailTurn(6)。"
+                 "AiPlayerId=%d 被忽略，回合状态未变更。"),
+            static_cast<int32>(CurrentPhase), AiPlayerId);
+        return;
+    }
+
+    // ② AIDecisionMaker 未注入兜底：保守降级留狱（AdvanceFromJailTurn(true)，不崩）
+    if (!AIDecisionMaker.IsValid())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UPlayerTurnSubsystem::RunAiJailAction — "
+                 "AIDecisionMaker 未注入（nullptr）。"
+                 "AiPlayerId=%d，保守降级留狱并推进。"),
+            AiPlayerId);
+        AdvanceFromJailTurn(/*bRemainsInJail=*/true);
+        return;
+    }
+
+    // ③ 同步调 DecideJailAction 取 AI 出狱决策
+    const EJailAction Choice = AIDecisionMaker->DecideJailAction(Snapshot);
+
+    // ④ 按返回值发起出狱/留狱路径（可行性自判 from Snapshot）
+    switch (Choice)
+    {
+    case EJailAction::PayBail:
+        // 保释意图：Cash >= 保释金 → 出狱路径（实际扣款归经济5，Out of Scope）；
+        //   不足 → 降级留狱（AC-39b①：不扣成负现金——本系统从不扣款，故 Cash 结构性不变）
+        if (Snapshot.SelfCash >= Snapshot.JailBailAmount)
+        {
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::RunAiJailAction — "
+                     "PlayerId=%d PayBail 可行（Cash=%d >= BailAmount=%d），出狱路径。"),
+                AiPlayerId, Snapshot.SelfCash, Snapshot.JailBailAmount);
+            AdvanceFromJailTurn(/*bRemainsInJail=*/false);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("UPlayerTurnSubsystem::RunAiJailAction — "
+                     "PlayerId=%d PayBail 但现金不足（Cash=%d < BailAmount=%d），"
+                     "降级留狱（AC-39b①）。"),
+                AiPlayerId, Snapshot.SelfCash, Snapshot.JailBailAmount);
+            AdvanceFromJailTurn(/*bRemainsInJail=*/true);
+        }
+        break;
+
+    case EJailAction::UseCard:
+        // 用卡意图：有卡 → 出狱（实际消卡归事件格7，Out of Scope）；
+        //   无卡 → 降级留狱（AC-39b②：不凭空消卡——本系统无卡存储，结构性保证）
+        if (Snapshot.bHasJailCard)
+        {
+            UE_LOG(LogTemp, Log,
+                TEXT("UPlayerTurnSubsystem::RunAiJailAction — "
+                     "PlayerId=%d UseCard 可行（bHasJailCard=true），出狱路径。"),
+                AiPlayerId);
+            AdvanceFromJailTurn(/*bRemainsInJail=*/false);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("UPlayerTurnSubsystem::RunAiJailAction — "
+                     "PlayerId=%d UseCard 但无出狱卡（bHasJailCard=false），"
+                     "降级留狱（AC-39b②）。"),
+                AiPlayerId);
+            AdvanceFromJailTurn(/*bRemainsInJail=*/true);
+        }
+        break;
+
+    case EJailAction::RollDouble:
+        // 掷骰意图：真实"掷双点出狱"执行归 dice(3)/事件格(7)（Out of Scope）。
+        //   本簇最小语义 = 本回合留狱待掷（AdvanceFromJailTurn(true)，JailTurnsServed+1）；
+        //   dice/事件7 落地后此路改走真实掷骰判定（契约不变）。
+        UE_LOG(LogTemp, Log,
+            TEXT("UPlayerTurnSubsystem::RunAiJailAction — "
+                 "PlayerId=%d RollDouble 掷骰意图（真实掷骰归 dice3/事件7，本簇留狱待掷）。"),
+            AiPlayerId);
+        AdvanceFromJailTurn(/*bRemainsInJail=*/true);
+        break;
+
+    default:
+        // 未知枚举值（防御性兜底，正常路径不可达）
+        UE_LOG(LogTemp, Warning,
+            TEXT("UPlayerTurnSubsystem::RunAiJailAction — "
+                 "PlayerId=%d 未知 EJailAction(%d)，降级留狱。"),
+            AiPlayerId, static_cast<int32>(Choice));
+        AdvanceFromJailTurn(/*bRemainsInJail=*/true);
+        break;
+    }
+}
+
+// ===========================================================================
+// pt-007 簇 B：ResolveAuctionBid — 拍卖出价 sentinel 值域解析（AC-10 / AC-45，Alpha）
+//
+// 纯函数，无副作用，无 World 依赖（可直接 static 调用，不需 Subsystem 实例）。
+// 出价合法性最终校验归拍卖(12)（MVP 不触发）；本函数仅钉死 int32 sentinel 值域约定。
+// ===========================================================================
+
+/*static*/
+int32 UPlayerTurnSubsystem::ResolveAuctionBid(
+    int32 RawBid,
+    int32 CurrentHighest,
+    int32 MinIncrement,
+    int32 Cash)
+{
+    // 负数 / INDEX_NONE(-1) / 0 → 放弃（0 非法，不作"出价0"解）
+    if (RawBid <= 0)
+    {
+        return 0;
+    }
+
+    // 合法：> 当前最高价 且 <= Cash 且 >= 最低加价步长（三条均须满足）
+    if (RawBid > CurrentHighest && RawBid <= Cash && RawBid >= MinIncrement)
+    {
+        return RawBid;
+    }
+
+    // 违反任一值域条件 → 放弃（0）
+    return 0;
 }

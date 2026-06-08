@@ -46,6 +46,7 @@
 #include "GameStateSnapshot.h"
 #include "AIDecisionMakerInterface.h"
 #include "AIDecisionMakerSpy.h"
+#include "ActionValidatorSpy.h"
 
 // =============================================================================
 // 测试辅助（独立命名空间避免 ODR，不依赖 TurnPhaseTestHelpers）
@@ -459,3 +460,709 @@ bool FGssAiHooks_TC37d_EmptyActionsEndsTurn::RunTest(const FString& Parameters)
     GssAiHooksTestHelpers::DestroyGameWorld(World);
     return true;
 }
+
+// =============================================================================
+// 簇 B 辅助 Helper — AdvanceToJailTurn（供 TC-39 / TC-39b-1 / TC-39b-2 使用）
+// =============================================================================
+namespace GssAiHooksTestHelpers
+{
+    /**
+     * 将指定玩家设为在狱状态并 StartTurn，使状态机进入 JailTurn。
+     *
+     * 设 PlayerState->bIsInJail=true、JailTurnsServed=0、ConsecutiveDoubles=0，
+     * 然后 StartTurn(PlayerId)，路由到 JailTurn 阶段。
+     *
+     * @param Sub      已初始化的 UPlayerTurnSubsystem
+     * @param PlayerId 目标玩家 PlayerId（须为当前先手玩家，保证 CurrentActivePlayerId 对齐）
+     * @return true = 成功进入 JailTurn；false = 失败（测试应 early-out）
+     */
+    static bool AdvanceToJailTurn(UPlayerTurnSubsystem* Sub, int32 PlayerId)
+    {
+        check(Sub);
+        URentoPlayerState* PS = Sub->FindPlayerById(PlayerId);
+        if (PS)
+        {
+            // 设置在狱初始状态
+            PS->bIsInJail = true;
+            PS->JailTurnsServed = 0;
+            PS->ConsecutiveDoubles = 0;
+        }
+        // StartTurn 路由：bIsInJail=true → JailTurn
+        Sub->StartTurn(PlayerId);
+        return Sub->GetCurrentPhase() == ETurnPhase::JailTurn;
+    }
+} // namespace GssAiHooksTestHelpers
+
+// =============================================================================
+// TC-39（AC-5 / AC-39）— AI 出狱决策三路径正确发起
+//
+// 覆盖 PayBail 可行 / UseCard 可行 / RollDouble 三条路径，每条路径独立 World。
+//
+// GIVEN：2 人对局，jail player = 先手（TurnOrderIndex==0），进入 JailTurn
+// WHEN：RunAiJailAction(jailPlayerId, Snapshot)，spy 控制不同出狱决策
+// THEN：
+//   PayBail 可行（Cash=100 >= BailAmount=50）→ 出狱路径
+//     ① JailTurnsServed 未 +1（== 进入前的 0）
+//     ② GetCurrentActivePlayerId() != jailPlayerId（移交）
+//   UseCard 可行（bHasJailCard=true）→ 出狱路径
+//     ① JailTurnsServed 未 +1
+//     ② 移交
+//   RollDouble → 留狱待掷
+//     ① JailTurnsServed == 1（+1）
+//     ② 移交
+//
+// 非 vacuous：
+//   若 PayBail 路径误判不可行（走 AdvanceFromJailTurn(true)）→ JailTurnsServed=1 → ① FAIL
+//   若 RollDouble 路径误判出狱（走 AdvanceFromJailTurn(false)）→ JailTurnsServed=0 → ① FAIL
+// =============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FGssAiHooks_TC39_JailThreePaths,
+    "Rento.PlayerTurn.GameStateSnapshotAiHooks.TC39_JailThreePaths",
+    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FGssAiHooks_TC39_JailThreePaths::RunTest(const FString& Parameters)
+{
+    // ----- PayBail 可行路径 -----
+    {
+        UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC39_PayBail_World"));
+        if (!TestNotNull(TEXT("TC-39 PayBail: World 应能创建"), World)) return false;
+
+        UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+        if (!TestNotNull(TEXT("TC-39 PayBail: Subsystem 应能取得"), Sub))
+        {
+            GssAiHooksTestHelpers::DestroyGameWorld(World);
+            return false;
+        }
+
+        const bool bInit = Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+        if (!TestTrue(TEXT("TC-39 PayBail: InitializeFromConfig(P=2) 应成功"), bInit))
+        {
+            GssAiHooksTestHelpers::DestroyGameWorld(World);
+            return false;
+        }
+
+        // 找先手玩家（TurnOrderIndex==0）作为 jail player
+        const int32 JailPlayerId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+        if (!TestNotEqual(TEXT("TC-39 PayBail: 应找到先手玩家"), JailPlayerId, -1))
+        {
+            GssAiHooksTestHelpers::DestroyGameWorld(World);
+            return false;
+        }
+
+        // 推进到 JailTurn
+        const bool bReached = GssAiHooksTestHelpers::AdvanceToJailTurn(Sub, JailPlayerId);
+        if (!TestTrue(TEXT("TC-39 PayBail: 应成功进入 JailTurn"), bReached))
+        {
+            GssAiHooksTestHelpers::DestroyGameWorld(World);
+            return false;
+        }
+
+        // 记录进入前 JailTurnsServed（应为 0）
+        URentoPlayerState* PS = Sub->FindPlayerById(JailPlayerId);
+        const int32 JailTurnsBeforePayBail = PS ? PS->JailTurnsServed : -1;
+
+        // 注入 spy：PayBail 出狱决策 + Cash 充足
+        TSharedPtr<FAIDecisionMakerSpy> Spy = MakeShared<FAIDecisionMakerSpy>();
+        Spy->JailActionToReturn = EJailAction::PayBail;
+        Sub->SetAIDecisionMaker(Spy);
+
+        // 构造 mock snapshot：Cash 充足（100 >= 50）
+        FGameStateSnapshot Snap;
+        Snap.SelfPlayerId    = JailPlayerId;
+        Snap.SelfCash        = 100;
+        Snap.JailBailAmount  = 50;
+        Snap.bHasJailCard    = false;
+        Snap.JailTurnsServed = 0;
+
+        // 执行 RunAiJailAction
+        Sub->RunAiJailAction(JailPlayerId, Snap);
+
+        // 断言 ① JailTurnsServed 未 +1（出狱路径不服刑）
+        const int32 JailTurnsAfterPayBail = PS ? PS->JailTurnsServed : -1;
+        TestEqual(
+            TEXT("TC-39 PayBail ①: 出狱路径 JailTurnsServed 应未 +1（== 进入前）"),
+            JailTurnsAfterPayBail, JailTurnsBeforePayBail);
+
+        // 断言 ② 行动权已移交
+        const int32 ActiveAfterPayBail = Sub->GetCurrentActivePlayerId();
+        TestNotEqual(
+            TEXT("TC-39 PayBail ②: RunAiJailAction 后应已移交（ActiveId != jailPlayerId）"),
+            ActiveAfterPayBail, JailPlayerId);
+
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+    }
+
+    // ----- UseCard 可行路径 -----
+    {
+        UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC39_UseCard_World"));
+        if (!TestNotNull(TEXT("TC-39 UseCard: World 应能创建"), World)) return false;
+
+        UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+        if (!TestNotNull(TEXT("TC-39 UseCard: Subsystem 应能取得"), Sub))
+        {
+            GssAiHooksTestHelpers::DestroyGameWorld(World);
+            return false;
+        }
+
+        Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+        const int32 JailPlayerId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+        if (!TestNotEqual(TEXT("TC-39 UseCard: 应找到先手玩家"), JailPlayerId, -1))
+        {
+            GssAiHooksTestHelpers::DestroyGameWorld(World);
+            return false;
+        }
+
+        GssAiHooksTestHelpers::AdvanceToJailTurn(Sub, JailPlayerId);
+
+        URentoPlayerState* PS = Sub->FindPlayerById(JailPlayerId);
+        const int32 JailTurnsBeforeUseCard = PS ? PS->JailTurnsServed : -1;
+
+        TSharedPtr<FAIDecisionMakerSpy> Spy = MakeShared<FAIDecisionMakerSpy>();
+        Spy->JailActionToReturn = EJailAction::UseCard;
+        Sub->SetAIDecisionMaker(Spy);
+
+        // 构造 mock snapshot：有出狱卡
+        FGameStateSnapshot Snap;
+        Snap.SelfPlayerId    = JailPlayerId;
+        Snap.SelfCash        = 1500;
+        Snap.JailBailAmount  = 50;
+        Snap.bHasJailCard    = true;   // 有卡
+        Snap.JailTurnsServed = 0;
+
+        Sub->RunAiJailAction(JailPlayerId, Snap);
+
+        // 断言 ① JailTurnsServed 未 +1（出狱路径不服刑）
+        const int32 JailTurnsAfterUseCard = PS ? PS->JailTurnsServed : -1;
+        TestEqual(
+            TEXT("TC-39 UseCard ①: 出狱路径 JailTurnsServed 应未 +1"),
+            JailTurnsAfterUseCard, JailTurnsBeforeUseCard);
+
+        // 断言 ② 移交
+        TestNotEqual(
+            TEXT("TC-39 UseCard ②: RunAiJailAction 后应已移交"),
+            Sub->GetCurrentActivePlayerId(), JailPlayerId);
+
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+    }
+
+    // ----- RollDouble 留狱待掷路径 -----
+    {
+        UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC39_RollDouble_World"));
+        if (!TestNotNull(TEXT("TC-39 RollDouble: World 应能创建"), World)) return false;
+
+        UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+        if (!TestNotNull(TEXT("TC-39 RollDouble: Subsystem 应能取得"), Sub))
+        {
+            GssAiHooksTestHelpers::DestroyGameWorld(World);
+            return false;
+        }
+
+        Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+        const int32 JailPlayerId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+        if (!TestNotEqual(TEXT("TC-39 RollDouble: 应找到先手玩家"), JailPlayerId, -1))
+        {
+            GssAiHooksTestHelpers::DestroyGameWorld(World);
+            return false;
+        }
+
+        GssAiHooksTestHelpers::AdvanceToJailTurn(Sub, JailPlayerId);
+
+        TSharedPtr<FAIDecisionMakerSpy> Spy = MakeShared<FAIDecisionMakerSpy>();
+        Spy->JailActionToReturn = EJailAction::RollDouble;
+        Sub->SetAIDecisionMaker(Spy);
+
+        FGameStateSnapshot Snap;
+        Snap.SelfPlayerId    = JailPlayerId;
+        Snap.SelfCash        = 1500;
+        Snap.JailBailAmount  = 50;
+        Snap.bHasJailCard    = false;
+        Snap.JailTurnsServed = 0;
+
+        Sub->RunAiJailAction(JailPlayerId, Snap);
+
+        // 断言 ① JailTurnsServed == 1（留狱 +1）
+        URentoPlayerState* PS = Sub->FindPlayerById(JailPlayerId);
+        const int32 JailTurnsAfterRollDouble = PS ? PS->JailTurnsServed : -1;
+        TestEqual(
+            TEXT("TC-39 RollDouble ①: 留狱路径 JailTurnsServed 应 +1（== 1）"),
+            JailTurnsAfterRollDouble, 1);
+
+        // 断言 ② 移交
+        TestNotEqual(
+            TEXT("TC-39 RollDouble ②: RunAiJailAction 后应已移交"),
+            Sub->GetCurrentActivePlayerId(), JailPlayerId);
+
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+    }
+
+    return true;
+}
+
+// =============================================================================
+// TC-39b-1（AC-5 / AC-39b）— PayBail 现金不足 → 降级留狱，Cash 不变
+//
+// GIVEN：2 人对局，jail player = 先手，Cash=10，JailBailAmount=50（不足）
+//        注入 spy JailActionToReturn=PayBail
+// WHEN：RunAiJailAction(jailPlayerId, Snapshot{SelfCash=10, JailBailAmount=50})
+// THEN：① JailTurnsServed == 1（降级留狱 +1）
+//       ② PlayerState->Cash == 10（未扣成负现金，AC-39b①）
+//       ③ 行动权已移交
+//
+// 非 vacuous：
+//   若框架误判 PayBail 可行 → AdvanceFromJailTurn(false) → JailTurnsServed==0 → ① FAIL
+// =============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FGssAiHooks_TC39b1_PayBailInsufficientFunds,
+    "Rento.PlayerTurn.GameStateSnapshotAiHooks.TC39b1_PayBailInsufficientFunds",
+    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FGssAiHooks_TC39b1_PayBailInsufficientFunds::RunTest(const FString& Parameters)
+{
+    UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC39b1_World"));
+    if (!TestNotNull(TEXT("TC-39b-1: World 应能创建"), World)) return false;
+
+    UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+    if (!TestNotNull(TEXT("TC-39b-1: Subsystem 应能取得"), Sub))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const bool bInit = Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+    if (!TestTrue(TEXT("TC-39b-1: InitializeFromConfig(P=2) 应成功"), bInit))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const int32 JailPlayerId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+    if (!TestNotEqual(TEXT("TC-39b-1: 应找到先手玩家"), JailPlayerId, -1))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    // 推进到 JailTurn
+    const bool bReached = GssAiHooksTestHelpers::AdvanceToJailTurn(Sub, JailPlayerId);
+    if (!TestTrue(TEXT("TC-39b-1: 应成功进入 JailTurn"), bReached))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    // 设置 PlayerState->Cash = 10（与 snapshot 一致，测试真实现金未被扣）
+    URentoPlayerState* PS = Sub->FindPlayerById(JailPlayerId);
+    if (PS)
+    {
+        PS->Cash = 10;
+    }
+
+    // 注入 spy：PayBail 但现金不足
+    TSharedPtr<FAIDecisionMakerSpy> Spy = MakeShared<FAIDecisionMakerSpy>();
+    Spy->JailActionToReturn = EJailAction::PayBail;
+    Sub->SetAIDecisionMaker(Spy);
+
+    // 构造 mock snapshot：Cash 不足（10 < 50）
+    FGameStateSnapshot Snap;
+    Snap.SelfPlayerId    = JailPlayerId;
+    Snap.SelfCash        = 10;    // 现金不足
+    Snap.JailBailAmount  = 50;    // 保释金 50
+    Snap.bHasJailCard    = false;
+    Snap.JailTurnsServed = 0;
+
+    // 执行
+    Sub->RunAiJailAction(JailPlayerId, Snap);
+
+    // 断言 ① JailTurnsServed == 1（降级留狱 +1）
+    const int32 JailTurnsAfter = PS ? PS->JailTurnsServed : -1;
+    TestEqual(
+        TEXT("TC-39b-1 ①: PayBail 不足应降级留狱，JailTurnsServed 应 +1（== 1）"),
+        JailTurnsAfter, 1);
+
+    // 断言 ② Cash 未变（本系统从不扣款，AC-39b①）
+    const int32 CashAfter = PS ? PS->Cash : -1;
+    TestEqual(
+        TEXT("TC-39b-1 ②: 降级路径 PlayerState->Cash 应未变（== 10，未扣成负现金，AC-39b①）"),
+        CashAfter, 10);
+
+    // 断言 ③ 移交
+    TestNotEqual(
+        TEXT("TC-39b-1 ③: RunAiJailAction 后应已移交"),
+        Sub->GetCurrentActivePlayerId(), JailPlayerId);
+
+    GssAiHooksTestHelpers::DestroyGameWorld(World);
+    return true;
+}
+
+// =============================================================================
+// TC-39b-2（AC-5 / AC-39b）— UseCard 无卡 → 降级留狱
+//
+// GIVEN：2 人对局，jail player = 先手，bHasJailCard=false
+//        注入 spy JailActionToReturn=UseCard
+// WHEN：RunAiJailAction(jailPlayerId, Snapshot{bHasJailCard=false})
+// THEN：① JailTurnsServed == 1（降级留狱 +1）
+//       ② 行动权已移交
+//       注：出狱卡持有数未变=结构性保证（player-turn 无卡存储，owner=事件格7）
+//
+// 非 vacuous：
+//   若框架误判 UseCard 可行 → AdvanceFromJailTurn(false) → JailTurnsServed==0 → ① FAIL
+// =============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FGssAiHooks_TC39b2_UseCardNoCard,
+    "Rento.PlayerTurn.GameStateSnapshotAiHooks.TC39b2_UseCardNoCard",
+    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FGssAiHooks_TC39b2_UseCardNoCard::RunTest(const FString& Parameters)
+{
+    UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC39b2_World"));
+    if (!TestNotNull(TEXT("TC-39b-2: World 应能创建"), World)) return false;
+
+    UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+    if (!TestNotNull(TEXT("TC-39b-2: Subsystem 应能取得"), Sub))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const bool bInit = Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+    if (!TestTrue(TEXT("TC-39b-2: InitializeFromConfig(P=2) 应成功"), bInit))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const int32 JailPlayerId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+    if (!TestNotEqual(TEXT("TC-39b-2: 应找到先手玩家"), JailPlayerId, -1))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    // 推进到 JailTurn
+    const bool bReached = GssAiHooksTestHelpers::AdvanceToJailTurn(Sub, JailPlayerId);
+    if (!TestTrue(TEXT("TC-39b-2: 应成功进入 JailTurn"), bReached))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    // 注入 spy：UseCard 但无卡
+    TSharedPtr<FAIDecisionMakerSpy> Spy = MakeShared<FAIDecisionMakerSpy>();
+    Spy->JailActionToReturn = EJailAction::UseCard;
+    Sub->SetAIDecisionMaker(Spy);
+
+    // 构造 mock snapshot：无出狱卡
+    FGameStateSnapshot Snap;
+    Snap.SelfPlayerId    = JailPlayerId;
+    Snap.SelfCash        = 1500;
+    Snap.JailBailAmount  = 50;
+    Snap.bHasJailCard    = false;   // 无卡
+    Snap.JailTurnsServed = 0;
+
+    // 执行
+    Sub->RunAiJailAction(JailPlayerId, Snap);
+
+    // 断言 ① JailTurnsServed == 1（降级留狱 +1）
+    URentoPlayerState* PS = Sub->FindPlayerById(JailPlayerId);
+    const int32 JailTurnsAfter = PS ? PS->JailTurnsServed : -1;
+    TestEqual(
+        TEXT("TC-39b-2 ①: UseCard 无卡应降级留狱，JailTurnsServed 应 +1（== 1）"),
+        JailTurnsAfter, 1);
+
+    // 断言 ② 移交
+    TestNotEqual(
+        TEXT("TC-39b-2 ②: RunAiJailAction 后应已移交"),
+        Sub->GetCurrentActivePlayerId(), JailPlayerId);
+
+    // 注释：出狱卡持有数未变=结构性保证（player-turn 无卡存储，owner=事件格7，AC-39b②）
+
+    GssAiHooksTestHelpers::DestroyGameWorld(World);
+    return true;
+}
+
+// =============================================================================
+// TC-42a（AC-6 / AC-42）— 抵押可行，后续建房不可行 → 被跳过
+//
+// GIVEN：2 人对局，推进到 PostRollAction
+//        actions = [{MortgageProperty, 5}, {BuildHouse, 5}]
+//        validator FeasibilityByCallOrder = {true, false}（抵押可行，建房不可行）
+// WHEN：RunAiPostRollActions(ActiveBefore, Snapshot)
+// THEN：① LastExecutedActions.Num() == 1（建房被跳过）
+//       ② LastExecutedActions[0].ActionType == MortgageProperty（被跳过的建房不在执行记录）
+//       ③ IsActionFeasibleCallCount == 2（两动作都重校验）
+//       ④ GetCurrentActivePlayerId() != ActiveBefore（EndTurn 移交）
+//
+// 非 vacuous（注释）：若把 validator 改为全 true，建房也进 LastExecutedActions →
+//   Num()==2 → ① FAIL；ActionType[0] 可能不同 → ② FAIL。
+// =============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FGssAiHooks_TC42a_MortgageFeasibleBuildSkipped,
+    "Rento.PlayerTurn.GameStateSnapshotAiHooks.TC42a_MortgageFeasibleBuildSkipped",
+    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FGssAiHooks_TC42a_MortgageFeasibleBuildSkipped::RunTest(const FString& Parameters)
+{
+    UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC42a_World"));
+    if (!TestNotNull(TEXT("TC-42a: World 应能创建"), World)) return false;
+
+    UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+    if (!TestNotNull(TEXT("TC-42a: Subsystem 应能取得"), Sub))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const bool bInit = Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+    if (!TestTrue(TEXT("TC-42a: InitializeFromConfig(P=2) 应成功"), bInit))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const int32 FirstId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+    if (!TestNotEqual(TEXT("TC-42a: 应找到先手玩家"), FirstId, -1))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    // 推进到 PostRollAction
+    const bool bReached = GssAiHooksTestHelpers::AdvanceToPostRollAction(Sub, FirstId);
+    if (!TestTrue(TEXT("TC-42a: 应成功推进到 PostRollAction"), bReached))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const int32 ActiveBefore = Sub->GetCurrentActivePlayerId();
+
+    // 注入 AIDecisionMakerSpy：2 条动作（MortgageProperty + BuildHouse）
+    TSharedPtr<FAIDecisionMakerSpy> AISpy = MakeShared<FAIDecisionMakerSpy>();
+    FTurnAction Act1;
+    Act1.ActionType      = EAIActionType::MortgageProperty;
+    Act1.TargetTileIndex = 5;
+    FTurnAction Act2;
+    Act2.ActionType      = EAIActionType::BuildHouse;
+    Act2.TargetTileIndex = 5;
+    AISpy->PostRollActionsToReturn.Add(Act1);
+    AISpy->PostRollActionsToReturn.Add(Act2);
+    Sub->SetAIDecisionMaker(AISpy);
+
+    // 注入 FActionValidatorSpy：{true, false}（抵押可行，建房不可行）
+    TSharedPtr<FActionValidatorSpy> ValSpy = MakeShared<FActionValidatorSpy>();
+    ValSpy->FeasibilityByCallOrder.Add(true);    // 第1调用：MortgageProperty 可行
+    ValSpy->FeasibilityByCallOrder.Add(false);   // 第2调用：BuildHouse 不可行
+    Sub->SetActionValidator(ValSpy);
+
+    // 构造 mock snapshot
+    FGameStateSnapshot Snap;
+    Snap.SelfPlayerId = ActiveBefore;
+    Snap.SelfCash     = 1500;
+
+    // 执行
+    Sub->RunAiPostRollActions(ActiveBefore, Snap);
+
+    // 断言 ① LastExecutedActions.Num() == 1（建房被跳过）
+    TestEqual(
+        TEXT("TC-42a ①: LastExecutedActions.Num() 应 == 1（建房被跳过）"),
+        Sub->GetLastExecutedActions().Num(), 1);
+
+    // 断言 ② LastExecutedActions[0].ActionType == MortgageProperty
+    if (Sub->GetLastExecutedActions().Num() >= 1)
+    {
+        TestEqual(
+            TEXT("TC-42a ②: LastExecutedActions[0].ActionType 应为 MortgageProperty（建房不在执行记录）"),
+            Sub->GetLastExecutedActions()[0].ActionType, EAIActionType::MortgageProperty);
+    }
+
+    // 断言 ③ IsActionFeasibleCallCount == 2（两动作都重校验）
+    TestEqual(
+        TEXT("TC-42a ③: IsActionFeasibleCallCount 应 == 2（两动作均经重校验）"),
+        ValSpy->IsActionFeasibleCallCount, 2);
+
+    // 断言 ④ EndTurn 移交
+    TestNotEqual(
+        TEXT("TC-42a ④: EndTurn 后 GetCurrentActivePlayerId 应已移交"),
+        Sub->GetCurrentActivePlayerId(), ActiveBefore);
+
+    GssAiHooksTestHelpers::DestroyGameWorld(World);
+    return true;
+}
+
+// =============================================================================
+// TC-42b（AC-6 / AC-42）— 第2建房不可行被跳过，后续合法 Mortgage 仍执行
+//
+// GIVEN：2 人对局，推进到 PostRollAction
+//        actions = [{BuildHouse, 5}, {BuildHouse, 5}, {MortgageProperty, 7}]
+//        validator FeasibilityByCallOrder = {true, false, true}
+//          （第1建房可行、第2建房不可行、抵押可行）
+// WHEN：RunAiPostRollActions(ActiveBefore, Snapshot)
+// THEN：① LastExecutedActions.Num() == 2（第2建房被跳过）
+//       ② LastExecutedActions[0].ActionType == BuildHouse
+//          LastExecutedActions[1].ActionType == MortgageProperty（第2建房被跳过，后续 Mortgage 仍执行，AC-42②）
+//       ③ IsActionFeasibleCallCount == 3（三动作均重校验）
+//       ④ EndTurn 移交
+//
+// 非 vacuous（注释）：若把 validator 改为全 true，三条都执行 → Num()==3 → ① FAIL。
+// =============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FGssAiHooks_TC42b_SecondBuildSkippedMortgageStillExecutes,
+    "Rento.PlayerTurn.GameStateSnapshotAiHooks.TC42b_SecondBuildSkippedMortgageStillExecutes",
+    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FGssAiHooks_TC42b_SecondBuildSkippedMortgageStillExecutes::RunTest(const FString& Parameters)
+{
+    UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC42b_World"));
+    if (!TestNotNull(TEXT("TC-42b: World 应能创建"), World)) return false;
+
+    UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
+    if (!TestNotNull(TEXT("TC-42b: Subsystem 应能取得"), Sub))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const bool bInit = Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
+    if (!TestTrue(TEXT("TC-42b: InitializeFromConfig(P=2) 应成功"), bInit))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const int32 FirstId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
+    if (!TestNotEqual(TEXT("TC-42b: 应找到先手玩家"), FirstId, -1))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    // 推进到 PostRollAction
+    const bool bReached = GssAiHooksTestHelpers::AdvanceToPostRollAction(Sub, FirstId);
+    if (!TestTrue(TEXT("TC-42b: 应成功推进到 PostRollAction"), bReached))
+    {
+        GssAiHooksTestHelpers::DestroyGameWorld(World);
+        return false;
+    }
+
+    const int32 ActiveBefore = Sub->GetCurrentActivePlayerId();
+
+    // 注入 AIDecisionMakerSpy：3 条动作（BuildHouse + BuildHouse + MortgageProperty）
+    TSharedPtr<FAIDecisionMakerSpy> AISpy = MakeShared<FAIDecisionMakerSpy>();
+    FTurnAction ActBuild1;
+    ActBuild1.ActionType      = EAIActionType::BuildHouse;
+    ActBuild1.TargetTileIndex = 5;
+    FTurnAction ActBuild2;
+    ActBuild2.ActionType      = EAIActionType::BuildHouse;
+    ActBuild2.TargetTileIndex = 5;
+    FTurnAction ActMortgage;
+    ActMortgage.ActionType      = EAIActionType::MortgageProperty;
+    ActMortgage.TargetTileIndex = 7;
+    AISpy->PostRollActionsToReturn.Add(ActBuild1);
+    AISpy->PostRollActionsToReturn.Add(ActBuild2);
+    AISpy->PostRollActionsToReturn.Add(ActMortgage);
+    Sub->SetAIDecisionMaker(AISpy);
+
+    // 注入 FActionValidatorSpy：{true, false, true}
+    TSharedPtr<FActionValidatorSpy> ValSpy = MakeShared<FActionValidatorSpy>();
+    ValSpy->FeasibilityByCallOrder.Add(true);    // 第1调用：BuildHouse#1 可行
+    ValSpy->FeasibilityByCallOrder.Add(false);   // 第2调用：BuildHouse#2 不可行
+    ValSpy->FeasibilityByCallOrder.Add(true);    // 第3调用：MortgageProperty 可行
+    Sub->SetActionValidator(ValSpy);
+
+    // 构造 mock snapshot
+    FGameStateSnapshot Snap;
+    Snap.SelfPlayerId = ActiveBefore;
+    Snap.SelfCash     = 1500;
+
+    // 执行
+    Sub->RunAiPostRollActions(ActiveBefore, Snap);
+
+    // 断言 ① LastExecutedActions.Num() == 2（第2建房被跳过）
+    TestEqual(
+        TEXT("TC-42b ①: LastExecutedActions.Num() 应 == 2（第2建房被跳过）"),
+        Sub->GetLastExecutedActions().Num(), 2);
+
+    if (Sub->GetLastExecutedActions().Num() >= 2)
+    {
+        // 断言 ② [0]=BuildHouse，[1]=MortgageProperty（后续 Mortgage 仍执行，AC-42②）
+        TestEqual(
+            TEXT("TC-42b ②-a: LastExecutedActions[0].ActionType 应为 BuildHouse"),
+            Sub->GetLastExecutedActions()[0].ActionType, EAIActionType::BuildHouse);
+        TestEqual(
+            TEXT("TC-42b ②-b: LastExecutedActions[1].ActionType 应为 MortgageProperty（第2建房跳过后续仍执行，AC-42②）"),
+            Sub->GetLastExecutedActions()[1].ActionType, EAIActionType::MortgageProperty);
+    }
+
+    // 断言 ③ IsActionFeasibleCallCount == 3（三动作均重校验）
+    TestEqual(
+        TEXT("TC-42b ③: IsActionFeasibleCallCount 应 == 3（三动作均经重校验）"),
+        ValSpy->IsActionFeasibleCallCount, 3);
+
+    // 断言 ④ EndTurn 移交
+    TestNotEqual(
+        TEXT("TC-42b ④: EndTurn 后 GetCurrentActivePlayerId 应已移交"),
+        Sub->GetCurrentActivePlayerId(), ActiveBefore);
+
+    GssAiHooksTestHelpers::DestroyGameWorld(World);
+    return true;
+}
+
+// =============================================================================
+// TC-45（AC-10 / AC-45，Alpha）— ResolveAuctionBid 纯函数 sentinel 值域
+//
+// 无 World，表驱动用例，纯静态函数调用。
+//
+// 覆盖场景（共 7 例）：
+//   负数 → 放弃；INDEX_NONE(-1) → 放弃；0 → 放弃；
+//   合法出价 → 返回原值；≤当前最高价 → 放弃；>Cash → 放弃；<最低加价步长 → 放弃
+//
+// 非 vacuous：每例期望值互异且含合法/各类非法分量，合法例 expected != 0。
+// =============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FGssAiHooks_TC45_ResolveAuctionBid,
+    "Rento.PlayerTurn.GameStateSnapshotAiHooks.TC45_ResolveAuctionBid",
+    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FGssAiHooks_TC45_ResolveAuctionBid::RunTest(const FString& Parameters)
+{
+    // 表驱动用例（GDD AC-45，纯函数无 World 依赖）
+    // 列：RawBid / CurrentHighest / MinIncrement / Cash / Expected / 说明
+
+    // 用例1：负数 → 放弃（0）
+    TestEqual(
+        TEXT("TC-45 [1]: 负数 RawBid=-5 → 放弃（0）"),
+        UPlayerTurnSubsystem::ResolveAuctionBid(-5, 50, 10, 200), 0);
+
+    // 用例2：INDEX_NONE(-1) 哨兵 → 放弃（0）
+    TestEqual(
+        TEXT("TC-45 [2]: INDEX_NONE(-1) 哨兵 → 放弃（0）"),
+        UPlayerTurnSubsystem::ResolveAuctionBid(INDEX_NONE, 50, 10, 200), 0);
+
+    // 用例3：0 非法 → 放弃（0）
+    TestEqual(
+        TEXT("TC-45 [3]: RawBid=0 非法（不作出价0解）→ 放弃（0）"),
+        UPlayerTurnSubsystem::ResolveAuctionBid(0, 50, 10, 200), 0);
+
+    // 用例4：合法出价（100 > 50 且 ≤200 且 ≥10）→ 返回 100
+    TestEqual(
+        TEXT("TC-45 [4]: 合法出价 RawBid=100（>50 且 ≤200 且 ≥10）→ 100"),
+        UPlayerTurnSubsystem::ResolveAuctionBid(100, 50, 10, 200), 100);
+
+    // 用例5：≤当前最高价（40 ≤ 50）→ 放弃（0）
+    TestEqual(
+        TEXT("TC-45 [5]: RawBid=40 ≤ CurrentHighest=50 → 放弃（0）"),
+        UPlayerTurnSubsystem::ResolveAuctionBid(40, 50, 10, 200), 0);
+
+    // 用例6：>Cash（300 > 200）→ 放弃（0）
+    TestEqual(
+        TEXT("TC-45 [6]: RawBid=300 > Cash=200 → 放弃（0）"),
+        UPlayerTurnSubsystem::ResolveAuctionBid(300, 50, 10, 200), 0);
+
+    // 用例7：< 最低加价步长（5 < 10）→ 放弃（0）
+    TestEqual(
+        TEXT("TC-45 [7]: RawBid=5 < MinIncrement=10 → 放弃（0）"),
+        UPlayerTurnSubsystem::ResolveAuctionBid(5, 0, 10, 200), 0);
+
+    return true;
+}
+

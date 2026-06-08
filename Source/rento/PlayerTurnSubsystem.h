@@ -69,6 +69,7 @@
 #include "LandingResolverInterface.h"    // ILandingResolver（story-006 落地结算 DI 接缝）
 #include "PawnMovementInterface.h"       // IPawnMover（story-006 移动 DI seam + 程间非重入）
 #include "AIDecisionMakerInterface.h"    // IAIDecisionMaker + FTurnAction（story-007 AI 决策 DI 接缝）
+#include "ActionValidatorInterface.h"   // IActionValidator（story-007 AC-6 / AC-42 逐动作可行性重校验 DI 接缝）
 #include "GameStateSnapshot.h"           // FGameStateSnapshot（story-007 AI 只读快照）
 #include "PlayerTurnSubsystem.generated.h"
 
@@ -474,13 +475,16 @@ public:
     void SetAIDecisionMaker(TSharedPtr<IAIDecisionMaker> DecisionMaker);
 
     /**
-     * AI PostRollAction 执行路径（pt-007 AC-3 / AC-37d）。
+     * AI PostRollAction 执行路径（pt-007 AC-3 / AC-37d / AC-42）。
      *
      * 执行流程：
      *   ① 阶段守卫：仅 PostRollAction 合法（非则 UE_LOG Error + return，G2）
      *   ② 调 AIDecisionMaker->DecidePostRollActions(Snapshot) 取动作列表
-     *   ③ 逐 FTurnAction 执行（本簇 = 最小占位：计数 + UE_LOG；
-     *      真实动作执行 + 逐动作可行性重校验归簇 B/C，本簇勿做经济/建房调用）
+     *   ③ 逐 FTurnAction 执行：
+     *      - 每动作先经 IActionValidator::IsActionFeasible 重校验（AC-6 / GDD CR-8）
+     *        可行 → 执行（本簇占位执行=记录到 LastExecutedActions + UE_LOG）
+     *        不可行 → 静默跳过 + UE_LOG Warning（后续动作仍继续，不中止整批）
+     *      - ActionValidator 未注入时退化为"全部可行"（向后兼容簇A TC-3/TC-37d）
      *   ④ 执行完（含空数组）→ 调 EndTurn(false) 推进 TurnEnd + 移交下一未破产玩家
      *
      * ⚠ 不广播 OnAIActionExecuted（该 delegate 声明归 story-004；本簇 Out of Scope）。
@@ -490,6 +494,79 @@ public:
      * @param Snapshot   只读快照（装配方传入，由调用方负责装配；本簇签名接收，不内部装配）
      */
     void RunAiPostRollActions(int32 AiPlayerId, const FGameStateSnapshot& Snapshot);
+
+    // =========================================================================
+    // pt-007 簇 B：IActionValidator DI + RunAiJailAction + ResolveAuctionBid
+    // =========================================================================
+
+    /**
+     * 注入 IActionValidator（逐动作可行性重校验 DI，pt-007 AC-6 / AC-42）。
+     *
+     * 仿 SetAIDecisionMaker / SetBankruptcyResolver 纯 C++ TSharedPtr DI 模式。
+     * 测试注入 FActionValidatorSpy（按调用顺序消费受控可行性结果）。
+     * 生产由簇C/规则 epic 提供委派实现。
+     * nullptr 时 RunAiPostRollActions 退化为"全部可行"（向后兼容）。
+     *
+     * @param Validator TSharedPtr 持有的注入实现（nullptr = 清除注入）
+     */
+    void SetActionValidator(TSharedPtr<IActionValidator> Validator);
+
+    /**
+     * 获取本回合 PostRollAction 实际执行（未被校验跳过）的动作序列（pt-007 AC-42）。
+     *
+     * 供测试断言"被跳过动作未执行/目标状态未变"：
+     *   - 进入此数组的动作 = 通过可行性校验且已执行
+     *   - 未进入此数组的动作 = 被 IActionValidator 标记不可行，已静默跳过
+     *
+     * RunAiPostRollActions 入口处调用 LastExecutedActions.Reset() 清空本回合记录。
+     *
+     * ⚠ 真实经济/建房/所有权状态变更归簇C/规则 epic（本簇 Out of Scope）。
+     *   本簇以"动作是否进入执行记录"作为 player-turn 层的可观测契约。
+     *
+     * @return 本回合已执行动作序列（只读引用）
+     */
+    const TArray<FTurnAction>& GetLastExecutedActions() const { return LastExecutedActions; }
+
+    /**
+     * AI 出狱决策执行路径（pt-007 AC-5 / AC-39 / AC-39b）。
+     *
+     * 执行流程（可行性判据单一来源 = Snapshot）：
+     *   ① 阶段守卫：仅 JailTurn 合法（非则 UE_LOG Error + return，G2）
+     *   ② AIDecisionMaker 未注入兜底：保守降级留狱（AdvanceFromJailTurn(true)）
+     *   ③ 调 AIDecisionMaker->DecideJailAction(Snapshot) 取 AI 出狱决策
+     *   ④ 按返回值路由（可行性自判 from Snapshot）：
+     *      PayBail  → Cash >= JailBailAmount → 出狱（AdvanceFromJailTurn(false)）
+     *                  否则 → 降级留狱（AC-39b①：不扣成负现金）
+     *      UseCard  → bHasJailCard=true → 出狱（AdvanceFromJailTurn(false)）
+     *                  否则 → 降级留狱（AC-39b②：不凭空消卡）
+     *      RollDouble → 留狱待掷（AdvanceFromJailTurn(true)；真实掷骰归 dice3/事件7）
+     *
+     * ⚠ 关键不变式：AiPlayerId 须 == CurrentActivePlayerId（在狱玩家本回合）。
+     *   测试须先 StartTurn(jailPlayerId) 使其成为当前玩家，再调本方法。
+     *
+     * @param AiPlayerId 当前 AI 行动玩家 PlayerId（须为在狱玩家）
+     * @param Snapshot   只读快照（含 SelfCash / JailBailAmount / bHasJailCard 可行性视图）
+     */
+    void RunAiJailAction(int32 AiPlayerId, const FGameStateSnapshot& Snapshot);
+
+    /**
+     * 拍卖出价 sentinel 值域解析（pt-007 AC-10 / AC-45，Alpha · Advisory）。
+     *
+     * 纯函数，无副作用，无 World 依赖。
+     * 出价合法性最终校验归拍卖(12)（MVP 不触发）；本函数仅钉死 int32 sentinel 值域约定。
+     *
+     * 合法出价条件（三条均须满足）：
+     *   1. RawBid > CurrentHighest（超过当前最高价）
+     *   2. RawBid <= Cash（不超出现金）
+     *   3. RawBid >= MinIncrement（不低于最低加价步长）
+     *
+     * @param RawBid         AI DecideAuctionBid 原始返回值
+     * @param CurrentHighest 当前最高价
+     * @param MinIncrement   最低加价步长
+     * @param Cash           出价方现金
+     * @return 0 = 放弃出价；> 0 = 合法出价额（== RawBid）
+     */
+    static int32 ResolveAuctionBid(int32 RawBid, int32 CurrentHighest, int32 MinIncrement, int32 Cash);
 
     // =========================================================================
     // 破产移出 + OnGameWon 触发接口（story pt-003）
@@ -711,6 +788,28 @@ private:
      *   - nullptr 时 RunAiPostRollActions 记 Error + EndTurn 兜底
      */
     TSharedPtr<IAIDecisionMaker> AIDecisionMaker;
+
+    /**
+     * IActionValidator DI 注入（story-007 pt-007 AC-6 / AC-42 逐动作可行性重校验）。
+     *
+     * 纯 C++ TSharedPtr（非 UObject，GC 不追踪）：
+     *   - 仿 AIDecisionMaker / BankruptcyResolver 模式
+     *   - 测试注入 FActionValidatorSpy（按调用顺序消费受控可行性结果）
+     *   - 生产由簇C/规则 epic 提供委派实现
+     *   - nullptr 时 RunAiPostRollActions 退化为"全部可行"（向后兼容簇A TC-3/TC-37d）
+     */
+    TSharedPtr<IActionValidator> ActionValidator;
+
+    /**
+     * 本回合 PostRollAction 实际执行（通过可行性校验）的动作序列（pt-007 AC-42）。
+     *
+     * RunAiPostRollActions 入口处 Reset()；
+     * 每条通过 IActionValidator 校验并执行的动作追加此数组。
+     * 被静默跳过的动作不进此数组，供测试断言目标状态未变（AC-42①）。
+     *
+     * ⚠ 简单值数组，无 GC 需求（FTurnAction 是普通 USTRUCT，非 UObject 引用）。
+     */
+    TArray<FTurnAction> LastExecutedActions;
 
     // =========================================================================
     // pt-006 私有成员
