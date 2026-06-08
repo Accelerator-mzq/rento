@@ -1,6 +1,6 @@
 ---
 Epic: player-turn
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Config-Data
 Estimate: S
@@ -72,3 +72,30 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-002/003/007（回合权威逻辑落 C++ 的实现存在，方可对其目录断言）；test-setup（CI 框架/headless runner 已搭建）。
 - **Unlocks**: epic DoD「CI 目录级断言：回合模块目录下无 BP 派生类」；为所有 `[Logic]` AC 的 false-green 防护提供结构保证。
+
+---
+
+## Completion Notes（2026-06-08，主会话直写 YAML+脚本+harness，非 mode-A）
+
+**Status: Complete。4/4 AC 覆盖。全量 239/239 Success, 0 Fail, 0 notRun, EXIT 0**
+（基线 237 + 2 CiAuthorityGate TC，零回归；主会话独立全证 `Saved/TestReport_pt009_main` 2026.06.08-06.27.13）。
+
+### 交付（3 新建）
+- **`tools/ci/check-authoritative-purity.sh`**：CI 权威纯净门 bash 脚本，3 门——
+  - Gate A（AC-3 随机硬门）：grep 禁 `FMath::Rand*`/`rand(`/`std::rand`（精确匹配紧跟 `(` + 排除注释行，避免误判 doc 注释里的禁用名；白名单 UDiceRngService FRandomStream 非禁用项无需特判）。
+  - Gate B1（AC-2）：权威 C++ 源码树 `Source/rento` 无 `.uasset`。
+  - Gate B2（AC-2）：Content/ 无【含 `BlueprintGeneratedClass` 标记 + 引用权威 C++ 类】的 BP 派生类（DataAsset 数据实例如 DA_Board 无该标记 → 放行，不误判）。
+- **`.github/workflows/authoritative-purity.yml`**：ubuntu-latest 云端 workflow（纯 grep/find 无需 UE），push to main + PR 触发，跑上述脚本。与 tests.yml（自托管 UE Automation）分离。
+- **`Source/rentoTests/Private/TurnModuleNoBpDerivedCiTest.cpp`**：in-engine 结构断言 harness（`Rento.PlayerTurn.CiAuthorityGate`，2 TC）——TC1 权威类（PlayerTurnSubsystem/RentoPlayerState/DiceRngService/MatchSubsystemBase）StaticClass 是 `CLASS_Native` 且非 `CLASS_CompiledFromBlueprint`；TC2 IFileManager 扫描权威源码树无 `.uasset`。
+- **`production/qa/smoke-2026-06-08-pt009-interface-stability.md`**：AC-4 接口稳定承诺 code-review 记录（PlayerState 字段只增不改 + ETurnPhase append-only，强度已由 story-008 static_assert 升为编译期门）。
+
+### falsifiability 坐实（非空壳门）
+- **bash 脚本三门负向测试**（主会话亲跑）：注入 `FMath::RandRange(` → Gate A exit 1 FAIL；Source/rento 放 `.uasset` → Gate B1 FAIL；Content/ 放含 BlueprintGeneratedClass+权威类名伪 .uasset → Gate B2 FAIL；清理后回归 exit 0 无残留。
+- **harness TC-2 变异坐实**（in-engine 独立代码路径）：植入 `.uasset` 于 Source/rento → TC2 精确 FAIL（TC1 不受影响）→ 清理复绿。
+- 现码正向全 PASS（DA_Board DataAsset 未被 B2 误判，确认含 0 个 BlueprintGeneratedClass 标记）。
+
+### MVP 分级（ADR-0007）
+本 story 钉「权威逻辑无 BP 类」目录级断言 + 随机文本硬门（MVP）。Alpha 若 BP 触 gameplay 边缘（交易/拍卖 AI hook）再增 BP 资产逐 K2Node 静态符号扫描检出裸随机节点（Out of Scope，已记 ADR-0007 Verification Required）。
+
+### Out of Scope 守界
+权威逻辑功能实现归 story-002/003/007（已 Complete）；受控写 C++ 强封装 AC-35a 归 story-005；枚举序列化兼容归 story-008；CI runner 脚手架归 test-setup（已建 tests.yml，本 story 仅增权威门规则 + 独立 purity workflow）。

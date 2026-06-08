@@ -1,0 +1,31 @@
+name: Authoritative Purity Gate
+
+# 《骰子大亨》(Dice Tycoon) — pt-009 / story-009 / ADR-0007 权威纯净门
+#
+# 两类门（每次 push to main + 每个 PR 运行；失败阻塞合并，禁 disable/skip）：
+#   - 随机硬门（AC-3）：权威 C++ 模块禁引擎全局 RNG（FMath::Rand* / rand( / std::rand）。
+#   - 目录级断言（AC-2）：权威模块目录下无 BP 派生类资产（DataAsset 数据实例放行）。
+#
+# ⚠ 与 tests.yml（UE Automation）分离：本门是纯 grep/find，无需 UE —— 跑云端 ubuntu-latest（免费快），
+#   不占用自托管 UE runner。UE Automation 测试（含 Rento.PlayerTurn.CiAuthorityGate C++ harness）仍由 tests.yml 跑。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  authoritative-purity:
+    name: ADR-0007 Authoritative Purity (no global RNG / no BP-derived authoritative class)
+    runs-on: ubuntu-latest   # 纯 grep/find，无需 UE，云端跑
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true   # .uasset 走 Git LFS，目录断言须取到真实文件
+
+      - name: Run authoritative purity gate
+        run: bash tools/ci/check-authoritative-purity.sh
+        shell: bash
