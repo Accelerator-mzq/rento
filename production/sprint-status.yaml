@@ -35,7 +35,7 @@ stories:
     name: "经济事件契约 (4 delegate + EChangeReason)"
     file: "production/epics/economy-cash/story-002-economy-event-contract.md"
     priority: must-have
-    status: ready-for-dev
+    status: done
     owner: "unreal-specialist"
     estimate_days: 0.75
     blocker: ""

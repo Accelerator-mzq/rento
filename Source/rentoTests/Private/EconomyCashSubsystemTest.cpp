@@ -7,7 +7,7 @@
 // Automation 类目：Rento.Economy.CashService
 //
 // 测试机制（headless -nullrhi）：
-//   - UWorld::CreateWorld(EWorldType::Game) 自动 Init UEconomyCashSubsystem + UPlayerTurnSubsystem
+//   - UWorld::CreateWorld(EWorldType::Game) 自动 Init UEconomySubsystem + UPlayerTurnSubsystem
 //   - 经 UPlayerTurnSubsystem::InitializeFromConfig(2 人) 建 PlayerId 0/1（Cash 默认 0）
 //   - 起始 Cash 用 PS->SetCash(...) 直接 arrange（测试夹具，非被测路径）
 //   - 事件用 UEconomyEventSpy（AddDynamic）计数
@@ -25,7 +25,7 @@
 #include "Engine/World.h"
 #include "UObject/Package.h"
 
-#include "EconomyCashSubsystem.h"
+#include "EconomySubsystem.h"
 #include "PlayerTurnSubsystem.h"
 #include "RentoPlayerState.h"
 #include "GameSetupConfig.h"
@@ -82,7 +82,7 @@ namespace EconTestHelpers
      */
     static bool SetupMatch(
         UWorld*& OutWorld,
-        UEconomyCashSubsystem*& OutEcon,
+        UEconomySubsystem*& OutEcon,
         UPlayerTurnSubsystem*& OutTurn,
         const FName& WorldName,
         int32 NumPlayers)
@@ -90,14 +90,14 @@ namespace EconTestHelpers
         OutWorld = CreateGameWorld(WorldName);
         if (!OutWorld) { return false; }
         OutTurn = OutWorld->GetSubsystem<UPlayerTurnSubsystem>();
-        OutEcon = OutWorld->GetSubsystem<UEconomyCashSubsystem>();
+        OutEcon = OutWorld->GetSubsystem<UEconomySubsystem>();
         if (!OutTurn || !OutEcon) { return false; }
         OutTurn->InitializeFromConfig(MakeConfig(NumPlayers));
         return true;
     }
 
     /** 绑定 spy 到 economy 两事件。 */
-    static UEconomyEventSpy* BindSpy(UEconomyCashSubsystem* Econ)
+    static UEconomyEventSpy* BindSpy(UEconomySubsystem* Econ)
     {
         UEconomyEventSpy* Spy = NewObject<UEconomyEventSpy>(GetTransientPackage());
         Spy->AddToRoot();
@@ -106,7 +106,7 @@ namespace EconTestHelpers
         return Spy;
     }
 
-    static void UnbindSpy(UEconomyCashSubsystem* Econ, UEconomyEventSpy* Spy)
+    static void UnbindSpy(UEconomySubsystem* Econ, UEconomyEventSpy* Spy)
     {
         if (Econ && Spy)
         {
@@ -130,7 +130,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FEcon_TC1_CashFloorInsufficientFunds::RunTest(const FString& Parameters)
 {
     using namespace EconTestHelpers;
-    UWorld* World = nullptr; UEconomyCashSubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
+    UWorld* World = nullptr; UEconomySubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
     if (!TestTrue(TEXT("TC-1: SetupMatch"), SetupMatch(World, Econ, Turn, TEXT("Econ_TC1_World"), 2)))
     {
         DestroyGameWorld(World); return false;
@@ -142,7 +142,7 @@ bool FEcon_TC1_CashFloorInsufficientFunds::RunTest(const FString& Parameters)
 
     UEconomyEventSpy* Spy = BindSpy(Econ);
 
-    const bool bResult = Econ->Debit(0, 80);          // act
+    const bool bResult = Econ->Debit(0, 80, EChangeReason::Tax);  // act（reason 任选；不足额走 InsufficientFunds 不携 reason）
 
     TestFalse(TEXT("TC-1: Debit(80) 应返回 false（不足额）"), bResult);
     TestEqual(TEXT("TC-1: Cash 仍 == 50（不落地为负）"), Econ->GetCash(0), 50);
@@ -152,7 +152,7 @@ bool FEcon_TC1_CashFloorInsufficientFunds::RunTest(const FString& Parameters)
     TestEqual(TEXT("TC-1: AmountShort==30"), Spy->LastShort, 30);
 
     // Edge：Debit(50) 恰等额 → Cash==0 成功、不触 InsufficientFunds、CashChanged +1。
-    const bool bEdge = Econ->Debit(0, 50);
+    const bool bEdge = Econ->Debit(0, 50, EChangeReason::Tax);
     TestTrue(TEXT("TC-1 Edge: Debit(50) 恰等额成功"), bEdge);
     TestEqual(TEXT("TC-1 Edge: Cash==0"), Econ->GetCash(0), 0);
     TestEqual(TEXT("TC-1 Edge: InsufficientFunds 仍 1 次（恰等额不触发）"), Spy->InsufficientCount, 1);
@@ -177,7 +177,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FEcon_TC2_AtomicTransferConservation::RunTest(const FString& Parameters)
 {
     using namespace EconTestHelpers;
-    UWorld* World = nullptr; UEconomyCashSubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
+    UWorld* World = nullptr; UEconomySubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
     if (!TestTrue(TEXT("TC-2: SetupMatch"), SetupMatch(World, Econ, Turn, TEXT("Econ_TC2_World"), 2)))
     {
         DestroyGameWorld(World); return false;
@@ -194,17 +194,18 @@ bool FEcon_TC2_AtomicTransferConservation::RunTest(const FString& Parameters)
 
     UEconomyEventSpy* Spy = BindSpy(Econ);
 
-    const bool bResult = Econ->TransferCash(/*Payer=*/0, /*Payee=*/1, /*R=*/30);
+    const bool bResult = Econ->TransferCash(/*Payer=*/0, /*Payee=*/1, /*R=*/30, EChangeReason::Rent);
 
     TestTrue(TEXT("TC-2: TransferCash 成功"), bResult);
     TestEqual(TEXT("TC-2: payer == 100-30 == 70"), Econ->GetCash(0), 70);
     TestEqual(TEXT("TC-2: payee == 20+30 == 50"), Econ->GetCash(1), 50);
     TestEqual(TEXT("TC-2: 总和守恒 == 120"), Econ->GetCash(0) + Econ->GetCash(1), 120);
     TestEqual(TEXT("TC-2: 2 次 OnCashChanged（payer/payee 各一）"), Spy->CashChangedCount, 2);
+    TestEqual(TEXT("TC-2: 两腿 reason==Rent"), static_cast<int32>(Spy->LastReason), static_cast<int32>(EChangeReason::Rent));
     TestEqual(TEXT("TC-2: 0 次 InsufficientFunds"), Spy->InsufficientCount, 0);
 
     // Edge：全额转移 R==payer.Cash → payer==0。
-    const bool bEdgeResult = Econ->TransferCash(/*Payer=*/0, /*Payee=*/1, /*R=*/70);
+    const bool bEdgeResult = Econ->TransferCash(/*Payer=*/0, /*Payee=*/1, /*R=*/70, EChangeReason::Rent);
     TestTrue(TEXT("TC-2 Edge: 全额转移返回 true"), bEdgeResult);
     TestEqual(TEXT("TC-2 Edge: 全额后 payer==0"), Econ->GetCash(0), 0);
     TestEqual(TEXT("TC-2 Edge: payee==50+70==120"), Econ->GetCash(1), 120);
@@ -226,7 +227,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FEcon_TC3_MonotonicNoSideEffect::RunTest(const FString& Parameters)
 {
     using namespace EconTestHelpers;
-    UWorld* World = nullptr; UEconomyCashSubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
+    UWorld* World = nullptr; UEconomySubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
     if (!TestTrue(TEXT("TC-3: SetupMatch"), SetupMatch(World, Econ, Turn, TEXT("Econ_TC3_World"), 2)))
     {
         DestroyGameWorld(World); return false;
@@ -234,9 +235,9 @@ bool FEcon_TC3_MonotonicNoSideEffect::RunTest(const FString& Parameters)
     Turn->FindPlayerById(0)->SetCash(100);
     Turn->FindPlayerById(1)->SetCash(500);            // 他玩家对照基线
 
-    TestTrue(TEXT("TC-3: Credit(40)"), Econ->Credit(0, 40));
+    TestTrue(TEXT("TC-3: Credit(40)"), Econ->Credit(0, 40, EChangeReason::Salary));
     TestEqual(TEXT("TC-3: Cash == 140"), Econ->GetCash(0), 140);
-    TestTrue(TEXT("TC-3: Debit(25)"), Econ->Debit(0, 25));
+    TestTrue(TEXT("TC-3: Debit(25)"), Econ->Debit(0, 25, EChangeReason::Tax));
     TestEqual(TEXT("TC-3: Cash == 115"), Econ->GetCash(0), 115);
     TestEqual(TEXT("TC-3: 他玩家 Cash 不受副作用（仍 500）"), Econ->GetCash(1), 500);
 
@@ -256,7 +257,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FEcon_TC5_ZeroAmountSilentEarlyReturn::RunTest(const FString& Parameters)
 {
     using namespace EconTestHelpers;
-    UWorld* World = nullptr; UEconomyCashSubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
+    UWorld* World = nullptr; UEconomySubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
     if (!TestTrue(TEXT("TC-5: SetupMatch"), SetupMatch(World, Econ, Turn, TEXT("Econ_TC5_World"), 2)))
     {
         DestroyGameWorld(World); return false;
@@ -265,8 +266,8 @@ bool FEcon_TC5_ZeroAmountSilentEarlyReturn::RunTest(const FString& Parameters)
 
     UEconomyEventSpy* Spy = BindSpy(Econ);
 
-    const bool bCredit0 = Econ->Credit(0, 0);
-    const bool bDebit0  = Econ->Debit(0, 0);
+    const bool bCredit0 = Econ->Credit(0, 0, EChangeReason::Salary);
+    const bool bDebit0  = Econ->Debit(0, 0, EChangeReason::Tax);
 
     TestFalse(TEXT("TC-5: Credit(0) 返回 false（早返）"), bCredit0);
     TestFalse(TEXT("TC-5: Debit(0) 返回 false（早返）"), bDebit0);
@@ -296,7 +297,7 @@ bool FEcon_TC6_NegativeAmountRejected::RunTest(const FString& Parameters)
     // 期望 2 条 Error（Credit + Debit 各一），否则未捕获的 Error 会致测试 FAIL。
     AddExpectedError(TEXT("must be non-negative"), EAutomationExpectedErrorFlags::Contains, 2);
 
-    UWorld* World = nullptr; UEconomyCashSubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
+    UWorld* World = nullptr; UEconomySubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
     if (!TestTrue(TEXT("TC-6: SetupMatch"), SetupMatch(World, Econ, Turn, TEXT("Econ_TC6_World"), 2)))
     {
         DestroyGameWorld(World); return false;
@@ -305,8 +306,8 @@ bool FEcon_TC6_NegativeAmountRejected::RunTest(const FString& Parameters)
 
     UEconomyEventSpy* Spy = BindSpy(Econ);
 
-    const bool bCreditNeg = Econ->Credit(0, -10);
-    const bool bDebitNeg  = Econ->Debit(0, -10);
+    const bool bCreditNeg = Econ->Credit(0, -10, EChangeReason::Salary);
+    const bool bDebitNeg  = Econ->Debit(0, -10, EChangeReason::Tax);
 
     TestFalse(TEXT("TC-6: Credit(-10) 拒绝"), bCreditNeg);
     TestFalse(TEXT("TC-6: Debit(-10) 拒绝"), bDebitNeg);
@@ -331,7 +332,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FEcon_TC7_GiveStartingCash::RunTest(const FString& Parameters)
 {
     using namespace EconTestHelpers;
-    UWorld* World = nullptr; UEconomyCashSubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
+    UWorld* World = nullptr; UEconomySubsystem* Econ = nullptr; UPlayerTurnSubsystem* Turn = nullptr;
     if (!TestTrue(TEXT("TC-7: SetupMatch"), SetupMatch(World, Econ, Turn, TEXT("Econ_TC7_World"), 2)))
     {
         DestroyGameWorld(World); return false;

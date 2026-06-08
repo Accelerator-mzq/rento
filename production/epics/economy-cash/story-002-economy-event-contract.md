@@ -1,7 +1,7 @@
 # Story 002: 经济事件契约 (4 delegate + EChangeReason)
 
 > **Epic**: 经济与现金 Economy & Cash
-> **Status**: Ready
+> **Status**: Complete
 > **Layer**: Core
 > **Type**: Logic
 > **Estimate**: [TBD]
@@ -77,7 +77,36 @@
 
 **Story Type**: Logic
 **Required evidence**: `tests/unit/economy-cash/economy_events_test.cpp`（类目 `Rento.Economy.Events`）— 存在且通过。
-**Status**: [ ] Not yet created
+**Status**: [x] Created + passing（`EconomyEventsTest.cpp` 类目 `Rento.Economy.Events` 7 TC；全量 282/282）
+
+---
+
+## Completion Notes（2026-06-09，/dev-story mode-A）
+
+**实现/改动文件**：
+- `Source/rento/EconomyTypes.h`（新）— `EChangeReason`（9 值 uint8 append-only）+ 4 payload USTRUCT（FCashChangedInfo/FRentPaidInfo/FInsufficientFundsInfo/FBankruptcyDeclaredInfo）+ 4 DYNAMIC delegate 签名。
+- `Source/rento/EconomySubsystem.h` / `.cpp`（**重命名** `EconomyCashSubsystem`→`EconomySubsystem`，类 `UEconomyCashSubsystem`→`UEconomySubsystem`）— 4 BlueprintAssignable delegate 成员；Credit/Debit/TransferCash 加 `EChangeReason` 参；广播构造 Info struct；EChangeReason append-only `static_assert`×9。
+- `Source/rentoTests/Private/EconomyEventSpy.h` — spy 升级为收 USTRUCT payload + 加 OnRentPaid/OnBankruptcyDeclared 处理。
+- `Source/rentoTests/Private/EconomyCashSubsystemTest.cpp` — econ-001 6 TC 适配新签名（reason 参 + 类名）。
+- `Source/rentoTests/Private/EconomyEventsTest.cpp`（新）— AC-33~39 共 7 TC（Rento.Economy.Events）。
+
+**AC 覆盖**：
+- [x] **AC-33** OnCashChanged payload（含 EChangeReason + delta）— AC33_CashChangedPayload。
+- [x] **AC-34** OnRentPaid 四字段 — AC34（契约 plumbing；实际收租触发 story-004/005）。
+- [x] **AC-35** OnInsufficientFunds payload — AC35。
+- [~] **AC-36** OnBankruptcyDeclared — **拆分**：本 story discharge {delegate 存在 + 2 字段反射（FBankruptcyDeclaredInfo）+ 1 次广播 plumbing}（AC36）；**时机子句「广播在资产转移之后」DEFERRED→story-009**（002 无真实破产移交序列可排序，CallLog 顺序断言须在 009 真实清算路径验，否则 vacuous）。
+- [x] **AC-37** 事件次数（一次收租 1 OnRentPaid + 2 OnCashChanged reason=Rent；amount==0 全 0）— AC37。
+- [x] **AC-38** 4 delegate BlueprintAssignable/FMulticastDelegateProperty + payload USTRUCT 反射 — AC38。
+- [x] **AC-39** Credit/Debit/GetCash/TransferCash/GiveStartingCash BlueprintCallable + EChangeReason 9 值 — AC39。
+
+**验证证据（主会话亲跑，铁律）**：Build Succeeded；全量 **282/282**（259+23warn，0 Fail/0 notRun，EXIT 0，275 基线+7 Events 零回归，**Foundation EventBusDelegateContract TC1-8 无回归**，`Saved/TestReport_econ002_commit`）；变异坐实非 vacuous（变异C 硬编码 Credit reason→AC-37/TC-2 reason==Rent 精确 FAIL，复绿）；AC-4 grep：econ 生产零直写只经 SetCash。
+
+**设计裁定/偏离 + 协调债**：
+- **DV-3（类重命名，用户 2026-06-09 裁定）**：`UEconomyCashSubsystem`→`UEconomySubsystem`（文件随名 `EconomySubsystem.{h,cpp}`）。对齐 Foundation `EventBusDelegateContractTest` TC8 预期（FindFirstObject("EconomySubsystem")）+ 系统5「经济与现金」全职责语义。econ-001 文件 git mv 保留历史。
+- **discharge Foundation TC8 deferred（部分）**：本 story 在自身测试（AC36）兑现 OnBankruptcyDeclared {2 字段 + 存在性}（TC8 注释指示「在 economy story 对应测试补充」）；TC8「两事件并存未合并」（vs 破产9 OnPlayerBankrupt 3 字段）仍 DEFERRED→bankruptcy epic。
+- **GiveStartingCash reason 决策**：起始资金经 `Credit(StartingCash, EChangeReason::Salary)`。**deliberate 复用 Salary**（EChangeReason GDD 固定 9 值无「开局/初始」语义）。**GDD propagate follow-up**：若下游 VFX/HUD 需区分「开局初始资金」vs「过 GO 发薪」，须 GDD 为 EChangeReason 追加 reason（append-only）；当前下游不区分。
+- **EChangeReason 越界中性兜底**（Foundation TC7 deferred）：判定归**呈现层 consumer 职责**（econ-002 无 consumer，enum-owner 不实现 fallback）；留呈现 epic（VFX19/HUD16/audio22）兑现，非 econ 缺口。
+- **TransferCash Credit-after-Debit ensure**（既有 econ-001 硬化）：Shipping 下 ensure 不崩，极端不可达路径（同帧二次 ResolvePlayer 不一致）理论静默毁币；MVP 单线程接受，Full Vision 联网阶段复查。
 
 ---
 
