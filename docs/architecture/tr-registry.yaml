@@ -598,10 +598,10 @@ requirements:
   - id: TR-move-010
     system: move
     gdd: design/gdd/movement.md
-    requirement: "Utility 租 dice_total 由经济在 ResolvePhase 从回合掷骰上下文 PULL(holder=回合2,移动不缓存/不投递)"
+    requirement: "Utility 租 dice_total 由经济在 ResolvePhase 从回合掷骰上下文 PULL(holder=回合2,移动不缓存/不投递)。ADR-0015:回合2 holder CurrentRollContext+经济 GetCurrentRollTotal() PULL+移动不投递(机制 pt-005/006/007 已实现)"
     domain: CrossSystem
-    adr: ""
-    status: Gap
+    adr: "0015"
+    status: Covered
     persists: false
 
   - id: TR-move-011
@@ -625,7 +625,7 @@ requirements:
   - id: TR-move-013
     system: move
     gdd: design/gdd/movement.md
-    requirement: "联网重放迁移路径:OnPawnMoveStarted/Landed 本地广播 → OnRep_CurrentTileIndex/NetMulticast(Full Vision 技术债,非自由互换)"
+    requirement: "联网重放迁移路径:OnPawnMoveStarted/Landed 本地广播 → OnRep_CurrentTileIndex/NetMulticast(Full Vision 技术债,非自由互换)。ADR-0015 明确 Full Vision defer:MVP 单线程不触发,不裁 ADR、不开 story(intentional defer 非遗漏)"
     domain: EngineCapability
     adr: ""
     status: Gap
@@ -661,10 +661,10 @@ requirements:
   - id: TR-move-017
     system: move
     gdd: design/gdd/movement.md
-    requirement: "passedGo 理论无界 + steps 超界冒泡告警上传回合2/结构化日志;int32 溢出兜底依赖数据校验层(OQ-Econ-10 仅护发薪侧)"
+    requirement: "passedGo 理论无界 + steps 超界冒泡告警上传回合2/结构化日志;int32 溢出兜底依赖数据校验层(OQ-Econ-10 仅护发薪侧)。ADR-0015:移动不 clamp(保环路落点)+不静默吞冒泡(AC-24);int32 数值兜底委托 ADR-0014(passed_go clamp[0,1000]+加载期边界)"
     domain: CrossSystem
-    adr: ""
-    status: Gap
+    adr: "0015,0014"
+    status: Covered
     persists: false
 
   - id: TR-move-018
@@ -800,27 +800,27 @@ requirements:
   - id: TR-econ-014
     system: econ
     gdd: design/gdd/economy-cash.md
-    requirement: "F-6/F-8/F-9 整数取整路径跨编译配置/两次冷启动位级一致、无 float(AC-32 确定性)"
+    requirement: "F-6/F-8/F-9 整数取整路径跨编译配置/两次冷启动位级一致、无 float(AC-32 确定性)。ADR-0014:整数 num/den+显式取整(ceil/floor)+逐栋 floor 先于求和+零 float→位级一致"
     domain: Determinism
-    adr: ""
-    status: Gap
+    adr: "0014"
+    status: Covered
     persists: false
 
   - id: TR-econ-015
     system: econ
     gdd: design/gdd/economy-cash.md
-    requirement: "int32 溢出硬防护:passed_go clamp[0,1000] + SalaryAmount≤2e6/DiceMultiplierTable 上界加载期校验(F-1/F-4,OQ-Econ-10)"
+    requirement: "int32 溢出硬防护:passed_go clamp[0,1000] + SalaryAmount≤2e6/DiceMultiplierTable 上界加载期校验(F-1/F-4,OQ-Econ-10)。ADR-0014:运行时 clamp(非仅 ensure)+加载期 fatal 边界(DICE_MULT_MAX=1e6);SalaryAmount≤2e6 board 执行=propagate 债(未落)"
     domain: Engine/DataValidation
-    adr: ""
-    status: Gap
+    adr: "0014"
+    status: Covered
     persists: false
 
   - id: TR-econ-016
     system: econ
     gdd: design/gdd/economy-cash.md
-    requirement: "F-2 数据包络跨公式约束加载期校验(RentTable[1]≥RentTable[0]×2 等,OQ-Econ-9,派发已 Approved 棋盘1)"
+    requirement: "F-2 数据包络跨公式约束加载期校验(RentTable[1]≥RentTable[0]×2 等,OQ-Econ-9,派发已 Approved 棋盘1)。ADR-0014:约束定义归 economy、severity=warning(非 fatal);校验执行=board propagate 债(未落,故仍 Partial)"
     domain: Engine/DataValidation
-    adr: "0002"
+    adr: "0002,0014"
     status: Partial
     persists: false
 
@@ -851,17 +851,17 @@ requirements:
     gdd: design/gdd/property-ownership.md
     requirement: "owner map 容器形态(TArray<int32> 稠密索引 vs TMap)+ 非可购买格哨兵槽语义 + TileIndex 连续无洞前提(OQ-Prop-1①)"
     domain: DataStructure
-    adr: "0002,0001"
-    status: Gap
+    adr: "0013,0002,0001"
+    status: Covered
     persists: true
 
   - id: TR-prop-002
     system: prop
     gdd: design/gdd/property-ownership.md
-    requirement: "抵押标记容器须避 TArray<bool> bitfield specialization(改 TArray<uint8>/TBitArray),保 AC-34b 批量清零/序列化(OQ-Prop-1① unreal Issue1)"
+    requirement: "抵押标记容器(OQ-Prop-1① unreal Issue1)。ADR-0013:TArray<bool> bitfield 前提 REFUTED(源码核实非特化);选 AoS FTileOwnershipState 内含 bool,无独立标记数组,AC-34b 批量清零=单记录赋值"
     domain: DataStructure
-    adr: ""
-    status: Gap
+    adr: "0013"
+    status: Covered
     persists: true
 
   - id: TR-prop-003
@@ -894,10 +894,10 @@ requirements:
   - id: TR-prop-006
     system: prop
     gdd: design/gdd/property-ownership.md
-    requirement: "受控写封装:owner map/bIsMortgaged 只经受控接口,外部系统禁直写(CR-1/AC-3,OQ-Prop-1② BlueprintPrivate 强度)"
+    requirement: "受控写封装:owner map/bIsMortgaged 只经受控接口,外部系统禁直写(CR-1/AC-3,OQ-Prop-1② BlueprintPrivate 强度)。ADR-0013:C++ private 容器+无 BP 写属性+只读访问器,AC-3/7/31/32/35 升正式 [Logic] 静态扫描"
     domain: Engine/Encapsulation
-    adr: "0007"
-    status: Partial
+    adr: "0007,0013"
+    status: Covered
     persists: false
 
   - id: TR-prop-007
@@ -939,19 +939,19 @@ requirements:
   - id: TR-prop-011
     system: prop
     gdd: design/gdd/property-ownership.md
-    requirement: "破产级联逐格广播 + 重入锁 bIsMidBankruptcyTransfer(锁须无条件解除)vs deferred broadcast queue(OQ-Prop-1④/States 破产级联)"
+    requirement: "破产级联逐格广播 + 重入锁 bIsMidBankruptcyTransfer(锁须无条件解除)vs deferred broadcast queue(OQ-Prop-1④/States 破产级联)。ADR-0013:MVP 逐格广播+重入锁(RAII 无条件解除),deferred queue 列 Alpha 替代"
     domain: Threading/EngineCapability
-    adr: "0003"
-    status: Partial
+    adr: "0003,0013"
+    status: Covered
     persists: false
 
   - id: TR-prop-012
     system: prop
     gdd: design/gdd/property-ownership.md
-    requirement: "批量移交原子性(全或全无,owner 与 bIsMortgaged 同格原子清零)(States/AC-33b/34b)"
+    requirement: "批量移交原子性(全或全无,owner 与 bIsMortgaged 同格原子清零)(States/AC-33b/34b)。ADR-0013:先全量前置校验后逐格写(全或全无)+单 FTileOwnershipState 赋值(同格原子,类型层杜绝半清)"
     domain: Persistence/DataIntegrity
-    adr: ""
-    status: Gap
+    adr: "0013"
+    status: Covered
     persists: false
 
   - id: TR-prop-013
@@ -1060,19 +1060,19 @@ requirements:
   - id: TR-event-009
     system: event
     gdd: design/gdd/tile-events.md
-    requirement: "RepairFee 读建房(8)全盘聚合接口 GetTotalHouseCount/GetTotalHotelCount(与 per-tile [0,5] 口径区分,防静默混用)"
+    requirement: "RepairFee 读建房(8)全盘聚合接口 GetTotalHouseCount/GetTotalHotelCount(与 per-tile [0,5] 口径区分,防静默混用)。评估(2026-06-08):非架构 Gap=对 Feature 层 building8(未 epic)实现的跨层依赖;接口契约已在 building8 F-7+tile-events F-3 完整规格化(OQ-Event-3 RESOLVED 2026-06-04),架构面=ADR-0007(只读 accessor 边界)+0001(building8 宿主),pull 读非事件。RepairFee 经 mock 现可开 story,真实接线待 building8 epic。无需新 ADR"
     domain: CrossSystem/Interface
-    adr: ""
-    status: Gap
+    adr: "0007,0001"
+    status: Partial
     persists: false
 
   - id: TR-event-010
     system: event
     gdd: design/gdd/tile-events.md
-    requirement: "MoveToNearest Utility 额外掷骰 dice_total 经 player-turn 受控写接口 SetCurrentRollContext(FDiceRollResult) 注入当前程上下文 holder(供经济 F-4 PULL,不串程)"
+    requirement: "MoveToNearest Utility 额外掷骰 dice_total 经 player-turn 受控写接口 SetCurrentRollContext(FDiceRollResult) 注入当前程上下文 holder(供经济 F-4 PULL,不串程)。ADR-0015:事件经回合2 受控写 setter 注入 holder,单源不串程(机制 pt-005 已实现 setter)"
     domain: CrossSystem/Communication
-    adr: ""
-    status: Gap
+    adr: "0015"
+    status: Covered
     persists: false
 
   - id: TR-event-011
@@ -1100,9 +1100,9 @@ requirements:
   - id: TR-build-002
     system: build
     gdd: design/gdd/building-upgrade.md
-    requirement: "house_count 容器形态(TArray<int32>/TMap per-tile [0,5])与受控写强度(OQ-Build-5,共享 OQ-Prop-1 生命周期)"
+    requirement: "house_count 容器形态(TArray<int32>/TMap per-tile [0,5])与受控写强度(OQ-Build-5,共享 OQ-Prop-1 生命周期)。ADR-0013 确立 per-tile 稠密记录数组+哨兵+C++ private 封装模式供 8 复用(8 实现 story 正式采纳)"
     domain: State/Container
-    adr: "0001"
+    adr: "0001,0013"
     status: Partial
     persists: true
 

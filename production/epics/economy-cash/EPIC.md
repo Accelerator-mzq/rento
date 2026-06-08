@@ -14,6 +14,7 @@
 
 | ADR | Decision Summary | Engine Risk |
 |-----|-----------------|-------------|
+| ADR-0014: 整数确定性与溢出防护 | 金钱运算整数纯净无 float+显式取整(ceil/floor)+逐栋 floor 先于求和（位级一致 AC-32）；passed_go 运行时 clamp[0,1000]；SalaryAmount≤2e6/DICE_MULT_MAX=1e6 加载期 fatal | LOW |
 | ADR-0007: BP-vs-C++ 边界 | 经济公式落 C++ 权威层（[Logic] headless 可测）；Credit/Debit/GetCash 标 UFUNCTION(BlueprintCallable) | LOW |
 | ADR-0003: 事件总线 | 4 事件 owner-held DYNAMIC_MULTICAST_DELEGATE + BlueprintAssignable；方向由消费方派生；OnBankruptcyDeclared 现金侧切分 | LOW |
 | ADR-0006: GameStateSnapshot | AI 经只读快照读经济估值，预聚合 NLV 回合2 装配期算（防 5→8 反向环） | LOW |
@@ -40,15 +41,16 @@
 | TR-econ-011 | Raising Funds 瞬态不中途存档（瞬态债务不序列化） | ADR-0005 ⚠ Partial |
 | TR-econ-012 | preaggregated_nlv（F-9/F-10）由回合2 装配期预聚合 6(MV)+8(sellback)，AI 严禁自算 | ADR-0006 ✅ |
 | TR-econ-013 | AI 经只读 GameStateSnapshot 读经济估值，不持活指针 | ADR-0006 ✅ |
-| TR-econ-014 | F-6/F-8/F-9 整数取整路径跨编译配置/两次冷启动位级一致、无 float | ❌ No ADR |
-| TR-econ-015 | int32 溢出硬防护：passed_go clamp[0,1000] + SalaryAmount≤2e6/DiceMultiplierTable 上界加载期校验 | ❌ No ADR |
-| TR-econ-016 | F-2 数据包络跨公式约束加载期校验（RentTable[1]≥RentTable[0]×2 等） | ADR-0002 ⚠ Partial |
+| TR-econ-014 | F-6/F-8/F-9 整数取整路径跨编译配置/两次冷启动位级一致、无 float | ADR-0014 ✅ |
+| TR-econ-015 | int32 溢出硬防护：passed_go clamp[0,1000] + SalaryAmount≤2e6/DiceMultiplierTable 上界加载期校验 | ADR-0014 ✅（SalaryAmount 校验 board propagate 债） |
+| TR-econ-016 | F-2 数据包络跨公式约束加载期校验（RentTable[1]≥RentTable[0]×2 等） | ADR-0002/0014 ⚠ Partial（warning，board propagate 债） |
 | TR-econ-017 | 经济读棋盘 base 金额（GetTileData→Price/RentTable/MortgageValue/TaxAmount/SalaryAmount） | ADR-0002 ✅ |
 | TR-econ-018 | 现金转移原子性（单一 R 局部变量 Debit+Credit，无造币/丢币）；破产移交锁 bIsMidBankruptcyTransfer | ADR-0007 ⚠ Partial |
 
-**覆盖**: 12 Covered / 4 Partial / **2 Gap（无 ADR：TR-econ-014/015）**。
+**覆盖**: 14 Covered / 4 Partial / **0 Gap**。
 
-> ⚠ **2 条 untraced TR**（TR-econ-014 整数确定性 / TR-econ-015 溢出防护）无 ADR。其 story 在 `/create-stories` 时标 **Blocked** 直到 `/architecture-decision` 补 ADR。二者均为实现期工程门（确定性回归 + 加载期数据校验），可在经济公式 story 推进期并行补 ADR。
+> ✅ **2 条 Gap TR 已解除（ADR-0014 Accepted，2026-06-08）**：TR-econ-014（整数确定性：num/den+显式取整+逐栋 floor+零 float→位级一致）/ TR-econ-015（溢出防护：passed_go 运行时 clamp[0,1000]+SalaryAmount≤2e6/DICE_MULT_MAX=1e6 加载期 fatal）。详见 `docs/architecture/ADR-0014-economy-integer-determinism-overflow.md`。
+> ⚠ **propagate 债（board-data 已 Approved+实现）**：① SalaryAmount≤2e6 fatal 加载校验 board 现无（仅 >0/==0），须后续 board story 或 `/propagate-design-change` 新增；② RentTable 跨公式包络（OQ-Econ-9，warning，TR-econ-016 仍 Partial）board 现仅自身单调。DiceMult 上界已落 board AC-23j（DICE_MULT_MAX=1e6 对齐其建议初值）。
 
 ## Definition of Done
 
@@ -56,7 +58,7 @@ This epic is complete when:
 - All stories are implemented, reviewed, and closed via `/story-done`
 - All acceptance criteria from `design/gdd/economy-cash.md` are verified
 - All Logic and Integration stories have passing test files in `tests/`（physical：`Source/rentoTests/Private/`）
-- 2 untraced TR（econ-014/015）的 ADR 已补齐并解除其 story 的 Blocked 状态
+- ✅ 2 untraced TR（econ-014/015）的 ADR 已补齐（ADR-0014 Accepted 2026-06-08）；SalaryAmount 加载校验 propagate 债待 board story 闭合
 - 环依赖纪律经测试守护：6→5/9→5 单向，economy 不反调 6/9（spy 断言无反向环）
 
 ## Next Step

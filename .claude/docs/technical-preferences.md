@@ -67,7 +67,12 @@
 - **[ADR-0004](../../docs/architecture/ADR-0004-deterministic-rng.md)** — 确定性 RNG：单权威 `FRandomStream`（dice 拥有）+ 各系统独立非权威流（AI 决策扰动走权威流须重放，juice 走独立流）
 - **[ADR-0005](../../docs/architecture/ADR-0005-save-serialization-contract.md)** — 存档契约：`USaveGame`+`UPROPERTY(SaveGame)`+四重完整性门+存 DA 引用不存布局+枚举 append-only+MVP 单槽
 
-**Required（待裁，见 architecture.md §8）：** ADR-0006 GameStateSnapshot · 0007 BP-vs-C++ 边界 · 0008 HUD 驱动+IGameClock DI · 0009 卡通材质 · 0010 音频架构 · 0011 Enhanced Input · 0012 CommonUI
+**Core/Presentation/Input 层（全 Accepted 2026-06-06）：** ADR-0006 GameStateSnapshot · 0007 BP-vs-C++ 边界 · 0008 HUD 驱动+IGameClock DI · 0009 卡通材质 · 0010 音频架构 · 0011 Enhanced Input · 0012 CommonUI
+
+**Core 层 Gap ADR（补 untraced Gap TR，2026-06-08 起）：**
+- **[ADR-0013](../../docs/architecture/ADR-0013-property-ownership-runtime-container.md)**（Accepted 2026-06-08）— 地产所有权运行时容器与批量移交原子性：owner map = **AoS** `TArray<FTileOwnershipState>`（owner+bIsMortgaged 同记录、稠密 N、非可购买格哨兵、连续 0..N-1 前提）；批量移交先校验后写（全或全无）+单记录赋值同格原子+RAII 重入锁无条件解除；C++ private 封装→AC-3/7/31/32/35 升 [Logic]。**🔴 TArray<bool> bitfield 前提源码证伪**（UE 非特化，位打包是 TBitArray）。解 prop-001/002/012 Gap。
+- **[ADR-0014](../../docs/architecture/ADR-0014-economy-integer-determinism-overflow.md)**（Accepted 2026-06-08）— 经济金钱运算整数确定性与 int32 溢出硬防护：金钱运算**整数纯净无 float** + 整数 num/den 显式取整（ceil `(x·num+den−1)/den`/floor 截断）+ **逐栋 floor 先于求和**（F-9 奇数 BuildingCost 差1）→ 位级一致（AC-32）；`passed_go` 运行时 clamp[0,1000]（非仅 ensure）；加载期 **fatal** 边界 `SalaryAmount≤2,000,000`/`DICE_MULT_MAX=1,000,000`（约束值归 economy、执行 board）。解 econ-014/015 Gap。**propagate 债**：SalaryAmount 上界 board 未落。
+- **[ADR-0015](../../docs/architecture/ADR-0015-roll-context-holder-pull.md)**（Accepted 2026-06-08）— 回合掷骰上下文 holder（dice_total PULL）与移动越界告警上传：Utility 租 `dice_total` 经回合(2) holder `CurrentRollContext` PULL（经济 `GetCurrentRollTotal()`，移动不投递/不缓存），事件额外骰经回合(2) `SetCurrentRollContext` 注入（单源不串程）；移动不 clamp + 越界告警不静默吞冒泡（AC-24），int32 数值兜底委托 ADR-0014。**机制 pt-005/006/007 已实现，本 ADR 固化契约**。解 move-010/017/event-010 Gap；**move-013 联网迁移 = Full Vision defer 不裁**。
 
 ## Engine Specialists
 

@@ -14,6 +14,7 @@
 
 | ADR | Decision Summary | Engine Risk |
 |-----|-----------------|-------------|
+| ADR-0015: holder PULL | MoveToNearest Utility 额外骰经回合2 受控写 SetCurrentRollContext 注入当前程 holder，单源不串程（供经济 F-4 PULL；机制 pt-005 已实现 setter） | LOW |
 | ADR-0004: 确定性 RNG | 开局 Fisher-Yates 经骰子3 FRandomStream 权威流 + 种子序列化，禁 FMath::Rand（确定性可重放） | LOW※ |
 | ADR-0003: 事件总线 | OnCardDrawn/OnTileEventResolved/OnPlayerJailed/OnPlayerReleased DYNAMIC_MULTICAST_DELEGATE+BlueprintAssignable，enum uint8 基底 | LOW |
 | ADR-0005: 存档契约 | 牌堆数组顺序 + 出狱卡持有标记 + 洗牌种子序列化（FCardData 标 SaveGame）；监狱态归回合2 序列化 | LOW |
@@ -35,13 +36,14 @@
 | TR-event-006 | OnCardDrawn/OnTileEventResolved/OnPlayerJailed/OnPlayerReleased DYNAMIC_MULTICAST_DELEGATE+payload USTRUCT，enum uint8 基底 | ADR-0003 ⚠ Partial |
 | TR-event-007 | 监狱态字段 bIsInJail/JailTurnsServed 物理存于 player-turn PlayerState、由 player-turn 序列化；经受控写接口改写 | ADR-0001/0005 ⚠ Partial |
 | TR-event-008 | 出狱卡持有态 bHoldsChanceOutCard/bHoldsChestOutCard 为本系统自有状态、随存档序列化 | ADR-0005 ✅ |
-| TR-event-009 | RepairFee 读建房(8)全盘聚合 GetTotalHouseCount/GetTotalHotelCount（与 per-tile [0,5] 口径区分） | ❌ No ADR |
-| TR-event-010 | MoveToNearest Utility 额外掷骰 dice_total 经 player-turn 受控写 SetCurrentRollContext 注入当前程 holder | ❌ No ADR |
+| TR-event-009 | RepairFee 读建房(8)全盘聚合 GetTotalHouseCount/GetTotalHotelCount（与 per-tile [0,5] 口径区分） | ADR-0007/0001 ⚠ Partial（spec 完整，待 building8 impl） |
+| TR-event-010 | MoveToNearest Utility 额外掷骰 dice_total 经 player-turn 受控写 SetCurrentRollContext 注入当前程 holder | ADR-0015 ✅ |
 | TR-event-011 | ECardEffectType 10 类效果 dispatch 落 C++（避 BP 大 switch 保守性） | ADR-0007 ⚠ Partial |
 
-**覆盖**: 4 Covered / 5 Partial / **2 Gap（无 ADR：TR-event-009/010）**。
+**覆盖**: 5 Covered / 6 Partial / **0 Gap**。
 
-> ⚠ **2 条 untraced TR**：TR-event-009（RepairFee 读建房全盘聚合接口，依赖建房8 epic 的 GetTotalHouseCount/GetTotalHotelCount）/ TR-event-010（Utility dice_total 经回合2 SetCurrentRollContext 注入，与 TR-move-010 同源跨档 holder 接口）。二者均为**跨档接口 TR**（依赖建房8 + 回合2 holder），其 story 标 Blocked 直到对应接口 ADR/上游接口落地。注：event-010 与 move-010 是同一 holder PULL 机制的两个消费端。
+> ✅ **TR-event-010 已解除（ADR-0015 Accepted，2026-06-08）**：MoveToNearest Utility 额外骰经回合2 SetCurrentRollContext 注入 holder（与 move-010 同源 holder PULL 机制的事件注入端，机制 pt-005 已实现）。
+> ✅ **TR-event-009 评估结论（2026-06-08）= 非架构 Gap，无需新 ADR**：接口契约已在 building8 F-7（`GetTotalHouseCount`/`GetTotalHotelCount`，per-tile vs 全盘口径焊死）+ tile-events F-3 完整规格化（OQ-Event-3 ✅ RESOLVED 2026-06-04）；架构面 = ADR-0007（跨系统只读 accessor）+ ADR-0001（building8 宿主），pull 读非事件。这是对 **Feature 层 building8（未 epic）实现**的跨层依赖，非架构 Gap。RepairFee 经 **mock** `GetTotalHouseCount`（AC-21）现可开 story、不被 Blocked；真实接线待 building8 epic 实现。重分类 Gap→Partial（ADR-0007/0001）。
 
 ## Definition of Done
 
@@ -51,7 +53,7 @@ This epic is complete when:
 - All Logic and Integration stories have passing test files in `tests/`（physical：`Source/rentoTests/Private/`）
 - Fisher-Yates 洗牌确定性经测试守护（固定种子→精确牌序，禁全局随机 grep 硬门覆盖）
 - 监狱态单写路径经测试守护（仅经回合2 受控写接口）；程间非重入（OQ-Event-7① ADR 后）
-- untraced TR（event-009/010）跨档接口 ADR/上游接口落地，解除 story Blocked
+- ✅ untraced TR：event-010 解除（ADR-0015 Accepted 2026-06-08）；event-009 评估=非架构 Gap（接口已 GDD 规格化 + ADR-0007/0001），重分类 Partial，经 mock 可开 story、真实接线待 building8 epic
 
 ## Next Step
 
