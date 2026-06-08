@@ -1,11 +1,11 @@
 ---
 Epic: board-data
-Status: Ready
+Status: Complete
 Layer: Foundation
 Type: Integration
 Estimate: S
 Manifest Version: 2026-06-06
-Last Updated: 2026-06-06
+Last Updated: 2026-06-08
 ---
 
 # Story 008 — 棋盘 DA 存档引用契约（BoardIdentifier）：存引用不存布局
@@ -65,3 +65,12 @@ Last Updated: 2026-06-06
 
 - **Depends on**: story-001（DONE，`BoardIdentifier` 字段）、story-004（DONE，`GetBoardId()` 实现）。
 - **Unlocks**: 存档(21) 读档拓扑序第 1 步（加载 Board DA）；主菜单20「继续游戏」入口（间接）。
+
+## Completion Notes
+**Completed**: 2026-06-08
+**Criteria**: board-side 1/1 COVERED（AC-板存档供给：TC1/TC2/TC3 全 Success）+ 2 Advisory DEFERRED（AC-28b 跨会话稳定性、OQ-8 回链）
+**Deviations**: None（blocking）。信息性：物理测试路径 `Source/rentoTests/Private/BoardIdSaveReferenceTest.cpp` 与逻辑路径 `tests/integration/board/...` 差异 = repo UE Automation 惯例。
+**Test Evidence**: Integration — `Source/rentoTests/Private/BoardIdSaveReferenceTest.cpp`（3 TC，类目 `Rento.Board.SaveReference`）+ Advisory `production/qa/evidence/bd-008-save-reference-evidence.md`（4 sign-off 行已签核 PASS）。主会话独立全证：Build Succeeded（clang G6 误报忽略）；3/3 Success；全量 269/269 Success 0 Fail 0 notRun（基线266+3零回归，`Saved/TestReport_bd008_full`）。TC1 解耦守卫变异坐实非-vacuous（BoardIdentifier 设成==资产名 → `GetBoardId()!=资产名` 守卫精确 FAIL，`Saved/TestReport_bd008_mut`，还原复绿）。
+**Code Review**: Complete — `/code-review` APPROVED（无 Required Changes；ADR-0005/0002/0001 合规）。
+**实现要点**：纯验证型零 src 改动。`GetBoardId()` 实现由 board story-004 落地；本 story 验板侧存档引用契约 —— TC1 `GetBoardId()` 取顶层 `BoardIdentifier` 且与资产名/路径解耦（AC-28，变异坐实）；TC2 无板时 `NAME_None`；TC3 反射断言 `UBoardDataAsset` 无 `UPROPERTY(SaveGame)` 字段（存DA引用不存布局，ADR-0005）+ `BoardIdentifier` 是 FNameProperty 锚点守卫 + board host 无全量布局序列化 UFUNCTION。
+**跨档移交（已登记 evidence doc，非 tech-debt）**：① AC-28b 跨会话 round-trip BLOCKING 测试归 save-load epic 21 Integration（`tests/integration/save-load/`，板侧无法跨进程验证）；② OQ-8 回链：save-load 21 GDD §AC 须出现显式实现 AC 并回链 board-data AC-28b，`/design-review` 审存档21 GDD 时核对，缺失则不得 APPROVED。
