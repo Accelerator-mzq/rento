@@ -474,3 +474,117 @@ void UEconomySubsystem::GiveStartingCash(int32 PlayerId)
 {
     Credit(PlayerId, StartingCash, EChangeReason::Salary);
 }
+
+// =============================================================================
+// PayTax —— 缴税现金腿 F-7（被事件7 调，7→5；强制扣款，sink 蒸发）
+// =============================================================================
+bool UEconomySubsystem::PayTax(int32 PlayerId, int32 TaxAmount)
+{
+    // F-7：flat Debit(reason=Tax)，款蒸发（无 Credit 任何玩家，CR-6）。
+    //   税强制：不足额 → Debit 内广播 OnInsufficientFunds 进 Raising Funds（同 AC-1）。
+    //   amount<0 拒绝 / ==0 静默 由 Debit 通用守门处理（不在此重复）。
+    return Debit(PlayerId, TaxAmount, EChangeReason::Tax);
+}
+
+// =============================================================================
+// BuyPropertyCashLeg —— 买地现金腿 CR-4（被地产6 Buy 事务调，6→5；可选，不足不可用）
+// =============================================================================
+bool UEconomySubsystem::BuyPropertyCashLeg(int32 PlayerId, int32 PurchasePrice)
+{
+    // PurchasePrice 防御（board 应保正，经典 60..400）：≤0 = 无效数据 → 不购买 + dev log。
+    if (PurchasePrice <= 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::BuyPropertyCashLeg: PurchasePrice=%d <= 0 (PlayerId=%d) -- no-op (invalid board data?)"),
+            PurchasePrice, PlayerId);
+        return false;
+    }
+
+    // CR-4 买地可选：现金不足 → 购买不可用（不 Debit、不广播、不进 raising-funds）。
+    //   显式 pre-check 避免 Debit 内 OnInsufficientFunds 误触发 raising-funds（仅强制扣款 rent/tax 才入，仿 UnmortgagePayment/AC-22）。
+    if (GetCash(PlayerId) < PurchasePrice)
+    {
+        return false;                                   // 购买不可用，非强制债务
+    }
+
+    // 扣款腿（reason=Purchase）；economy 只扣款，不登记归属、不通知6（5↔6 无环）。
+    return Debit(PlayerId, PurchasePrice, EChangeReason::Purchase);
+}
+
+// =============================================================================
+// ComputeBuildingSellback —— 建筑卖回价 F-8（纯函数，整数 floor）
+// =============================================================================
+int32 UEconomySubsystem::ComputeBuildingSellback(int32 BuildingCost) const
+{
+    // BuildingCost 防御（board 应保正）：≤0 = 无效数据 → 0 + dev log（防负卖回）。
+    if (BuildingCost <= 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::ComputeBuildingSellback: BuildingCost=%d <= 0 -- sellback 0 (invalid board data?)"),
+            BuildingCost);
+        return 0;
+    }
+
+    // den 防御（meta ClampMin 仅约束 editor，code/data-asset 仍可置 0）：→ 零卖回退化，防除零。
+    if (BuildingSellbackDen <= 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::ComputeBuildingSellback: BuildingSellbackDen=%d <= 0 -- sellback 0 (config bug)"),
+            BuildingSellbackDen);
+        return 0;
+    }
+
+    // 整数 floor（ADR-0014，零 float）：floor(BC×num/den) = (BC×num)/den（操作数≥0 截断==floor）。
+    return (BuildingCost * BuildingSellbackNum) / BuildingSellbackDen;
+}
+
+// =============================================================================
+// ComputeNetLiquidationValue —— NLV F-9（纯函数，单一枚举入口，逐栋 floor 先于求和）
+// =============================================================================
+int32 UEconomySubsystem::ComputeNetLiquidationValue(const TArray<FNlvAssetEntry>& Assets) const
+{
+    int32 Nlv = 0;
+    for (const FNlvAssetEntry& Entry : Assets)
+    {
+        // MV 侧：仅未抵押地计入（已抵押贡献 0，AC-26）。
+        if (!Entry.bIsMortgaged)
+        {
+            Nlv += Entry.MortgageValue;
+        }
+
+        // 卖回侧：逐栋 floor 先于求和（🔴 AC-27/AC-32 变体C）——
+        //   ComputeBuildingSellback 已对单栋 floor；× HouseCount 再累加，绝不 floor(Σ)。
+        // 负 HouseCount（建房8 上游 bug）dev 信号暴露（review W-1，对齐 ComputePropertyRent house_count 纪律）——
+        //   不影响数值（贡献 0），但不静默吞上游 bug。
+        if (Entry.HouseCount < 0)
+        {
+            UE_LOG(LogTemp, Error,
+                TEXT("UEconomySubsystem::ComputeNetLiquidationValue: HouseCount=%d < 0 -- skipped (building-8 bug?)"),
+                Entry.HouseCount);
+        }
+        else if (Entry.HouseCount > 0)
+        {
+            Nlv += Entry.HouseCount * ComputeBuildingSellback(Entry.BuildingCost);
+        }
+    }
+    return Nlv;
+}
+
+// =============================================================================
+// IsInsolvent —— 破产谓词 F-10（纯谓词，严格 <，消费传入 nlv 不重算）
+// =============================================================================
+bool UEconomySubsystem::IsInsolvent(int32 PlayerId, int32 AmountDue, int32 PreaggregatedNlv) const
+{
+    // 负 nlv 防御（review W-2）：F-9 恒 ≥0，传入负值=调用方 bug → dev log + 保守按 0
+    //   （不让负 nlv 污染破产判定；亦避免极端负值的 int32 加法异常）。
+    if (PreaggregatedNlv < 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("UEconomySubsystem::IsInsolvent: PreaggregatedNlv=%d < 0 (caller bug) -- treating as 0"),
+            PreaggregatedNlv);
+        return GetCash(PlayerId) < AmountDue;
+    }
+
+    // 严格 <：付到恰好 0 算能付（Cash+nlv==due → false，AC-28）。消费传入 nlv，不枚举/不重算（AC-29）。
+    return (GetCash(PlayerId) + PreaggregatedNlv) < AmountDue;
+}

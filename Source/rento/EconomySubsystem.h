@@ -208,6 +208,65 @@ public:
     UFUNCTION(BlueprintCallable, Category="Economy|Mortgage")
     bool UnmortgagePayment(int32 PlayerId, int32 MortgageValue);
 
+    // =========================================================================
+    // NLV/破产/卖回（econ-008 F-8/F-9/F-10，ADR-0014 逐栋 floor / ADR-0006 防 5→8 环）
+    // =========================================================================
+
+    /**
+     * 建筑卖回价 F-8（纯函数；整数 floor）：sellback = floor(BuildingCost × sell_num/sell_den)。
+     *   整数截断==floor（操作数≥0，ADR-0014 零 float）；默认 sell_num/sell_den=1/2。
+     *   **纯函数无副作用**（F-9 逐栋调它）。BuildingCost≤0 → 0 + dev log（防负卖回）；sell_den≤0 → 0 + dev log（防除零）。
+     * @return sellback ≥0（BC=100→50；BC=75→floor(37.5)==37）。
+     */
+    UFUNCTION(BlueprintPure, Category="Economy|Nlv")
+    int32 ComputeBuildingSellback(int32 BuildingCost) const;
+
+    /**
+     * 净清算价值 F-9（纯函数；**单一资产枚举入口** AC-27③/AC-29）：
+     *   nlv = Σ MortgageValue[未抵押] + Σ HouseCount × ComputeBuildingSellback(BuildingCost)。
+     *   **逐栋 floor 先于求和**（🔴 AC-27/AC-32 变体C）：对每条 entry 调 ComputeBuildingSellback（已 floor）再乘 HouseCount，
+     *     **绝不**先求和 BuildingCost 再 floor。已抵押地 MV 侧贡献 0（AC-26）；卖回侧由 HouseCount 驱动（抵押地 house 应为 0）。
+     *   资产清单由回合2 聚合6/8 传入（economy 不直读6/8，ADR-0006）。空清单→0。
+     *   溢出境界：单玩家全盘 nlv ~10⁵ ≪ INT32_MAX（Guardrail）。
+     * @return nlv ≥0。
+     */
+    UFUNCTION(BlueprintPure, Category="Economy|Nlv")
+    int32 ComputeNetLiquidationValue(const TArray<FNlvAssetEntry>& Assets) const;
+
+    /**
+     * 破产谓词 F-10（纯谓词；严格 `<`，AC-28）：is_insolvent = (GetCash(player) + PreaggregatedNlv < AmountDue)。
+     *   **消费传入的 PreaggregatedNlv（由回合2 经 F-9 算好），不内部枚举/不重算**（AC-29 单源，防 5→8 环）。
+     *   严格 `<`：付到恰好 0 算**能付、非破产**（Cash+nlv==due → false，AC-28）。
+     * @return true=破产（资产清算后仍不足额）；false=能付（含付到 0）。
+     */
+    UFUNCTION(BlueprintCallable, Category="Economy|Nlv")
+    bool IsInsolvent(int32 PlayerId, int32 AmountDue, int32 PreaggregatedNlv) const;
+
+    // =========================================================================
+    // 缴税/买地现金腿（econ-007 F-7/CR-4，被事件7/地产6 调用 7→5 / 6→5，ADR-0007）
+    // =========================================================================
+
+    /**
+     * 缴税现金腿（F-7；被事件7 Tax 格触发，7→5）：Debit(player, TaxAmount, Tax)。
+     *   税是【强制】扣款：现金不足 → Debit 内广播 OnInsufficientFunds 进 Raising Funds（同 AC-1，story-009 状态机）。
+     *   款流向银行 sink【蒸发】：不 Credit 任何玩家（CR-6/CR-8 无限银行模型），仅 1 次 OnCashChanged（reason=Tax）。
+     *   TaxAmount 读棋盘 GetTileData(index).TaxAmount base（调用方注入）；<0/==0 由 Debit 通用守门处理。
+     * @return true=已扣税并广播；false=不足额（已发 OnInsufficientFunds）/非法额/玩家不存在。
+     */
+    UFUNCTION(BlueprintCallable, Category="Economy|Cash")
+    bool PayTax(int32 PlayerId, int32 TaxAmount);
+
+    /**
+     * 买地现金腿（CR-4；被地产6 Buy 事务调用，6→5）：显式 pre-check GetCash≥PurchasePrice → Debit(price, Purchase)。
+     *   买地是【可选】行为：现金不足 → 购买不可用（不 Debit、不广播、return false，**不进 Raising Funds**，
+     *     显式 pre-check 避免 Debit 内 OnInsufficientFunds 误触发 raising-funds，仿 UnmortgagePayment）。
+     *   economy 只执行扣款：**不登记归属、不通知6**（归属 map 由6在扣款成功后自登记，5↔6 无环，ADR-0013/0007）。
+     *   PurchasePrice≤0（board 数据 bug）→ dev log + return false（防无效购买）。
+     * @return true=已扣款（reason=Purchase）；false=现金不足（购买不可用）/无效 price/玩家不存在。
+     */
+    UFUNCTION(BlueprintCallable, Category="Economy|Cash")
+    bool BuyPropertyCashLeg(int32 PlayerId, int32 PurchasePrice);
+
     /**
      * 发放起始资金（数据驱动 Tuning Knob StartingCash，经 Credit 入账，reason=Salary 入账 faucet）。
      * @param PlayerId 玩家 ID
@@ -234,6 +293,13 @@ public:
     /** 赎回费率分母（必 ≥1 防除零，ClampMin 约束 editor + runtime guard 兜底 code/data-asset）。 */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Economy|Tuning", meta=(ClampMin="1", ClampMax="1000"))
     int32 UnmortgageFeeDen = 10;
+
+    /** F-8 建筑卖回率分子（GDD Tuning：经典 1/2 半价回收；num=0=零回收合法 House Rules）。 */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Economy|Tuning", meta=(ClampMin="0", ClampMax="100"))
+    int32 BuildingSellbackNum = 1;
+    /** F-8 建筑卖回率分母（必 ≥1 防除零，ClampMin 约束 editor + runtime guard 兜底）。 */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Economy|Tuning", meta=(ClampMin="1", ClampMax="1000"))
+    int32 BuildingSellbackDen = 2;
 
     // =========================================================================
     // 事件（econ-002，owner-held DYNAMIC_MULTICAST_DELEGATE，payload USTRUCT，ADR-0003）

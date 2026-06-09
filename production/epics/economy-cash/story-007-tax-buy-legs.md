@@ -1,12 +1,12 @@
 # Story 007: 缴税 F-7 + 买地现金腿 CR-4
 
 > **Epic**: 经济与现金 Economy & Cash
-> **Status**: Ready
+> **Status**: Complete
 > **Layer**: Core
 > **Type**: Logic
 > **Estimate**: [TBD]
 > **Manifest Version**: 2026-06-06
-> **Last Updated**: [set by /dev-story]
+> **Last Updated**: 2026-06-09
 
 ## Context
 
@@ -29,8 +29,8 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-23** `debit==TaxAmount`（flat，F-7）：TaxAmount=200 → Debit==200；Cash<200 → 进 CR-7 Raising Funds（同 AC-1 路径）。
-- [ ] **买地现金腿（CR-4）**：地产6 `Buy` 事务调 economy `Debit(player, PurchasePrice)`：校验 `Cash ≥ PurchasePrice` → 成立则 Debit 并返成功；现金不足则购买不可用（**不进 Raising Funds** — 买地可选非强制债务）。economy **不登记归属、不通知6**（5↔6 无环）。
+- [x] **AC-23** `debit==TaxAmount`（flat，F-7）：TaxAmount=200 → Debit==200；Cash<200 → 进 CR-7 Raising Funds（同 AC-1 路径）。→ `PayTax`，TC1（充足+sink 蒸发）/TC2（不足→InsufficientCount==1 强制 raising-funds）。
+- [x] **买地现金腿（CR-4）**：地产6 `Buy` 事务调 economy `Debit(player, PurchasePrice)`：校验 `Cash ≥ PurchasePrice` → 成立则 Debit 并返成功；现金不足则购买不可用（**不进 Raising Funds** — 买地可选非强制债务）。economy **不登记归属、不通知6**（5↔6 无环）。→ `BuyPropertyCashLeg`（显式 pre-check），TC3（充足）/TC4（不足→InsufficientCount==0 可选不进 raising-funds，对照 TC2）/TC5（price≤0 守门）。
 
 ---
 
@@ -64,7 +64,8 @@
 
 **Story Type**: Logic
 **Required evidence**: `tests/unit/economy-cash/tax_buy_legs_test.cpp`（类目 `Rento.Economy.TaxBuyLegs`）— 存在且通过。
-**Status**: [ ] Not yet created
+**实际物理路径**: `Source/rentoTests/Private/TaxBuyLegsTest.cpp`（UE 模块约定）。
+**Status**: [x] 7 TC 全通过（TC1 税强制+sink 蒸发/TC2 税不足→raising-funds/TC3 买地充足/TC4 买地不足→可选不进 raising-funds/TC5 price≤0 守门/TC6 price==cash 等额边界钉 `<` 语义/TC7 TaxAmount==0 零额静默区分不足额）。证据 `Saved/TestReport_econ007_final/index.json`；全 `Rento.Economy` 套件 **42/0 无回归**。TC6/TC7 经 code-review qa-tester GAP 补强。
 
 ---
 
@@ -72,3 +73,13 @@
 
 - Depends on: Story 001（Debit/GetCash）、Story 002（OnCashChanged reason=Tax/Purchase）
 - Unlocks: None
+
+---
+
+## Completion Notes
+**Completed**: 2026-06-09
+**Criteria**: 2/2 AC + 静态扫描 AC 全 COVERED（7 TC：TC1-7，全 Rento.Economy 42/0 无回归）
+**Deviations**: ADVISORY 测试物理路径 `Source/rentoTests/Private/TaxBuyLegsTest.cpp`（UE 模块约定，与 econ-001..006 一致，story 已注实际路径）；无遗留 advisory（code-review 2 GAP 已补 TC6/TC7 remediated）
+**Test Evidence**: Logic — `Source/rentoTests/Private/TaxBuyLegsTest.cpp`（7 TC，`Saved/TestReport_econ007_final/index.json` 42 succeeded/0 failed）
+**Code Review**: Complete（/code-review APPROVED WITH SUGGESTIONS；unreal-specialist CLEAN + qa-tester 2 GAP remediated；2 建议经独立核验为边际/美学未采纳）
+**实现**: PayTax 薄封装 Debit(Tax)（税强制+sink 蒸发）；BuyPropertyCashLeg 显式 GetCash≥price pre-check（可选不进 raising-funds）+ price≤0 守门；economy 不登记归属/不通知6（ADR-0007/0013 5↔6 无环）

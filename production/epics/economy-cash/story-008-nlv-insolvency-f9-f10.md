@@ -1,12 +1,12 @@
 # Story 008: NLV F-9 + F-10 is_insolvent + F-8 卖回 🔴最高风险
 
 > **Epic**: 经济与现金 Economy & Cash
-> **Status**: Ready
+> **Status**: Complete
 > **Layer**: Core
 > **Type**: Logic
 > **Estimate**: [TBD]
 > **Manifest Version**: 2026-06-06
-> **Last Updated**: [set by /dev-story]
+> **Last Updated**: 2026-06-09
 
 ## Context
 
@@ -29,13 +29,13 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-24** [整数 floor] `sellback=floor(BuildingCost×sell_num/sell_den)`（F-8）：BuildingCost=100, ratio=1/2 → 50；BuildingCost=75 → floor(37.5)==37（非 38/37.5）。
-- [ ] **AC-25** [核心不变式] `nlv = Σ MortgageValue(未抵押地) + Σ building_sellback(每栋,F-8)`：持 2 未抵押地（MV 100/60）+ 3 栋建筑（各 sellback 50）→ nlv==310。
-- [ ] **AC-26** 已抵押地贡献 0：持 1 已抵押（MV 100）+ 1 未抵押（MV 60）→ nlv 只计 60。
-- [ ] **AC-27** 🔴 [全档最高风险门] 三断言：① F-9 数值正确（PropA MV=100未抵押 / PropB MV=60已抵押house=0 / 2栋BuildingCost=100, Cash=30 → nlv==100+0+50+50==200）；② F-11 资产移交完整性 identity-check（同 fixture 收租破产 → creditor 新增恰 {PropA,PropB,建筑×2} 逐对象身份核对 ∧ PropB.is_mortgaged 仍 true ∧ debtor.Cash 转入后归 0）**〔②的破产移交断言在 story-009 落，本 story 落 ①〕**；③ 单一枚举入口（F-9 资产枚举一段实现，F-10 调它不另写第二段，code-review）。
-- [ ] **AC-28** [关键边界] `is_insolvent=(Cash + nlv < amount_due)` 严格 `<`：Cash=50, nlv=120, due=170 → `170<170==false`（付到 0 算能付、NOT 破产）；due=171 → true。
-- [ ] **AC-29** is_insolvent 消费 F-9 同源：AC-28 的 nlv 由 F-9 计算、非独立重算；F-10 不另写第二段资产枚举（code-review，并入 AC-27③）。
-- [ ] **AC-32** [确定性] F-6/F-8/F-9 取整路径两次冷启动 / Debug vs Shipping 位级相同（无 float）：MV=75 赎回恒 83、BuildingCost=75 卖回恒 37。
+- [x] **AC-24** [整数 floor] `sellback=floor(BuildingCost×sell_num/sell_den)`（F-8）：BuildingCost=100, ratio=1/2 → 50；BuildingCost=75 → floor(37.5)==37（非 38/37.5）。
+- [x] **AC-25** [核心不变式] `nlv = Σ MortgageValue(未抵押地) + Σ building_sellback(每栋,F-8)`：持 2 未抵押地（MV 100/60）+ 3 栋建筑（各 sellback 50）→ nlv==310。
+- [x] **AC-26** 已抵押地贡献 0：持 1 已抵押（MV 100）+ 1 未抵押（MV 60）→ nlv 只计 60。
+- [x] **AC-27** 🔴 [全档最高风险门] 三断言：① F-9 数值正确（PropA MV=100未抵押 / PropB MV=60已抵押house=0 / 2栋BuildingCost=100, Cash=30 → nlv==100+0+50+50==200）；② F-11 资产移交完整性 identity-check（同 fixture 收租破产 → creditor 新增恰 {PropA,PropB,建筑×2} 逐对象身份核对 ∧ PropB.is_mortgaged 仍 true ∧ debtor.Cash 转入后归 0）**〔②的破产移交断言在 story-009 落，本 story 落 ①〕**；③ 单一枚举入口（F-9 资产枚举一段实现，F-10 调它不另写第二段，code-review）。
+- [x] **AC-28** [关键边界] `is_insolvent=(Cash + nlv < amount_due)` 严格 `<`：Cash=50, nlv=120, due=170 → `170<170==false`（付到 0 算能付、NOT 破产）；due=171 → true。
+- [x] **AC-29** is_insolvent 消费 F-9 同源：AC-28 的 nlv 由 F-9 计算、非独立重算；F-10 不另写第二段资产枚举（code-review，并入 AC-27③）。
+- [x] **AC-32** [确定性] F-6/F-8/F-9 取整路径两次冷启动 / Debug vs Shipping 位级相同（无 float）：MV=75 赎回恒 83、BuildingCost=75 卖回恒 37。
 
 ---
 
@@ -78,7 +78,10 @@
 
 **Story Type**: Logic
 **Required evidence**: `tests/unit/economy-cash/nlv_insolvency_test.cpp`（类目 `Rento.Economy.NlvInsolvency`）— 存在且通过。AC-27 🔴 最高风险门须变异坐实非 vacuous。
-**Status**: [ ] Not yet created
+**实际物理路径**: `Source/rentoTests/Private/NlvInsolvencyTest.cpp`（UE 模块约定）。
+**Status**: [x] 8 TC 全通过（TC1 F-8 floor/TC2 NLV 求和/TC3 已抵押贡献0/TC4 综合 nlv200/TC5 🔴逐栋 floor 变体C 111/TC6 🔴严格<边界/TC7 单一枚举+防御/TC8 负 HouseCount/负 nlv 守门 W-1/W-2）。证据 `Saved/TestReport_econ008_w12/index.json`；全 `Rento.Economy` **50/0 无回归**。
+**🔴 变异坐实**: 临时把 ComputeNetLiquidationValue 改合并 floor(Σ)→**TC5 真 FAIL**（6/1，`Saved/TestReport_econ008_mut/`），还原后复 — 证 TC5 非 vacuous 真守逐栋 floor 契约（AC-27/AC-32）。
+**code-review**: APPROVED；采纳 W-1（负 HouseCount dev log）/W-2（负 PreaggregatedNlv 守门）。**propagate 债**：fresh-grep 坐实 player-turn 2 处内联 NLV（`PlayerTurnSubsystem.cpp:1996/:2154` 硬编 /2 绕过 F-9，潜在 House-Rules 分歧）→ `production/qa/bugs/BUG-econ008-pt007-nlv-duplicate-enumeration.md`（econ-008 自身 AC 满足，债归 player-turn follow-up）。
 
 ---
 
@@ -86,3 +89,14 @@
 
 - Depends on: Story 001（GetCash）、Story 006（F-6/F-8 取整口径共用）
 - Unlocks: Story 009（凑钱状态机/破产用 nlv + is_insolvent）
+
+---
+
+## Completion Notes
+**Completed**: 2026-06-09
+**Criteria**: 6/6 AC（AC-24/25/26/27①③/28/29/32）COVERED + 变异坐实；AC-27② 破产移交 identity-check 按 story 设计 DEFERRED→story-009。8 TC，全 Rento.Economy 50/0 无回归。
+**Deviations**: ADVISORY 测试物理路径 UE 模块约定（同 econ-001..007）；采纳 code-review W-1（负 HouseCount dev log）/W-2（负 PreaggregatedNlv 守门，TC8 覆盖）。
+**Propagate 债（跨 story，已登记）**: player-turn 2 处内联 NLV（`PlayerTurnSubsystem.cpp:1996/:2154` 硬编 /2 绕过 economy F-9，潜在 House-Rules 分歧）→ `production/qa/bugs/BUG-econ008-pt007-nlv-duplicate-enumeration.md`，债归 player-turn follow-up（econ-008 自身 AC 满足）。
+**Test Evidence**: Logic — `Source/rentoTests/Private/NlvInsolvencyTest.cpp`（8 TC，`Saved/TestReport_econ008_w12/index.json` 50 succeeded/0 failed）；🔴 TC5 逐栋 floor 变异坐实（合并 floor→6/1 FAIL，`Saved/TestReport_econ008_mut/`）。
+**Code Review**: Complete（/code-review APPROVED；unreal-specialist W-1/W-2 采纳；qa-tester FINDING-2 跨 story 分歧转 bug report）。
+**实现**: F-8 ComputeBuildingSellback=floor(BC×num/den) 整数纯净；F-9 ComputeNetLiquidationValue=Σ MV[未抵押]+Σ HouseCount×sellback（逐栋 floor，单一枚举入口）；F-10 IsInsolvent=(GetCash+nlv)<due 严格<消费传入不重算；+USTRUCT FNlvAssetEntry + 旋钮 BuildingSellbackNum/Den=1/2。economy 不直读6/8（ADR-0006）。

@@ -120,6 +120,33 @@ struct FBankruptcyDeclaredInfo
     int32 CreditorId = INDEX_NONE;
 };
 
+/**
+ * FNlvAssetEntry —— F-9 NLV 资产枚举输入 DTO（econ-008）。
+ *   由回合2 ResolvePhase 聚合地产6(MortgageValue/bIsMortgaged)+建房8(HouseCount/BuildingCost)后传入 economy F-9，
+ *   economy 不直读6/8（ADR-0006 防 5→8 环）。一条记录=一格可购买地（地产/车站/公用）。
+ */
+USTRUCT(BlueprintType)
+struct FNlvAssetEntry
+{
+    GENERATED_BODY()
+
+    /** 抵押价（地产6 base；未抵押地计入 NLV 的 MV 侧）。 */
+    UPROPERTY(BlueprintReadWrite, Category="Economy|Nlv")
+    int32 MortgageValue = 0;
+
+    /** 是否已抵押（已抵押→MV 侧贡献 0，AC-26）。 */
+    UPROPERTY(BlueprintReadWrite, Category="Economy|Nlv")
+    bool bIsMortgaged = false;
+
+    /** 该格建筑数 0..5（建房8；驱动卖回侧）。 */
+    UPROPERTY(BlueprintReadWrite, Category="Economy|Nlv")
+    int32 HouseCount = 0;
+
+    /** 该格每栋建造成本（board base；卖回 = HouseCount × floor(BuildingCost/2)）。 */
+    UPROPERTY(BlueprintReadWrite, Category="Economy|Nlv")
+    int32 BuildingCost = 0;
+};
+
 // 4 个 owner-held DYNAMIC_MULTICAST_DELEGATE（单 payload USTRUCT 参，ADR-0003 / pt-004 FPhaseChangedInfo 先例）。
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCashChangedSignature, const FCashChangedInfo&, Info);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnRentPaidSignature, const FRentPaidInfo&, Info);

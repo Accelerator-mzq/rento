@@ -80,7 +80,8 @@ stories:
     name: "缴税 F-7 + 买地现金腿 CR-4"
     file: "production/epics/economy-cash/story-007-tax-buy-legs.md"
     priority: must-have
-    status: ready-for-dev
+    status: done
+    completed: "2026-06-09"
     owner: "unreal-specialist"
     estimate_days: 0.5
     blocker: ""
@@ -89,7 +90,8 @@ stories:
     name: "NLV F-9/F-10 is_insolvent + F-8 卖回 🔴最高风险"
     file: "production/epics/economy-cash/story-008-nlv-insolvency-f9-f10.md"
     priority: must-have
-    status: ready-for-dev
+    status: done
+    completed: "2026-06-09"
     owner: "unreal-specialist"
     estimate_days: 1.0
     blocker: ""
