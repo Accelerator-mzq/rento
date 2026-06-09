@@ -588,3 +588,88 @@ bool UEconomySubsystem::IsInsolvent(int32 PlayerId, int32 AmountDue, int32 Preag
     // 严格 <：付到恰好 0 算能付（Cash+nlv==due → false，AC-28）。消费传入 nlv，不枚举/不重算（AC-29）。
     return (GetCash(PlayerId) + PreaggregatedNlv) < AmountDue;
 }
+
+// =============================================================================
+// DecideNextLiquidationStep —— 强制清算顺序 spec（econ-009，纯静态，mortgage-empty-first）
+//   economy 拥有顺序；回合2 据返回驱动调 6/8（economy 不直调，防环 ADR-0006）。
+// =============================================================================
+ELiquidationAction UEconomySubsystem::DecideNextLiquidationStep(
+    int32 Cash, int32 AmountDue, const TArray<FNlvAssetEntry>& Assets, int32& OutTargetTile)
+{
+    OutTargetTile = INDEX_NONE;
+
+    // 偿付成功（Cash≥应付）→ 停止清算。
+    if (Cash >= AmountDue)
+    {
+        return ELiquidationAction::None;
+    }
+
+    // ① mortgage-empty-first（止损优先）：未抵押 ∧ 无房地中选 MortgageValue 最小者。
+    //   抵押可赎回（零损），故先于永久半价亏损的卖房；带房地不可抵押（经典规则），故 HouseCount==0 限定。
+    //   Assets 已由回合2 筛 owner==player。
+    int32 BestTile = INDEX_NONE;
+    int32 BestMV   = MAX_int32;
+    for (const FNlvAssetEntry& E : Assets)
+    {
+        // MV>0 守门（review W-1）：MV==0 异常数据（board bug）抵押筹不到现金，跳过——
+        //   否则会选中无价值格做无效抵押（Credit 0 静默），真实地产6 不标记则死循环靠 SafetyGuard 兜底。
+        if (!E.bIsMortgaged && E.HouseCount == 0 && E.MortgageValue > 0)
+        {
+            if (E.MortgageValue < BestMV)
+            {
+                BestMV   = E.MortgageValue;
+                BestTile = E.TileIndex;
+            }
+        }
+    }
+    if (BestTile != INDEX_NONE)
+    {
+        OutTargetTile = BestTile;
+        return ELiquidationAction::MortgageTile;
+    }
+
+    // ② 无可抵押空地但有建筑 → 卖房腿（回合2 调 8.ForcedSellNextBuilding 选全盘最高档）。
+    for (const FNlvAssetEntry& E : Assets)
+    {
+        if (E.HouseCount > 0)
+        {
+            return ELiquidationAction::SellBuilding;
+        }
+    }
+
+    // ③ 资产耗尽仍 Cash<应付 → 破产（结构性判定 ⟺ Cash+总 nlv<应付；NLV canonical 口径见 ComputeNetLiquidationValue）。
+    return ELiquidationAction::Insolvent;
+}
+
+// =============================================================================
+// SettleBankruptcy —— 破产现金侧结算 F-11（econ-009，被破产9 资产移交后调）
+// =============================================================================
+void UEconomySubsystem::SettleBankruptcy(int32 DebtorId, int32 CreditorId)
+{
+    // 前置条件（调用方破产9 保证，review INFO）：DebtorId != CreditorId（自转语义无效，会双发 OnCashChanged）。
+    const int32 DebtorCash = GetCash(DebtorId);
+
+    if (CreditorId == INDEX_NONE)
+    {
+        // 银行破产（税/银行）：现金蒸发，不入任何玩家（AC-31）。DebtorCash==0 时 Debit 静默早返。
+        if (DebtorCash > 0)
+        {
+            Debit(DebtorId, DebtorCash, EChangeReason::Bankruptcy);
+        }
+    }
+    else
+    {
+        // 玩家债主：全额现金转移（AC-30，MVP 不收继承利息）。TransferCash 守恒（Amount==DebtorCash 不超额）。
+        if (DebtorCash > 0)
+        {
+            TransferCash(DebtorId, CreditorId, DebtorCash, EChangeReason::Bankruptcy);
+        }
+    }
+
+    // 现金侧移交完成 → 广播 OnBankruptcyDeclared 恰一次（AC-36，即便 DebtorCash==0 破产仍成立）。
+    //   资产 in-kind 移交归破产9 经6/8（本函数不写 owner map/不拆建筑）。
+    FBankruptcyDeclaredInfo Info;
+    Info.DebtorId   = DebtorId;
+    Info.CreditorId = CreditorId;
+    OnBankruptcyDeclared.Broadcast(Info);
+}

@@ -1,12 +1,12 @@
 # Story 009: 凑钱状态机 CR-7 (Raising Funds + 自动清算兜底) + 破产现金侧 F-11
 
 > **Epic**: 经济与现金 Economy & Cash
-> **Status**: Ready
+> **Status**: Complete
 > **Layer**: Core
 > **Type**: Integration
 > **Estimate**: [TBD]
 > **Manifest Version**: 2026-06-06
-> **Last Updated**: [set by /dev-story]
+> **Last Updated**: 2026-06-09
 
 ## Context
 
@@ -29,11 +29,11 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-30** 收租破产 in-kind **现金侧**：debtor.Cash=30 + 2地 + 1房，收租破产 → `creditor.Cash+=30`（现金腿）∧ MVP 不收继承利息。**地产/建筑 owner in-kind 转移 + 保留抵押由破产9 经地产6 执行（所有权 AC-33），本系统不写 owner map、不在本 AC 断言归属转移**。
-- [ ] **AC-31** 银行破产 **现金侧**：税致破产（债权人=银行）→ 建筑拆除无现金返还 ∧ 现金蒸发 ∧ MVP 不拍卖。**建筑拆除由破产9 调建房8 `LiquidateAllBuildings`、地产回退由地产6 `ReturnTileToBank`，本系统只断言现金侧**。
-- [ ] **AC-35** `OnInsufficientFunds(Player,AmountDue,AmountShort)`：进入 Raising Funds 时广播（Cash=50, due=170 → AmountDue=170, AmountShort=120）。
-- [ ] **AC-36** `OnBankruptcyDeclared(Debtor,Creditor)`：破产移交完成后广播一次，时机在资产转移之后。
-- [ ] **AC-43** [状态机] 确定性自动清算兜底终止性（回合2 驱动、economy 拥顺序 spec + 现金判据）：
+- [x] **AC-30** 收租破产 in-kind **现金侧**：debtor.Cash=30 + 2地 + 1房，收租破产 → `creditor.Cash+=30`（现金腿）∧ MVP 不收继承利息。**地产/建筑 owner in-kind 转移 + 保留抵押由破产9 经地产6 执行（所有权 AC-33），本系统不写 owner map、不在本 AC 断言归属转移**。
+- [x] **AC-31** 银行破产 **现金侧**：税致破产（债权人=银行）→ 建筑拆除无现金返还 ∧ 现金蒸发 ∧ MVP 不拍卖。**建筑拆除由破产9 调建房8 `LiquidateAllBuildings`、地产回退由地产6 `ReturnTileToBank`，本系统只断言现金侧**。
+- [x] **AC-35** `OnInsufficientFunds(Player,AmountDue,AmountShort)`：进入 Raising Funds 时广播（Cash=50, due=170 → AmountDue=170, AmountShort=120）。
+- [x] **AC-36** `OnBankruptcyDeclared(Debtor,Creditor)`：破产移交完成后广播一次，时机在资产转移之后。
+- [x] **AC-43** [状态机] 确定性自动清算兜底终止性（回合2 驱动、economy 拥顺序 spec + 现金判据）：
   - 主 fixture（mortgage-empty-first，无建筑）：Cash=50、应付=200、3 空地 MV 60/80/100 → 依次 Mortgage 到 Cash≥200 → Debit(200) → Cash==90 回 Solvent。断言：顺序确定（MV升序、两次冷启动位级一致）∧ 够即停（不超额清算）∧ economy 仅供判据、回合2 驱动调 6/8。
   - 变体A（走向破产）：nlv 总和 < 应付 → 清算穷尽 → `is_insolvent==true` → 移交破产9（证伪兜底死锁）。
   - 变体B（混合资产）：Cash=50、应付=300、PropX(空地MV80house0)+PropY(2房MV100BC100) → 先 Mortgage(PropX)→130；ForcedSellNextBuilding(PropY)×2→180→230；Mortgage(PropY)→330≥300 → Debit(300) → Cash==30 回 Solvent。断言：空地优先抵押（止损）、建筑无空地可抵押后才卖、回合2 驱动。
@@ -91,7 +91,12 @@
 
 **Story Type**: Integration
 **Required evidence**: `tests/integration/economy-cash/raising_funds_bankruptcy_test.cpp`（类目 `Rento.Economy.RaisingFundsBankruptcy`）— 存在且通过（mock 6/8 接缝）。AC-43 状态机须变异坐实（去 mortgage-empty-first → 顺序断言 FAIL）。
-**Status**: [ ] Not yet created
+**实际物理路径**: `Source/rentoTests/Private/RaisingFundsBankruptcyTest.cpp`（UE 模块约定）。
+**Status**: [x] 11 TC 全通过（TC1 mortgage-empty-first+MV最小/TC2 无空地卖房/TC3 None偿付/TC4 耗尽Insolvent/TC5 破产转玩家AC-30+AC-36时机序列/TC6 破产蒸发银行AC-31/TC7 0额仍广播AC-36/TC8 OnInsufficientFunds AC-35/TC9 变体B腾空再抵押/TC10 平手确定性/TC11 变体C逐栋floor自证）。
+**集成覆盖**: AC-43 完整清算循环（回合2 驱动 6/8）在 `GameStateSnapshotAiHooksTest` TC8/TC8b（已改用 economy `DecideNextLiquidationStep` spec）。全 `Rento` **329/0 无回归**（`Saved/TestReport_econ009_final2/`）。
+**🔴 双变异坐实**: ① DecideNextLiquidationStep 改 sell-first → **TC1 真 FAIL**（7/1，`Saved/TestReport_econ009_mut/`）证 mortgage-empty-first；② SettleBankruptcy Broadcast 错位 → **TC5/6/7 FAIL**（8/3，`Saved/TestReport_econ009_ac36mut2/`）证 AC-36 时机序列断言；均还原复 329/0。
+**code-review hardening**: 采纳 unreal W-1（MV>0 守门）/W-2（注释修正）+ qa BLOCKING-1（AC-36 EventSequence 时机断言，spy 加 EventSequence 字段）/GAPS-1（变体B多步TC9）/GAPS-2a（平手TC10）/GAPS-3（变体C自证TC11）。
+**架构（用户裁定 option 3）**: 清算顺序 spec 从 pt-007 抽到 economy `DecideNextLiquidationStep`（economy 拥有 spec，回合2 驱动调 6/8）；破产现金侧 `SettleBankruptcy`（F-11）。**Design X 结构性破产判定** → 删 pt-007 `CheckInsolvencyWithNlv` + TC9，**解除 propagate 债 :2154**（NLV 统一归 economy F-9）。AC-27② 资产 identity-check 仍归破产9。
 
 ---
 
@@ -99,3 +104,14 @@
 
 - Depends on: Story 001（Credit/Debit）、Story 002（OnInsufficientFunds/OnBankruptcyDeclared）、Story 006（Mortgage 现金腿）、Story 008（nlv/is_insolvent + 逐栋 floor）
 - Unlocks: None（最复杂叶子）
+
+---
+
+## Completion Notes
+**Completed**: 2026-06-09
+**Criteria**: 5/5 AC（AC-30/31/35/36/43 含变体A/B/C+平手）COVERED + 双变异坐实。11 TC（RaisingFundsBankruptcy）+ 集成（pt-007 TC8/TC8b）；全 Rento 329/0 无回归。资产 in-kind 移交（AC-30/31 资产侧）按设计归破产9（out of scope）。
+**架构（用户裁定 option 3）**: 清算顺序 spec 从 pt-007 抽到 economy `DecideNextLiquidationStep`（economy 拥有 spec，回合2 驱动调 6/8，AC-43 字面达成）；破产现金侧 `SettleBankruptcy`（F-11）。Design X 结构性破产判定 → 删 pt-007 `CheckInsolvencyWithNlv` + TC9，**解除 propagate 债 :2154**（NLV 统一 economy F-9）。
+**Deviations**: ADVISORY 测试物理路径 UE 模块约定；OUT OF SCOPE（授权）跨系统重构动 player-turn（RunForcedLiquidation 重构 + pt-007 TC8b 调整/删 TC9 + 共享 EconomyEventSpy +EventSequence 字段）。`:1996/:1991`（AssembleSnapshot AI 内联 NLV + float 赎回价）留 AI-snapshot follow-up（bug report 登记）。
+**Test Evidence**: Integration — `Source/rentoTests/Private/RaisingFundsBankruptcyTest.cpp`（11 TC，`Saved/TestReport_econ009_final2/`）；双变异坐实（TC1 顺序 `Saved/TestReport_econ009_mut/` + AC-36 时机 `Saved/TestReport_econ009_ac36mut2/`）。
+**Code Review**: Complete（/code-review CHANGES REQUIRED → hardening 全改后 APPROVED；unreal W-1/W-2 + qa BLOCKING-1/GAPS-1/2a/3 全采纳；TC8b/TC9 改动两专家判合理）。
+**实现**: DecideNextLiquidationStep（静态纯函数清算顺序 spec，MV>0 守门）+ SettleBankruptcy（玩家债主 TransferCash/银行 INDEX_NONE 蒸发 + OnBankruptcyDeclared 现金腿后广播）+ ELiquidationAction 枚举 + FNlvAssetEntry+TileIndex。

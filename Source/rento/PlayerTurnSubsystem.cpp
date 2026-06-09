@@ -39,6 +39,7 @@
 // =============================================================================
 
 #include "PlayerTurnSubsystem.h"
+#include "EconomySubsystem.h"            // econ-009：清算顺序 spec DecideNextLiquidationStep（静态）+ FNlvAssetEntry
 #include "DiceRngService.h"
 #include "LandingResolverInterface.h"   // ILandingResolver（story-006 落地结算 DI 接缝）
 #include "PawnMovementInterface.h"      // IPawnMover（story-006 移动 seam）
@@ -2126,59 +2127,23 @@ int32 UPlayerTurnSubsystem::SettleRentOnArrival(int32 PayerId, int32 TileIndex)
     return LastRentCharged;
 }
 
-// ===========================================================================
-// pt-007 簇 C2：CheckInsolvencyWithNlv — 破产 NLV 聚合 + IsInsolvent 判据
-//   (AC-9 / GDD AC-52 / CR-3.4)
-//
-// 注意：CheckInsolvencyWithNlv 在 RunForcedLiquidation 内调用，声明在 .h 中已先定义，
-// 此处 cpp 实现顺序无要求。
-// ===========================================================================
-
-bool UPlayerTurnSubsystem::CheckInsolvencyWithNlv(int32 PlayerId, int32 AmountDue)
-{
-    if (!OwnershipProvider.IsValid() || !BuildingProvider.IsValid() || !EconomyResolver.IsValid())
-    {
-        UE_LOG(LogTemp, Error,
-            TEXT("UPlayerTurnSubsystem::CheckInsolvencyWithNlv — provider 未全注入，保守判破产。"));
-        return true;
-    }
-
-    // ① GetPlayerBuildings 恰 1 次（全组合枚举，AC-9 ① / CR-3.4 ①）
-    const TArray<FPlayerBuilding> Buildings = BuildingProvider->GetPlayerBuildings(PlayerId);
-
-    // ② preaggregated_nlv = Σ house_count × floor(BuildingCost/2) + Σ MortgageValue(未抵押 owned 地)
-    //    （AC-9 ② / CR-3.4 ③；floor 由 int 截断）
-    int32 Nlv = 0;
-    for (const FPlayerBuilding& B : Buildings)
-    {
-        Nlv += B.HouseCount * (BuildingProvider->GetBuildingCost(B.TileIndex) / 2);
-    }
-    const TArray<FOwnershipSnapshot> Board = OwnershipProvider->GetBoardOwnership(PlayerId);
-    for (const FOwnershipSnapshot& OS : Board)
-    {
-        if (OS.OwnerId == PlayerId && !OS.bIsMortgaged)
-        {
-            Nlv += OS.MortgageValue;
-        }
-    }
-
-    // ③ IsInsolvent 恰 1 次，传外部预聚合 NLV（economy 不反向调 8，AC-9 ③④ / CR-3.4 ②）
-    const bool bInsolvent = EconomyResolver->IsInsolvent(PlayerId, AmountDue, Nlv);
-    UE_LOG(LogTemp, Log,
-        TEXT("UPlayerTurnSubsystem::CheckInsolvencyWithNlv — PlayerId=%d AmountDue=%d nlv=%d → is_insolvent=%d。"),
-        PlayerId, AmountDue, Nlv, bInsolvent ? 1 : 0);
-    return bInsolvent;
-}
+// CheckInsolvencyWithNlv 已删除（econ-009 Design X）：破产判定由 economy 清算顺序 spec
+//   DecideNextLiquidationStep 的结构性耗尽（Insolvent 分支）承担；NLV 聚合的 canonical 口径
+//   归 economy F-9 ComputeNetLiquidationValue（逐栋 floor，单一真源）。原内联 NLV（硬编 /2）随删，
+//   解除 propagate 债 BUG-econ008-pt007-nlv-duplicate-enumeration（:2154 项）。
 
 // ===========================================================================
 // pt-007 簇 C2：RunForcedLiquidation — 强制清算循环（AC-8 / GDD AC-50/AC-51 / CR-3.3）
+//   econ-009 option3 重构：清算顺序 spec 归 economy，本函数只装配 + 驱动 6/8。
 //
 // 循环 while(Cash < AmountDue)：
-//   ① mortgage-empty-first（AC-51 ①②）：owner==player ∧ 未抵押 ∧ house==0 → Mortgage（选 MV 最小）
-//   ② 否则若有建筑（house>0）→ ForcedSellNextBuilding（卖房腿）
-//   ③ 资产耗尽 → CheckInsolvencyWithNlv → return !IsInsolvent
+//   ① 装配自有地 FNlvAssetEntry（owner==player）；
+//   ② 调 economy UEconomySubsystem::DecideNextLiquidationStep（顺序 spec，mortgage-empty-first）：
+//        MortgageTile → 调 6.Mortgage(目标格) / SellBuilding → 调 8.ForcedSellNextBuilding /
+//        Insolvent（资产耗尽，结构性破产判定）→ return false。
 //   Cash >= AmountDue → return true（偿付成功早停，AC-51 ③）
 //
+// economy 不直调 6/8（防 5→6/5→8 环，ADR-0006）；破产判定=结构性耗尽（Design X，原 CheckInsolvencyWithNlv 已删）。
 // SafetyGuard（MaxIterations=1000）防 mock 不抬 Cash 死循环（dev 安全网）。
 // ===========================================================================
 
@@ -2213,41 +2178,36 @@ bool UPlayerTurnSubsystem::RunForcedLiquidation(int32 PlayerId, int32 AmountDue)
             break;
         }
 
+        // 聚合自有可清算地 → FNlvAssetEntry（owner==player 筛选在此；TileIndex/MV/抵押/房数）。
+        //   清算顺序 spec 归 economy（econ-009 DecideNextLiquidationStep）；回合2 只装配 + 据返回驱动调 6/8
+        //   （economy 不直调 6/8 防环，ADR-0006）。
         const TArray<FOwnershipSnapshot> Board = OwnershipProvider->GetBoardOwnership(PlayerId);
-
-        // ① mortgage-empty-first（AC-51 ①②）：owner==player ∧ 未抵押 ∧ GetHouseCount==0
-        //    （AC-50 抵押前置读：带房地 house>0 不可抵押，跳过），选 MV 最小
-        int32 BestTile = INDEX_NONE;
-        int32 BestMV   = MAX_int32;
+        TArray<FNlvAssetEntry> Assets;
         for (const FOwnershipSnapshot& OS : Board)
         {
-            if (OS.OwnerId == PlayerId && !OS.bIsMortgaged
-                && BuildingProvider->GetHouseCount(OS.TileIndex) == 0) // AC-50：带房地不可抵押
-            {
-                if (OS.MortgageValue < BestMV) { BestMV = OS.MortgageValue; BestTile = OS.TileIndex; }
-            }
+            if (OS.OwnerId != PlayerId) { continue; }
+            FNlvAssetEntry E;
+            E.TileIndex     = OS.TileIndex;
+            E.MortgageValue = OS.MortgageValue;
+            E.bIsMortgaged  = OS.bIsMortgaged;
+            E.HouseCount    = BuildingProvider->GetHouseCount(OS.TileIndex);
+            // BuildingCost 清算决策不需（DecideNextLiquidationStep 只用 MV/抵押/房数）；NLV 值口径见 economy F-9。
+            Assets.Add(E);
         }
-        if (BestTile != INDEX_NONE)
+
+        // economy 拥有清算顺序 spec：返回下一步动作（mortgage-empty-first，AC-43）。
+        int32 TargetTile = INDEX_NONE;
+        const ELiquidationAction Action =
+            UEconomySubsystem::DecideNextLiquidationStep(PS->Cash, AmountDue, Assets, TargetTile);
+
+        if (Action == ELiquidationAction::MortgageTile)
         {
-            OwnershipProvider->Mortgage(BestTile); // mock 标记抵押 + 抬 Cash
+            OwnershipProvider->Mortgage(TargetTile); // mock 标记抵押 + 抬 Cash（执行驱动归回合2）
             UE_LOG(LogTemp, Log,
-                TEXT("UPlayerTurnSubsystem::RunForcedLiquidation — 抵押空地 tile=%d（MV=%d）。"),
-                BestTile, BestMV);
+                TEXT("UPlayerTurnSubsystem::RunForcedLiquidation — 抵押空地 tile=%d。"), TargetTile);
             continue;
         }
-
-        // ② 否则若有建筑（任一 owned tile GetHouseCount>0）→ ForcedSellNextBuilding
-        //    （AC-50 对照：带房地转卖房腿）
-        bool bHasBuilding = false;
-        for (const FOwnershipSnapshot& OS : Board)
-        {
-            if (OS.OwnerId == PlayerId && BuildingProvider->GetHouseCount(OS.TileIndex) > 0)
-            {
-                bHasBuilding = true;
-                break;
-            }
-        }
-        if (bHasBuilding)
+        if (Action == ELiquidationAction::SellBuilding)
         {
             BuildingProvider->ForcedSellNextBuilding(PlayerId); // mock 抬 Cash（+降 house_count）
             UE_LOG(LogTemp, Log,
@@ -2255,12 +2215,14 @@ bool UPlayerTurnSubsystem::RunForcedLiquidation(int32 PlayerId, int32 AmountDue)
             continue;
         }
 
-        // ③ 资产耗尽 → 破产判据 NLV 聚合 + IsInsolvent（AC-9）
-        const bool bInsolvent = CheckInsolvencyWithNlv(PlayerId, AmountDue);
-        UE_LOG(LogTemp, Warning,
-            TEXT("UPlayerTurnSubsystem::RunForcedLiquidation — 资产耗尽，is_insolvent=%d。"),
-            bInsolvent ? 1 : 0);
-        return !bInsolvent; // 破产 → 返回 false
+        // Insolvent（资产耗尽仍 Cash<应付）→ 破产；None 不会在 while(Cash<AmountDue) 内出现（防御性 break）。
+        if (Action == ELiquidationAction::Insolvent)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("UPlayerTurnSubsystem::RunForcedLiquidation — 资产耗尽，is_insolvent（结构性判定）。"));
+            return false; // 破产
+        }
+        break; // None（理论不达）：跳出按偿付成功处理
     }
 
     UE_LOG(LogTemp, Log,

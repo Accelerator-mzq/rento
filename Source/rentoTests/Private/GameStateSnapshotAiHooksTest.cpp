@@ -1777,7 +1777,7 @@ bool FGssAiHooks_TC8_ForcedLiquidationOrderEarlyStop::RunTest(const FString& Par
 // WHEN：RunForcedLiquidation(PayerId, 1000)
 // THEN：
 //   ① R==false（破产）
-//   ② EcoSpy->IsInsolventCallCount==1（资产耗尽调一次破产判据，有界终止不无限重试）
+//   ②（econ-009 Design X 移除）破产判定改 economy 清算 spec 结构性耗尽，不再经 EcoSpy->IsInsolvent
 //   ③ OwnSpy->MortgageCallCount==1（抵押了一次）
 //   ④ 未死循环（执行到此即证 SafetyGuard 未触发）
 //
@@ -1862,9 +1862,9 @@ bool FGssAiHooks_TC8b_LiquidationExhaustedInsolvent::RunTest(const FString& Para
     // ① R==false（破产）
     TestFalse(TEXT("TC-8b ①: RunForcedLiquidation 应返回 false（破产）"), R);
 
-    // ② EcoSpy->IsInsolventCallCount==1（资产耗尽调一次，有界终止不无限重试）
-    TestEqual(TEXT("TC-8b ②: IsInsolventCallCount 应==1（资产耗尽调一次破产判据）"),
-        EcoSpy->IsInsolventCallCount, 1);
+    // ② （econ-009 Design X）破产判定改为 economy 清算 spec 的结构性资产耗尽（DecideNextLiquidationStep→Insolvent），
+    //    不再经 EcoSpy->IsInsolvent；故移除 IsInsolventCallCount 断言。破产语义由 ① R==false + ④ 无死循环验证；
+    //    清算顺序/破产 spec 的单测在 econ-009 RaisingFundsBankruptcyTest（DecideNextLiquidationStep 直测+变异坐实）。
 
     // ③ OwnSpy->MortgageCallCount==1（抵押了一次 tile_empty）
     TestEqual(TEXT("TC-8b ③: MortgageCallCount 应==1（抵押一次后 tile 已标抵押）"),
@@ -1876,136 +1876,4 @@ bool FGssAiHooks_TC8b_LiquidationExhaustedInsolvent::RunTest(const FString& Para
     return true;
 }
 
-// =============================================================================
-// TC9_BankruptcyNlvAggregation（AC-9 / AC-52，直驱 CheckInsolvencyWithNlv）
-//
-// GIVEN：2 人对局，PlayerId=先手。3 spy 注入。
-//   BuildingProviderSpy.PlayerBuildingsToReturn = [{TileIndex=10, HouseCount=2}, {TileIndex=20, HouseCount=1}]
-//   BuildingCostByTile = {10:100, 20:200}
-//   OwnershipProviderSpy.BoardToReturn = 2 格：
-//     {30, OwnerId=PlayerId, unmortgaged, MV=80}（未抵押 owned 地，计入 NLV）
-//     {40, OwnerId=PlayerId, mortgaged,   MV=70}（已抵押，不计入）
-//   EconomyResolverSpy.IsInsolventResult=false。
-// 期望 nlv = 2×floor(100/2) + 1×floor(200/2) + 80 = 100+100+80 = 280（tile40 已抵押不计）
-// WHEN：CheckInsolvencyWithNlv(PlayerId, 500)
-// THEN：
-//   ① BldSpy->GetPlayerBuildingsCallCount==1（全组合枚举恰 1 次，AC-9 ①）
-//   ② EcoSpy->IsInsolventCallCount==1（AC-9 ③）
-//   ③ EcoSpy->LastInsolvencyNlv==280（NLV 公式正确，AC-9 ②）
-//   ④ EcoSpy->LastInsolvencyAmountDue==500 && LastInsolvencyPlayerId==PlayerId
-//   ⑤ R==false（IsInsolventResult 透传）
-//
-// 非 vacuous：
-//   若 nlv 把已抵押 tile40 也计入 → ③ ==350≠280 FAIL
-//   若漏建筑半价 → FAIL
-//   若 GetPlayerBuildings 调多次 → ① FAIL
-// =============================================================================
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FGssAiHooks_TC9_BankruptcyNlvAggregation,
-    "Rento.PlayerTurn.GameStateSnapshotAiHooks.TC9_BankruptcyNlvAggregation",
-    EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
-
-bool FGssAiHooks_TC9_BankruptcyNlvAggregation::RunTest(const FString& Parameters)
-{
-    // ---- 创建 World + 初始化 ----
-    UWorld* World = GssAiHooksTestHelpers::CreateGameWorld(TEXT("TC9_World"));
-    if (!TestNotNull(TEXT("TC-9: World 应能创建"), World)) return false;
-
-    UPlayerTurnSubsystem* Sub = World->GetSubsystem<UPlayerTurnSubsystem>();
-    if (!TestNotNull(TEXT("TC-9: Subsystem 应能取得"), Sub))
-    {
-        GssAiHooksTestHelpers::DestroyGameWorld(World);
-        return false;
-    }
-
-    const bool bInit = Sub->InitializeFromConfig(GssAiHooksTestHelpers::MakeConfig(2));
-    if (!TestTrue(TEXT("TC-9: InitializeFromConfig(P=2) 应成功"), bInit))
-    {
-        GssAiHooksTestHelpers::DestroyGameWorld(World);
-        return false;
-    }
-
-    // PlayerId=先手（TurnOrderIndex==0）
-    const int32 PlayerId = GssAiHooksTestHelpers::FindFirstPlayerId(Sub);
-    if (!TestNotEqual(TEXT("TC-9: 应找到先手玩家"), PlayerId, -1))
-    {
-        GssAiHooksTestHelpers::DestroyGameWorld(World);
-        return false;
-    }
-
-    // ---- 构造 spy ----
-    TSharedPtr<FOwnershipProviderSpy> OwnSpy = MakeShared<FOwnershipProviderSpy>();
-    TSharedPtr<FBuildingProviderSpy>  BldSpy  = MakeShared<FBuildingProviderSpy>();
-    TSharedPtr<FEconomyResolverSpy>   EcoSpy  = MakeShared<FEconomyResolverSpy>();
-
-    // BuildingProviderSpy：PlayerBuildingsToReturn + BuildingCostByTile
-    FPlayerBuilding PB1;
-    PB1.TileIndex  = 10;
-    PB1.HouseCount = 2;
-    FPlayerBuilding PB2;
-    PB2.TileIndex  = 20;
-    PB2.HouseCount = 1;
-    BldSpy->PlayerBuildingsToReturn.Add(PB1);
-    BldSpy->PlayerBuildingsToReturn.Add(PB2);
-    BldSpy->BuildingCostByTile.Add(10, 100); // floor(100/2)=50，×2=100
-    BldSpy->BuildingCostByTile.Add(20, 200); // floor(200/2)=100，×1=100
-
-    // OwnershipProviderSpy.BoardToReturn：tile30（未抵押）+ tile40（已抵押）
-    FOwnershipSnapshot OS30;
-    OS30.TileIndex     = 30;
-    OS30.OwnerId       = PlayerId;
-    OS30.bIsMortgaged  = false;
-    OS30.MortgageValue = 80;  // 计入 NLV
-
-    FOwnershipSnapshot OS40;
-    OS40.TileIndex     = 40;
-    OS40.OwnerId       = PlayerId;
-    OS40.bIsMortgaged  = true;  // 已抵押，不计入 NLV
-    OS40.MortgageValue = 70;
-
-    OwnSpy->BoardToReturn.Add(OS30);
-    OwnSpy->BoardToReturn.Add(OS40);
-
-    // EconomyResolverSpy.IsInsolventResult=false（透传测试）
-    EcoSpy->IsInsolventResult = false;
-
-    Sub->SetOwnershipProvider(OwnSpy);
-    Sub->SetBuildingProvider(BldSpy);
-    Sub->SetEconomyResolver(EcoSpy);
-
-    // ---- 执行 ----
-    bool R = Sub->CheckInsolvencyWithNlv(PlayerId, 500);
-
-    // ==== 断言 ====
-
-    // ① GetPlayerBuildingsCallCount==1（全组合枚举恰 1 次，AC-9 ①）
-    TestEqual(TEXT("TC-9 ①: GetPlayerBuildingsCallCount 应==1（全组合枚举恰 1 次，AC-9 ①）"),
-        BldSpy->GetPlayerBuildingsCallCount, 1);
-
-    // ② IsInsolventCallCount==1（AC-9 ③）
-    TestEqual(TEXT("TC-9 ②: IsInsolventCallCount 应==1（AC-9 ③）"),
-        EcoSpy->IsInsolventCallCount, 1);
-
-    // ③ LastInsolvencyNlv==280（NLV 公式正确：2*50+1*100+80=280，tile40 已抵押不计，AC-9 ②）
-    //    计算：2×floor(100/2)=100；1×floor(200/2)=100；tile30 MV=80；tile40 已抵押跳过
-    TestEqual(TEXT("TC-9 ③: LastInsolvencyNlv 应==280（建筑半价+未抵押地 MV，已抵押不计，AC-9 ②）"),
-        EcoSpy->LastInsolvencyNlv, 280);
-
-    // ④ AmountDue 和 PlayerId 传入一致
-    TestEqual(TEXT("TC-9 ④-a: LastInsolvencyAmountDue 应==500"),
-        EcoSpy->LastInsolvencyAmountDue, 500);
-    TestEqual(TEXT("TC-9 ④-b: LastInsolvencyPlayerId 应==PlayerId"),
-        EcoSpy->LastInsolvencyPlayerId, PlayerId);
-
-    // ⑤ R==false（IsInsolventResult=false 透传）
-    TestFalse(TEXT("TC-9 ⑤: R 应==false（IsInsolventResult=false 透传）"), R);
-
-    // ---- economy zero→8（AC-9 ④）结构性保证 + 断言 ----
-    // EconomyResolverSpy 无 IBuildingProvider 引用，物理上无法调 8——结构性保证。
-    // 断言 GetPlayerBuildingsCallCount==1（仅框架调，economy 未额外调）即 proxy 验证。
-    // （已在 ① 断言，此处注释说明设计意图）
-
-    GssAiHooksTestHelpers::DestroyGameWorld(World);
-    return true;
-}
 

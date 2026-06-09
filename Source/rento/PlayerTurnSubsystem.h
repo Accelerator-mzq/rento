@@ -614,11 +614,14 @@ public:
      *
      * 执行循环（有界终止，SafetyGuard <= MaxIterations=1000）：
      *   while (Cash < AmountDue)：
-     *     ① mortgage-empty-first（AC-51 ①）：owner==player ∧ 未抵押 ∧ house==0 → Mortgage（选 MV 最小）
-     *     ② 否则若有建筑（house>0）→ ForcedSellNextBuilding（AC-51 ②，卖房腿）
-     *     ③ 资产耗尽 → CheckInsolvencyWithNlv → return !IsInsolvent
+     *     ① 装配自有地 FNlvAssetEntry（owner==player）；
+     *     ② 调 economy `UEconomySubsystem::DecideNextLiquidationStep`（清算顺序 spec 归 economy，econ-009）：
+     *        MortgageTile → 调 6.Mortgage(目标格) / SellBuilding → 调 8.ForcedSellNextBuilding / Insolvent → return false。
      *   Cash >= AmountDue → return true（偿付成功早停）
      *
+     * 顺序 spec（mortgage-empty-first 止损优先）归 economy（DecideNextLiquidationStep）；回合2 只装配 + 据返回
+     *   驱动调 6/8（economy 不直调 6/8 防 5→6/5→8 环，ADR-0006）。破产判定=结构性资产耗尽（econ-009 Design X，
+     *   原 CheckInsolvencyWithNlv 内联 NLV 已删，NLV canonical 口径归 economy F-9）。
      * 框架从不写 Cash（Cash 由 spy 的 Mortgage/ForcedSellNextBuilding 模拟抬升；框架只读 PS->Cash）。
      *
      * @param PlayerId  债务玩家 PlayerId
@@ -626,21 +629,6 @@ public:
      * @return true=偿付成功；false=破产（资不抵债）
      */
     bool RunForcedLiquidation(int32 PlayerId, int32 AmountDue);
-
-    /**
-     * 破产 NLV 聚合 + IsInsolvent 判据（AC-9，GDD AC-52 / CR-3.4）。
-     *
-     * 计算公式（恰一次）：
-     *   nlv = Σ house_count × floor(BuildingCost/2) + Σ MortgageValue（未抵押 owned 地）
-     *   调 IsInsolvent(PlayerId, AmountDue, nlv) 恰 1 次（economy 不反向调 8，CR-3.4 ②）
-     *
-     * 同时是 TC-9 直驱入口（绕过完整清算循环，直接验 NLV 聚合）。
-     *
-     * @param PlayerId  债务玩家 PlayerId
-     * @param AmountDue 应付金额
-     * @return true=破产（IsInsolvent 返回 true）；false=尚可偿付
-     */
-    bool CheckInsolvencyWithNlv(int32 PlayerId, int32 AmountDue);
 
     // =========================================================================
     // pt-007 簇 B：IActionValidator DI + RunAiJailAction + ResolveAuctionBid

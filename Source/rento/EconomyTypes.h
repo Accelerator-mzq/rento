@@ -130,6 +130,10 @@ struct FNlvAssetEntry
 {
     GENERATED_BODY()
 
+    /** 格序号（清算决策 DecideNextLiquidationStep 据此返回抵押目标格；F-9 NLV 求和不使用，econ-009 追加）。 */
+    UPROPERTY(BlueprintReadWrite, Category="Economy|Nlv")
+    int32 TileIndex = INDEX_NONE;
+
     /** 抵押价（地产6 base；未抵押地计入 NLV 的 MV 侧）。 */
     UPROPERTY(BlueprintReadWrite, Category="Economy|Nlv")
     int32 MortgageValue = 0;

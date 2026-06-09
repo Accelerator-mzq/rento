@@ -45,6 +45,10 @@ public:
     UPROPERTY() int32 LastDebtorId = -1;
     UPROPERTY() int32 LastCreditorId = -1;
 
+    /** 跨事件广播序列（econ-009 AC-36：验 OnBankruptcyDeclared 时机在现金腿之后；
+     *  逐事件 append 类型名 "CashChanged"/"RentPaid"/"InsufficientFunds"/"BankruptcyDeclared"）。 */
+    UPROPERTY() TArray<FString> EventSequence;
+
     UFUNCTION()
     void HandleCashChanged(const FCashChangedInfo& Info)
     {
@@ -54,6 +58,7 @@ public:
         LastNewCash  = Info.NewCash;
         LastReason   = Info.Reason;
         CashChangedReasons.Add(Info.Reason);          // 逐腿记录（C-2 两腿独立断言）
+        EventSequence.Add(TEXT("CashChanged"));       // 跨事件序列（AC-36 时机）
     }
 
     UFUNCTION()
@@ -64,6 +69,7 @@ public:
         LastPayeeId    = Info.PayeeId;
         LastRentAmount = Info.Amount;
         LastTileIndex  = Info.TileIndex;
+        EventSequence.Add(TEXT("RentPaid"));
     }
 
     UFUNCTION()
@@ -73,6 +79,7 @@ public:
         LastPlayerId = Info.PlayerId;
         LastDue      = Info.AmountDue;
         LastShort    = Info.AmountShort;
+        EventSequence.Add(TEXT("InsufficientFunds"));
     }
 
     UFUNCTION()
@@ -81,5 +88,6 @@ public:
         ++BankruptcyCount;
         LastDebtorId   = Info.DebtorId;
         LastCreditorId = Info.CreditorId;
+        EventSequence.Add(TEXT("BankruptcyDeclared"));
     }
 };

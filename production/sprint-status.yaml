@@ -100,7 +100,8 @@ stories:
     name: "凑钱状态机 CR-7 + 破产现金侧 F-11"
     file: "production/epics/economy-cash/story-009-raising-funds-bankruptcy-f11.md"
     priority: must-have
-    status: ready-for-dev
+    status: done
+    completed: "2026-06-09"
     owner: "unreal-specialist"
     estimate_days: 1.5
     blocker: ""

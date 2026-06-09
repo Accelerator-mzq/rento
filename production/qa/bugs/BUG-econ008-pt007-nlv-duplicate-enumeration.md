@@ -5,8 +5,21 @@
 > **发现来源**: econ-008 /code-review（qa-tester FINDING-2 → 主会话 fresh-grep 坐实并扩展）
 > **严重度**: Medium（潜在 House-Rules 分歧 bug；MVP 默认配置不触发）
 > **类型**: 架构契约违反（单一枚举入口）+ 潜在数值分歧
-> **状态**: Open
+> **状态**: Partially Resolved（:2154 econ-009 已修；:1996/:1991 AI-snapshot 待跟进）
 > **建议 Owner**: player-turn（系统2）；propagate 债
+
+---
+
+## 解决进展（2026-06-09 econ-009）
+
+- ✅ **`:2154` CheckInsolvencyWithNlv 内联 NLV — 已解除**：econ-009 用户裁定 option 3 把清算顺序 spec 抽到 economy
+  `UEconomySubsystem::DecideNextLiquidationStep`，`RunForcedLiquidation` 改 Design X 结构性破产判定，
+  **删除 CheckInsolvencyWithNlv**（连带其内联 `/2` NLV）。破产 NLV 聚合的 canonical 口径统一归 economy F-9
+  `ComputeNetLiquidationValue`（逐栋 floor，单一真源）。TC9_BankruptcyNlvAggregation 删（覆盖移至 econ-008 TC2/TC5）。
+- ⬜ **`:1996` + `:1991` AssembleSnapshot（AI 快照）— 仍待跟进**（AI-snapshot follow-up，非 econ-009 scope）：
+  - `:1996` per-tile NLV 贡献 `E.HouseCount * (E.BuildingCost / 2) + (mortgaged?0:MV)` 硬编 /2（应经 economy 口径）；
+  - `:1991` `E.UnmortgageCost = MV + CeilToInt(MV/10.0f)` 用 **float**（违 ADR-0014 整数纪律，应调 economy `GetUnmortgageCostForDisplay`）。
+  建议在 AI-snapshot/ai-opponent epic 或 pt-008 follow-up 中统一到 economy 口径。
 
 ---
 

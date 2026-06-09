@@ -40,6 +40,18 @@
 class URentoPlayerState;
 
 /**
+ * ELiquidationAction —— 强制清算下一步动作（econ-009 清算顺序 spec 返回值）。
+ *   纯 C++ 枚举（非 UENUM）：DecideNextLiquidationStep 内部判据返回，回合2 据此驱动调 6/8（不经 BP）。
+ */
+enum class ELiquidationAction : uint8
+{
+    None,           // Cash≥应付 → 偿付成功，停止清算
+    MortgageTile,   // 抵押 OutTargetTile（未抵押无房地中 MV 最小，止损优先）
+    SellBuilding,   // 卖一栋建筑（无可抵押空地但有房）
+    Insolvent,      // 资产耗尽仍不足 → 破产（结构性判定 ⟺ Cash+nlv<应付）
+};
+
+/**
  * UEconomySubsystem —— 经济现金权威服务。
  *
  * 不持 cash 容器；Cash 单源 = URentoPlayerState.Cash，经 SetCash 受控写。
@@ -241,6 +253,41 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category="Economy|Nlv")
     bool IsInsolvent(int32 PlayerId, int32 AmountDue, int32 PreaggregatedNlv) const;
+
+    // =========================================================================
+    // 强制清算顺序 spec + 破产现金侧（econ-009 CR-7/F-11，ADR-0001/0003）
+    // =========================================================================
+
+    /**
+     * 强制清算下一步决策（清算顺序 spec，economy 拥有；纯静态无副作用，AC-43）。
+     *   止损优先 mortgage-empty-first（CR-7）：
+     *     Cash≥AmountDue                         → None（偿付成功）
+     *     存在未抵押∧无房地（HouseCount==0）     → MortgageTile + OutTargetTile=MV 最小者（抵押可赎回，零损）
+     *     否则存在建筑（HouseCount>0）            → SellBuilding（永久半价亏损，故后于抵押）
+     *     否则（资产耗尽）                        → Insolvent（结构性破产判定 ⟺ Cash+总 nlv<应付）
+     *   **执行驱动归回合2**：economy 只出"下一步该干什么"，回合2 据返回调 6.Mortgage/8.ForcedSellNextBuilding
+     *   （economy 不直调 6/8，防 5→6/5→8 环，ADR-0006/0001）。Assets 由回合2 聚合自有地传入（owner 已筛）。
+     *   顺序不影响最终是否破产（NLV order-independent），只影响够即停后剩余。
+     * @param Cash          债务玩家当前现金
+     * @param AmountDue     应付金额
+     * @param Assets        玩家自有可清算地（回合2 聚合，owner==player）
+     * @param OutTargetTile [out] MortgageTile 时=待抵押格序号；否则 INDEX_NONE
+     * @return 下一步动作（回合2 据此驱动）
+     */
+    static ELiquidationAction DecideNextLiquidationStep(
+        int32 Cash, int32 AmountDue, const TArray<FNlvAssetEntry>& Assets, int32& OutTargetTile);
+
+    /**
+     * 破产现金侧结算（F-11；被破产9 在资产 in-kind 移交后调用）：
+     *   CreditorId 为玩家   → `creditor.Cash += debtor.Cash`（收租破产，MVP 不收继承利息，AC-30）；
+     *   CreditorId==INDEX_NONE（银行）→ debtor 现金蒸发、不入任何玩家（税/银行破产，AC-31）。
+     *   恒广播 OnBankruptcyDeclared(Debtor,Creditor) 恰一次（AC-36，即便 debtor.Cash==0）。
+     *   **只结算现金侧**：地产/建筑 in-kind 移交由破产9 经地产6/建房8（所有权 AC-33），本函数不写 owner map、不拆建筑。
+     * @param DebtorId   破产玩家
+     * @param CreditorId 债权玩家；INDEX_NONE=银行（现金蒸发）
+     */
+    UFUNCTION(BlueprintCallable, Category="Economy|Cash")
+    void SettleBankruptcy(int32 DebtorId, int32 CreditorId);
 
     // =========================================================================
     // 缴税/买地现金腿（econ-007 F-7/CR-4，被事件7/地产6 调用 7→5 / 6→5，ADR-0007）
